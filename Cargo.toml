@@ -1,0 +1,18 @@
+[package]
+name = "eltor"
+version = "0.0.1"
+edition = "2018"
+
+[dependencies]
+libtor = { path = "../libtor/libtor" }
+libtor-sys = { path = "../libtor-sys"  }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.15"
+futures-util = "0.3.31"
+
+[[bin]]
+name = "eltor"
+path = "src/main.rs"
+
+[features]
+vendored-openssl = ["libtor-sys/vendored-openssl"]

@@ -1,0 +1,26 @@
+# Ignore the target directory
+/target/
+
+# Ignore the Cargo.lock file if you're building a library
+# Cargo.lock
+
+# Ignore the node_modules directory if you're using a frontend framework
+/node_modules/
+
+# Ignore the .DS_Store file on macOS
+.DS_Store
+
+# Ignore the .idea directory for JetBrains IDEs
+.idea/
+
+# Ignore the .vscode directory for Visual Studio Code
+.vscode/
+
+# Ignore the .git directory
+.git/
+
+# Ignore the .env file for environment variables
+.env
+
+# Ignore the .log files
+*.log
