@@ -30,9 +30,9 @@ Tor relays (especially exit relays) play a critical role in providing bandwidth 
 5. Scalability:
     - The solution must scale across a decentralized network without adding excessive computational or bandwidth overhead.
 
-### Proposed Solution: The Onion Pay Stream (tops)
+### Proposed Solution: The Onion Pay Stream
 
-"The Onion Pay Stream" (tops) addresses these challenges by introducing a trust-minimized, privacy-preserving protocol that integrates incremental payment streams into Tor circuits. 
+"The Onion Pay Stream" (TOPS) addresses these challenges by introducing a trust-minimized, privacy-preserving protocol that integrates incremental payment streams into Tor circuits. 
 
 <b>Use Case Example:</b>
 
@@ -84,18 +84,21 @@ Phase 1: Circuit Establishment
     - During the Tor circuit negotiation, the relay advertises its payment requirements (e.g., 1 sat per minute for 10 minutes, first minute free) using a static BOLT12 offer or a similar descriptor.
 2. Client Sends Payment Intent:
     - The client acknowledges the relay's terms by sending a unique payment id hash (generated locally) agreeing to use the relay’s static offer.
-3. First Round Starts Free:
-    - The relay begins providing service immediately for the first round without requiring payment (if no handshake fee is required).
+3. Handshake in Onion Message:
+    - A handshake onion message is sent from the client to each relay via an onion message in the respective hops. Hop 1 being an Entry Guard, hop 2 being a middle Relay and hop N being an Exit Node. No relay can read another relays onion message because each message is encrypted to the repective hop. 
+4. Finally the Circuit is built and the relays begin providing service.
 
 Phase 2: Incremental Payments
 1. At the End of Each Round:
-    - The relay requests payment for the previous round *(out of band via eltord).
-    - The client generates a Lightning payment for the agreed amount (e.g., 1 sat) and sends it out of band using the Lightning Network.
+    - The relay waits for payment for the previous round *(out of band via eltord).
+    - The client generates a Lightning payment for the agreed amount (e.g., 1 sat) and sends it using the Lightning Network.
 2. Payment Verification:
     - The relay queries its own Lightning node to verify the payment.
     - If the payment is valid, the relay continues providing service.
+    - If the payment is not receieve in the time window, then the relay kills the circuit. 
 3. Final Round Payment:
     - After the last round payment then kill the circuit.
+
 Phase 3: Circuit Termination
 1. If Payment Fails:
     - If the client fails to pay, the relay terminates the circuit.
@@ -106,8 +109,9 @@ Phase 3: Circuit Termination
 
 a. Preimages and Payment Hashes
 
-- The client pre-generates a unique payment id hash.
-- This hash is sent to the relay during circuit establishment. This is the key the relay uses to verify the client has paid.
+- The client pre-generates a unique payment id hash. Using a payment id hash instead of a payment hash ensures the protocol works with both
+BOLT 12 and BOLT 11 (with blinded paths), since some implementations of BOLT 12 (phoenixd) do not expose endpoints to create a `lni` invoice from the static BOLT 12 offer.
+- This hash is sent to the relay during circuit establishment. This is the primary key that the relay uses to verify the client has paid.
 
 b. Payment Rounds
 
@@ -115,11 +119,11 @@ b. Payment Rounds
 
 c. Privacy Guarantees
 
-- BOLT12 ensures payments are unlinkable to specific circuits or clients.
-- The preimages and hashes and hashed payment id do not reveal client identities.
+- Blinded paths in BOLT 12 (and some implementation in BOLT 11) ensures payments are unlinkable to specific circuits or clients.
+- The preimages, payment hashes and hashed payment id do not reveal client identities.
 
 ### (4) Implementation Details
-Client-Side Changes
+Client-Side
 
 1. Generate Payment ID Hash:
 - Before building the circuit.
@@ -133,7 +137,7 @@ const paymentIdHash = crypto.createHash('sha256').update(preimage).digest('hex')
 3. Make Incremental Payments:
     - Use the Lightning Network to pay invoices incrementally.
 
-Relay-Side Changes
+Relay-Side
 
 1. Advertise Payment Terms:
     - Include payment terms in the EXTENDED2 cell response during circuit setup.

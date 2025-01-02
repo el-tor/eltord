@@ -1,9 +1,18 @@
 eltor
 =====
 
-`eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. eltor is very 
-similar to how `tor` and `torrc` works. All of the same settings can be used in the `eltorrc1 with these additional settings:
+`eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. 
 
+Spec
+----
+- [(00) - El Tor Spec](./spec/00_spec.md)
+- [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
+
+
+eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `eltorrc` with these additional settings:
+
+Config
+------
 `eltorrc`
 ```
 ### Client Settings ###
@@ -63,3 +72,4 @@ Run
 ```
 cargo run --bin eltor -vv --features=vendored-openssl -f eltorrc
 ```
+
