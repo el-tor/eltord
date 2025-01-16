@@ -70,6 +70,7 @@ PAYMENT_BOLT11_LIGHTNING_ADDRESS name@domain.com
 Run
 ---
 ```
-cargo run --bin eltor -vv --features=vendored-openssl -f eltorrc
+cargo build -vv --features=vendored-openssl
+cargo run --bin eltor -vv --features=vendored-openssl
 ```
 

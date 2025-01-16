@@ -4,8 +4,8 @@ version = "0.0.1"
 edition = "2018"
 
 [dependencies]
-libtor = { path = "../libtor/libtor" }
-libtor-sys = { path = "../libtor-sys"  }
+libtor = { path = "../libeltor/libtor" }
+libtor-sys = { path = "../libeltor-sys"  }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
