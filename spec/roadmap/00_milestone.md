@@ -2,7 +2,9 @@
 
 ## Summary
 
-El Tor has made steady progress, advancing into a modular and extensible system. The major work completed this cycle was finalizing a spec for the "El Tor - Paid Circuit Protocol". Other work included spinning up a Testnet, writing a VPN-like client and diving into the BOLT 12 payment code.  While writing the code to connect to lightning nodes in the El Tor App, it became evident that supporting all major implementations—CLN, LNDK, and Phoenixd—required a unified tool. To address this need, the Lightning Node Interface (LNI) was born (WIP), creating a versatile library that simplifies integration with these implementations in Rust to support all major platforms.
+El Tor has made steady progress, advancing into a modular and extensible system. The major work completed this cycle was finalizing a spec for the "El Tor - Paid Circuit Protocol". Other work included spinning up a Testnet, writing a VPN-like client and diving into the BOLT 12 payment code.  
+
+While writing the code that connects to the Lightning Nodes, it became evident that supporting all major implementations—CLN, LNDK, and Phoenixd—required a unified tool. To address this need, the Lightning Node Interface (LNI) was born (WIP), creating a versatile library that simplifies integration with these implementations in Rust to support all major platforms with a standard interface.
 
 Below is a outline of the major repos in the El Tor project. All repos have been moved from Bitbucket https://bitbucket.org/eltordev/eltor to Github https://github.com/orgs/el-tor/repositories
 
@@ -24,7 +26,7 @@ Below is a outline of the major repos in the El Tor project. All repos have been
 
 # El Tor Architecture
 
-Here is the architecture for El Tor.
+Here is the architecture for El Tor, broken down into 3 main layers. (1) The diagram outlines the `clients` on top (VPN-Like apps, Android and iOS (embedded in-app tor) and Browsers). (2) The middle layer is the `eltord daemon` that boots up an embedded Tor instance and allows RPC calls and a SOCKS5 load balancer. (3) This part of the diagram illistrates that the daemon will allow you to connect to the `paid El Tor network` (for high bandwidth/new hidden onion services) or you can fall back to the regular Tor Network (for existing hidden services and free circuits)
 
 ```mermaid
 flowchart TB
@@ -81,21 +83,28 @@ flowchart TB
 
 ## Sections
 
+The next 4 sections includes progress made for the following components:
+1. El Tor Spec and Paid Circuit Protocol
+2. El Tor VPN-like Client UI
+3. LNI - Lightning Node Interface
+4. Architecture with Libtor Fork
+
 ### 1. El Tor Spec and Paid Circuit Protocol
 
 #### Summary
 
-The foundational specifications for El Tor, encompassing the core protocol and the paid circuit protocol, have been finalized (for this iteration). These define the mechanisms for establishing, maintaining, and compensating circuits within the El Tor framework.
+The foundational specifications for El Tor, encompassing the core protocol and the paid circuit protocol, have been finalized (for this iteration). These define the mechanisms for establishing, maintaining, and compensating circuits within the El Tor framework and mitigating risks with bad actors and "free loaders".
 
 #### Details
 
-- **El Tor Spec:** The specification integrates El Tor with existing Tor infrastructures and incorporates payment mechanisms. Key elements include:
+- **El Tor Spec:** The specification integrates El Tor with existing Tor infrastructures and incorporates payment mechanisms. Key elements include "The Onion Pay Stream" protocol (TOPS) for trustless bandwidth:
   - **Circuit Establishment:** Step-by-step guidance on circuit initialization and maintenance.
-  - **Payment Integration:** Implementation of Lightning Network-based payments.
+  - **Payment Integration:** Implementation of Lightning Network-based payments in interval based payments.
   - **Security Enhancements:** Protections against adversarial actors. ([View the full Spec here](https://github.com/el-tor/eltord/blob/master/spec/00_spec.md))
-- **Paid Circuit Protocol:** This protocol outlines:
+- **Paid Circuit Protocol:** This protocol outlines the step by step flow for both the client and the relay:
   - **Payment Verification:** Ensuring accurate processing and validation.
   - **Preimage Verification:** Secure authentication of payments.
+  - **Free Loader Problem**: Mitigations about free loaders by using a `handshake fee` with a payment stream interval settings.
   - **Circuit Teardown:** Secure mechanisms for circuit closure. ([View Protocol](https://github.com/el-tor/eltord/blob/master/spec/01_paid_circuits.md))
 
 #### Outcome
@@ -114,11 +123,12 @@ The VPN-like client UI for El Tor has reached a functional design state, providi
 
 - **UI Features:**
   - **Dashboard:** Real-time monitoring of active circuits and connectivity status.
-  - **Settings:** Customization options for payment methods and relay configurations.
-  - **Diagnostics:** Tools to troubleshoot common connectivity issues.
+  - **Settings:** Customization options for payment methods and relay configurations. Choose an exit node location.
+  - **Diagnostics Terminal:** Tools to troubleshoot common connectivity issues.
 - **Core Functionalities:**
   - Integration of Lightning Network payments.
   - User-friendly circuit selection and management tools.
+  - GUI to help a user run a relay.
 
 ![image](https://raw.githubusercontent.com/el-tor/eltor-app/a935db4601fd08c924bad332d5640e95b9f2b4d6/src/renderer/assets/eltor-home.png)
 
@@ -132,21 +142,17 @@ Feedback from early testers confirms that the application meets functional and u
 
 #### Summary
 
-The Lightning Node Interface (LNI) is central to El Tor’s payment integration, offering seamless connectivity to various Lightning Network implementations.
+The Lightning Node Interface (LNI) is central to El Tor’s payment integration, offering seamless connectivity to various Lightning Network implementations. In "hardware wallet land" there is HWI, now we have LNI in lightning land! It provides a standard interface to remote connect to *CLN, *LND, *LNDK, *Phoenixd, *LNURL, *BOLT 11 and *BOLT 12 (WIP). Language Binding support for kotlin, swift, react-native, nodejs (typescript, javaScript). With the ability to run on Android, iOS, Linux, Windows and Mac. ([View ReadMe](https://github.com/lightning-node-interface/lni/blob/master/readme.md))
 
 #### Details
-
-- **Enhancements:**
-  - **Invoice Handling:** Efficient generation and validation of Lightning Network invoices.
-  - **Performance Optimization:** High throughput with minimal latency.
-  - **Error Recovery:** Advanced mechanisms for handling failed transactions. ([View ReadMe](https://github.com/lightning-node-interface/lni/blob/master/readme.md))
 - **Key Features:**
   - Comprehensive support for invoice generation.
   - Simplified API interfaces for developers.
+  - Write once Rust and run everywhere
 
 #### Outcome
 
-The library’s stability and performance are aligned with project objectives and ready for broader deployment.
+Hopefully this library can be used in any project that wants to intgrate with lighting. 
 
 ---
 
@@ -160,25 +166,20 @@ Significant architectural improvements have been made to the Libtor fork, ensuri
 
 - **Enhancements:**
   - **SOCKS5 Proxy:** Augmented to support paid circuits.
-  - **Path Optimization:** Advanced routing algorithms tailored for payment-based use cases.
+  - **New RPC Calls:** Add EXTENDPAIDCIRCUIT call.
   - **Compatibility:** Maintains interoperability with existing Tor libraries.
-
-#### Outcome
-
-The architecture is robust and prepared for comprehensive testing and deployment.
 
 ---
 
 ## Next Steps
 
-1. Finalize and release the El Tor VPN-like client for beta testing.
-2. Conduct extensive testing of the paid circuit protocol in live environments.
-3. Optimize Libtor for enhanced stability and scalability.
-4. Expand community engagement to foster collaboration and feedback.
+1. Build out the eltord daemon in rust
+2. Finish the EXTENDPAIDCIRCUIT RPC in the TOR fork C code.
+
 
 ---
 
 ## Conclusion
 
-The El Tor project continues to progress across multiple fronts, achieving significant milestones in protocol specification, application development, and architectural refinement. The focus remains on iterative improvement and community collaboration to deliver a robust, scalable, and impactful solution.
+The El Tor project continues to progress across multiple fronts, achieving significant milestones in protocol specification, application development, and architectural refinement. The focus will shift to iterative improvements on the eltord daemon (the core component).
 
