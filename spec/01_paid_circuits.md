@@ -4,8 +4,16 @@
 
 Client Flow
 ==========
-A client wants to build a paid circuit:
+A client wants to build a paid circuit.
 
+Steps:
+1. Relay Descriptor Lookup
+2. Handshake Fee
+3. Circuit build
+4. Test Bandwidth
+5. Init Payments Ledger
+6. Client Bandwidth Watcher
+7. Circuit Kill. Repeat
 
 <b>1. Relay Descriptor Lookup</b>
 
@@ -138,6 +146,15 @@ Relay Flow
 =========
 A relay wants to start sharing his bandwidth. Configure payment preferences and rate.  
 
+Steps:
+1. Set Torrc Config
+2. Handshake
+3. Emit Event `EXTENDPAIDCIRCUIT`
+4. Start Relay Payment Watcher
+5. Init Payments Ledger
+6. Start Lightning payment watcher
+7. Payment Ledger Cron (Auditor Loop)
+
 <b>1. Config</b>
 
 torrc
@@ -209,7 +226,7 @@ PAYMENT_ID    CIRC_ID          ROUND      RELAY_FINGERPRINT    UPDATED_AT
    999           456             10              ME                0
 ```
 
-<b>6. Lightning Watcher</b>
+<b>6. Lightning Payment Watcher</b>
 
 After you add each `PAYMENT_ID` to the `payments-ledger` kick off a "lightning watcher".
 
