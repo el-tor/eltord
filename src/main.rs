@@ -1,10 +1,23 @@
+use dotenv::dotenv;
 use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
+use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
+use std::env;
 use std::error::Error;
-use std::process::Command;
-use tokio::time::{sleep, Duration};
+
+async fn get_lightning_node_info() {
+   
+    let url = env::var("PHOENIXD_URL").unwrap();
+    let password = env::var("PHOENIXD_PASSWORD").unwrap();
+    let node = PhoenixdNode::new(PhoenixdConfig { url, password });
+    let info = node.get_info().await.unwrap();
+    println!("Node info: {:?}", info)
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    dotenv().ok();
+    get_lightning_node_info().await;
+
     println!("Generating hashed control password...");
 
     let hashed_password = "16:281EC5644A4F548A60D50A0DD4DF835FFD50EDED062FD270D7269943DA";

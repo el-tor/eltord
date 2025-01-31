@@ -9,6 +9,9 @@ libtor-sys = { path = "../libeltor-sys"  }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
+lni = { path = "../lni/crates/lni" }
+lazy_static = "1.4.0"
+dotenv = "0.15.0"
 
 [[bin]]
 name = "eltor"
@@ -16,3 +19,4 @@ path = "src/main.rs"
 
 [features]
 vendored-openssl = ["libtor-sys/vendored-openssl"]
+default = ["vendored-openssl"]
