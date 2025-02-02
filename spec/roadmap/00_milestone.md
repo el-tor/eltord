@@ -6,6 +6,21 @@ El Tor has made steady progress, advancing into a modular and extensible system.
 
 While writing the code that connects to the Lightning Nodes, it became evident that supporting all major implementations—CLN, LNDK, and Phoenixd—required a unified tool. To address this need, the Lightning Node Interface (LNI) was born (WIP), creating a versatile library that simplifies integration with these implementations in Rust to support all major platforms with a standard interface.
 
+
+Here is a quick highlight of some importants commits this cycle:
+
+1. El Tor Spec Document
+    - code
+    - commits
+2. EXTENDPAIDCIRCUIT RPC code in Tor
+    - code
+    - commits
+3. Lightning Node Interface - implemented Phoenixd and uniffi language bindings
+    - code
+    - commits
+4. VPN-like Client - El Tor App
+
+
 Below is a outline of the major repos in the El Tor project. All repos have been moved from Bitbucket https://bitbucket.org/eltordev/eltor to Github https://github.com/orgs/el-tor/repositories
 
 ### Projects

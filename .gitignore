@@ -24,3 +24,5 @@
 
 # Ignore the .log files
 *.log
+
+payments.json

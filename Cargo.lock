@@ -391,6 +391,9 @@ dependencies = [
  "libtor",
  "libtor-sys",
  "lni",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
  "tokio 1.42.0",
  "tokio-tungstenite 0.15.0",
 ]
