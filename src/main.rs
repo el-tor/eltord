@@ -6,7 +6,7 @@ use std::{env, fmt::format};
 mod database;
 pub use database::{Db, DbError, Payment};
 mod rpc;
-use rpc::{rpc_client, RpcConfig};
+use rpc::{get_relay_descriptors, rpc_client, RpcConfig, Relay};
 
 #[tokio::main]
 async fn main() {
@@ -14,7 +14,7 @@ async fn main() {
 
     println!("Generating hashed control password...");
     let password = env::var("CONTROL_PASSWORD").unwrap_or("password1234_".into());
-    let hashed_password = "16:281EC5644A4F548A60D50A0DD4DF835FFD50EDED062FD270D7269943DA"; // TODO hash it
+    let hashed_password = "16:281EC5644A4F548A60D50A0DD4DF835FFD50EDED062FD270D7269943DA";
     let control_port: u16 = env::var("CONTROL_PORT")
         .unwrap_or("9051".into())
         .parse()
@@ -38,22 +38,29 @@ async fn main() {
             .start();
     });
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    let rpc = rpc_client(RpcConfig {
-        addr: format!("127.0.0.1:{}", &control_port.clone()),
-        rpc_password: password.clone(),
-        command: "GETINFO md/all".into(),
-    })
-    .await
-    .unwrap();
-    let rpc_str = rpc.as_str();
-    println!("rpc results: {}", rpc_str);
 
     // get_lightning_node_info().await;
 
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     loop {
-        interval.tick().await;
+        let rpc_config = RpcConfig {
+            addr: format!("127.0.0.1:{}", &control_port.clone()),
+            rpc_password: password.clone(),
+            command: "GETINFO ns/all".into(),
+        };
+    
+        let relays = get_relay_descriptors(rpc_config).await;
+        match relays {
+            Ok(relays) => {
+                for relay in relays {
+                    println!("{:?}", relay);
+                }
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(100)).await;
     }
 }
 
