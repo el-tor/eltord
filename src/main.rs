@@ -4,8 +4,8 @@ use std::env;
 mod database;
 pub use database::{Db, DbError, Payment};
 mod rpc;
-mod relay;
-use relay::start_relay_flow;
+mod client;
+use client::start_client_flow;
 
 #[tokio::main]
 async fn main() {
@@ -19,7 +19,7 @@ async fn main() {
         .parse()
         .unwrap();
 
-    tokio::spawn(async move { start_relay_flow(control_port, password).await });
+    tokio::spawn(async move { start_client_flow(control_port, password).await });
 
     println!("Starting Tor...");
     let tor = Tor::new()
