@@ -391,6 +391,7 @@ dependencies = [
  "libtor",
  "libtor-sys",
  "lni",
+ "rand",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -55,6 +55,10 @@ PAYMENT_INTERVAL 60
 # How many rounds of payments before the circuit is killed (default=10). max is 10 due to limits on data we can pass in a tor onion cell.
 PAYMENT_INTERVAL_MAX_ROUNDS 10
 
+# The DNS resolver that the exit node uses (useful to signal to clients if you use a specific DNS resolver, like family.dns.mullvad.net 194.242.2.6) *Optional
+DNS_RESOLVER 1.1.1.1
+
+
 # We recommend to set this 0 to allow the client to test the bandwidth. 
 # Setting this might make your relay less desirable as a noobie relay, but can be useful if you are being spammed or are a mature relay
 HANDSHAKE_FEE 0 

@@ -11,8 +11,7 @@ pub struct RpcConfig {
     pub command: String,
 }
 
-// TODO turn into impl and struct called RpcClient
-// returns an rpc client
+// Returns an RPC client response
 pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     println!("Connecting to Tor control port...");
     let stream = TcpStream::connect(config.addr).await?;
@@ -32,24 +31,30 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
         return Err("Authentication failed".into());
     }
 
+    // Send the command
     println!("Sending {} command...", config.command);
-    writer.write_all(format!("{}\r\n", config.command).as_bytes()).await?;
+    writer
+        .write_all(format!("{}\r\n", config.command).as_bytes())
+        .await?;
     writer.flush().await?;
 
-    // Read the response
-    println!("Reading response...");
-    response.clear();
-    reader.read_line(&mut response).await?;
-    if response.starts_with("250") {
-        let mut resp = String::new();
-        while reader.read_line(&mut resp).await? > 0 {
-            if resp.ends_with(".\r\n") {
-                break;
-            }
+    // Read response line by line
+    let mut response = String::new();
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            break; // EOF
         }
-        return Ok(resp);
+        response.push_str(&line);
+        
+        // Check for "250 OK" which indicates end of response
+        if line.trim().starts_with("250 ") {
+            break;
+        }
     }
 
-    println!("Failed to get response.");
-    Err("Failed to get response".into())
+    Ok(response)
 }
