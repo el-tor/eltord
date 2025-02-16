@@ -5,11 +5,15 @@ use tokio::net::TcpStream;
 // TOR RPC Commands
 // https://spec.torproject.org/control-spec/commands.html?highlight=Setevent#extended_events
 
+#[derive(Debug, Clone)]
 pub struct RpcConfig {
     pub addr: String,
     pub rpc_password: String,
     pub command: String,
 }
+
+// Implementing the Send trait for RpcConfig
+unsafe impl Send for RpcConfig {}
 
 // Returns an RPC client response
 pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
@@ -49,7 +53,7 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
             break; // EOF
         }
         response.push_str(&line);
-        
+
         // Check for "250 OK" which indicates end of response
         if line.trim().starts_with("250 ") {
             break;

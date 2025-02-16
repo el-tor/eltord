@@ -1,10 +1,11 @@
 use dotenv::dotenv;
 use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
+use rpc::RpcConfig;
 use std::env;
 mod database;
 pub use database::{Db, DbError, Payment};
-mod rpc;
 mod client;
+mod rpc;
 use client::start_client_flow;
 
 #[tokio::main]
@@ -19,7 +20,14 @@ async fn main() {
         .parse()
         .unwrap();
 
-    tokio::spawn(async move { start_client_flow(control_port, password).await });
+    let rpc_config = RpcConfig {
+        addr: format!("127.0.0.1:{}", control_port),
+        rpc_password: password.clone(),
+        command: "".into(),
+    };
+    tokio::spawn(async move {
+        start_client_flow(rpc_config).await
+    });
 
     println!("Starting Tor...");
     let tor = Tor::new()

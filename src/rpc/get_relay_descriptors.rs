@@ -1,7 +1,7 @@
-use std::error::Error;
 use super::{rpc_client, RpcConfig};
+use std::error::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Relay {
     pub nickname: String,
     pub fingerprint: String,
@@ -19,11 +19,10 @@ pub struct Relay {
     pub payment_handshake_fee: Option<u32>,
 }
 
-
-pub async fn get_relay_descriptors(config: RpcConfig) -> Result<Vec<Relay>, Box<dyn Error>> {
+pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box<dyn Error>> {
     let rpc = rpc_client(RpcConfig {
-        addr: config.addr,
-        rpc_password: config.rpc_password,
+        addr: config.clone().addr,
+        rpc_password: config.clone().rpc_password,
         command: "GETINFO desc/all-recent".into(),
     })
     .await
@@ -78,52 +77,44 @@ pub async fn get_relay_descriptors(config: RpcConfig) -> Result<Vec<Relay>, Box<
             if let Some(relay) = &mut current_relay {
                 relay.payment_bolt12_offer = Some(line["PaymentBolt12Offer ".len()..].to_string());
             }
-        }
-        else if line.starts_with("PaymentBip353 ") {
+        } else if line.starts_with("PaymentBip353 ") {
             if let Some(relay) = &mut current_relay {
                 relay.payment_bip353 = Some(line["PaymentBip353 ".len()..].to_string());
             }
-        }
-        else if line.starts_with("PaymentBolt11Lnurl ") {
+        } else if line.starts_with("PaymentBolt11Lnurl ") {
             if let Some(relay) = &mut current_relay {
                 relay.payment_bolt11_lnurl = Some(line["PaymentBolt11Lnurl ".len()..].to_string());
             }
-        }
-        else if line.starts_with("PaymentBolt11LightningAddress ") {
+        } else if line.starts_with("PaymentBolt11LightningAddress ") {
             if let Some(relay) = &mut current_relay {
-                relay.payment_bolt11_lightning_address = Some(line["PaymentBolt11LightningAddress ".len()..].to_string());
+                relay.payment_bolt11_lightning_address =
+                    Some(line["PaymentBolt11LightningAddress ".len()..].to_string());
             }
-        }
-        else if line.starts_with("PaymentRateMsats ") {
+        } else if line.starts_with("PaymentRateMsats ") {
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentRateMsats ".len()..].parse::<u32>() {
                     relay.payment_rate_msats = Some(rate);
                 }
             }
-        }
-        else if line.starts_with("PaymentInterval ") {
+        } else if line.starts_with("PaymentInterval ") {
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentInterval ".len()..].parse::<u32>() {
                     relay.payment_interval = Some(rate);
                 }
             }
-        }
-        else if line.starts_with("PaymentInvervalRounds ") {
+        } else if line.starts_with("PaymentInvervalRounds ") {
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentInvervalRounds ".len()..].parse::<u32>() {
                     relay.payment_interval_rounds = Some(rate);
                 }
             }
-        }
-        else if line.starts_with("PaymentHandshakeFee ") {
+        } else if line.starts_with("PaymentHandshakeFee ") {
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentHandshakeFee ".len()..].parse::<u32>() {
                     relay.payment_handshake_fee = Some(rate);
                 }
             }
         }
-
-
     }
 
     // Store the last relay (if any)
