@@ -1,4 +1,7 @@
-use crate::rpc::{get_current_consensus, get_relay_descriptors, Relay, RelayTag, RpcConfig};
+use crate::rpc::{
+    get_conf, get_conf_payment_circuit_max_fee, get_current_consensus, get_relay_descriptors, Relay, RelayTag, RpcConfig
+};
+use futures_util::TryFutureExt;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -15,10 +18,11 @@ pub async fn simple_relay_selection_algo(
     let relays = get_relay_descriptors(&rpc_config).await.unwrap();
     // Ok(relays)
     // Assuming PaymentCircuitMaxFee is defined somewhere
-    let payment_circuit_max_fee = 1000; // Placeholder value
+    let payment_circuit_max_fee = get_conf_payment_circuit_max_fee(&rpc_config).await.unwrap();
+    println!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
-    let mut filtered_relays: Vec<&Relay> = relays
+    let mut filtered_relays: Vec<&Relay> =  relays
         .iter()
         .filter(|relay| relay.payment_handshake_fee.is_none())
         .collect();
@@ -51,7 +55,6 @@ pub async fn simple_relay_selection_algo(
     // Pick 1 entry, 1 middle, 1 exit relay
     let mut selected_relays = Vec::new();
     let mut total_fee = 0;
-
 
     // 1. find an exit relay
 

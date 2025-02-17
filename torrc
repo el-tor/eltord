@@ -41,6 +41,6 @@ PaymentHandshakeFee 0
 # PaymentBandwidthQuota 0
 
 ## Client Config
-PaymentCircuitMaxFee 20000
+PaymentCircuitMaxFee 11000 # about $1 at 100k bitcoin price
 PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true
 PaymentLightningNodeConfig type=lnd url=http://lnd.com macaroon=mac1234
