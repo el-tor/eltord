@@ -13,8 +13,7 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         
-
         let selected_relays = simple_relay_selection_algo(rpc_config.clone()).await.unwrap();
-        println!("{:?}", selected_relays);
+        println!("Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}", selected_relays);
     }
 }

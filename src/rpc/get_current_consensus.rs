@@ -4,7 +4,6 @@ use std::error::Error;
 #[derive(Debug, Clone, PartialEq)]
 pub enum RelayTag {
     Guard,
-    Middle,
     Exit,
     Authority,
     Fast,
@@ -72,7 +71,6 @@ pub async fn get_current_consensus(
                     .split_whitespace()
                     .filter_map(|tag| match tag {
                         "Guard" => Some(RelayTag::Guard),
-                        "Middle" => Some(RelayTag::Middle),
                         "Exit" => Some(RelayTag::Exit),
                         "Authority" => Some(RelayTag::Authority),
                         "Fast" => Some(RelayTag::Fast),

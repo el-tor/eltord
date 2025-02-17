@@ -1,7 +1,6 @@
 use crate::rpc::{
-    get_conf, get_conf_payment_circuit_max_fee, get_current_consensus, get_relay_descriptors, Relay, RelayTag, RpcConfig
+    get_conf, get_conf_payment_circuit_max_fee, get_current_consensus, get_relay_descriptors, ConsensusRelay, Relay, RelayTag, RpcConfig
 };
-use futures_util::TryFutureExt;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -12,9 +11,10 @@ use std::sync::{Arc, Mutex};
 // 1. Pick 3 relays, 1 entry, 1 middle, 1 exit at random
 // 2. Make sure the total amount is under the PaymentCircuitMaxFee (from torrc config)
 // 3. Prefer 0 handshake fee
+// TODO optimize this algo as more relays are added (not currently optimized)
 pub async fn simple_relay_selection_algo(
     rpc_config: RpcConfig,
-) -> Result<Vec<Relay>, Box<dyn Error>> {
+) -> Result<Vec<ConsensusRelay>, Box<dyn Error>> {
     let relays = get_relay_descriptors(&rpc_config).await.unwrap();
     // Ok(relays)
     // Assuming PaymentCircuitMaxFee is defined somewhere
@@ -22,25 +22,44 @@ pub async fn simple_relay_selection_algo(
     println!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
-    let mut filtered_relays: Vec<&Relay> =  relays
+    let filtered_relays: Vec<&Relay> = relays
         .iter()
         .filter(|relay| relay.payment_handshake_fee.is_none())
         .collect();
 
     // Get relays then sort by guard, middle, exit
     let consensus_relays = get_current_consensus(&rpc_config).await.unwrap();
+    let consensus_relays: Vec<ConsensusRelay> = consensus_relays
+        .into_iter()
+        .filter(|r| r.tags.contains(&RelayTag::Running))
+        .collect();
     let mut guard_relays = Vec::new();
     let mut middle_relays = Vec::new();
     let mut exit_relays = Vec::new();
     for r in &consensus_relays {
         if r.tags.contains(&RelayTag::Guard) {
-            guard_relays.push(r);
+            if (filtered_relays
+                .iter()
+                .any(|relay| relay.fingerprint == r.fingerprint))
+            {
+                guard_relays.push(r);
+            }
         }
-        if r.tags.contains(&RelayTag::Middle) {
-            middle_relays.push(r);
+        if r.tags.contains(&RelayTag::Running) {
+            if (filtered_relays
+                .iter()
+                .any(|relay| relay.fingerprint == r.fingerprint))
+            {
+                middle_relays.push(r);
+            }
         }
         if r.tags.contains(&RelayTag::Exit) {
-            exit_relays.push(r);
+            if (filtered_relays
+                .iter()
+                .any(|relay| relay.fingerprint == r.fingerprint))
+            {
+                exit_relays.push(r);
+            }
         }
         println!("{:?}", r);
     }
@@ -49,33 +68,34 @@ pub async fn simple_relay_selection_algo(
     let rng = Arc::new(Mutex::new(SmallRng::from_entropy()));
     {
         let mut rng = rng.lock().unwrap();
-        filtered_relays.shuffle(&mut *rng);
+        guard_relays.shuffle(&mut *rng);
+        middle_relays.shuffle(&mut *rng);
+        exit_relays.shuffle(&mut *rng);
     }
 
     // Pick 1 entry, 1 middle, 1 exit relay
     let mut selected_relays = Vec::new();
     let mut total_fee = 0;
 
-    // 1. find an exit relay
-
-    for relay in filtered_relays {
-        if selected_relays.len() == 3 {
-            break;
-        }
-
-        // TODO Check if adding this relay would exceed the max fee
-        // if total_fee + relay.interval_fee + relay.rounds_total_fee <= payment_circuit_max_fee {
-        //     selected_relays.push(relay.clone());
-        //     total_fee += relay.interval_fee + relay.rounds_total_fee;
-        // }
-        selected_relays.push(relay.clone());
+    if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+        selected_relays.push((*guard).clone());
+    }
+    if let Some(middle) = middle_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+        selected_relays.push((*middle).clone());
+    }
+    if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+        selected_relays.push((*exit).clone());
     }
 
+    let mut total_fee = 0;
+    
+    // TODO calculate within max fee range here
+    
     if selected_relays.len() != 3 {
         return Err("Could not find suitable relays".into());
     }
 
-    Ok(selected_relays.into_iter().clone().collect())
+    Ok(selected_relays)
 }
 
 // TODO: implement more complicated relay selection algos

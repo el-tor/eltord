@@ -60,7 +60,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
             }
         } else if line.starts_with("fingerprint ") {
             if let Some(relay) = &mut current_relay {
-                relay.fingerprint = line["fingerprint ".len()..].to_string();
+                relay.fingerprint = line["fingerprint ".len()..].to_string().replace(" ", "");
             }
         } else if line.starts_with("contact ") {
             if let Some(relay) = &mut current_relay {
