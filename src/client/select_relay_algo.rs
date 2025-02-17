@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 // TODO optimize this algo as more relays are added (not currently optimized)
 pub async fn simple_relay_selection_algo(
     rpc_config: RpcConfig,
-) -> Result<Vec<ConsensusRelay>, Box<dyn Error>> {
+) -> Result<Vec<Relay>, Box<dyn Error>> {
     let relays = get_relay_descriptors(&rpc_config).await.unwrap();
     // Ok(relays)
     // Assuming PaymentCircuitMaxFee is defined somewhere
@@ -95,7 +95,17 @@ pub async fn simple_relay_selection_algo(
         return Err("Could not find suitable relays".into());
     }
 
-    Ok(selected_relays)
+    let matched_relays: Vec<Relay> = selected_relays
+        .iter()
+        .filter_map(|consensus_relay| {
+            filtered_relays
+                .iter()
+                .find(|relay| relay.fingerprint == consensus_relay.fingerprint)
+                .map(|relay| (*relay).clone())
+        })
+        .collect();
+
+    Ok(matched_relays)
 }
 
 // TODO: implement more complicated relay selection algos
