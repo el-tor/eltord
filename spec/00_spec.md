@@ -111,7 +111,7 @@ a. Preimages and Payment Hashes
 
 - The client pre-generates a unique payment id hash. Using a payment id hash instead of a payment hash ensures the protocol works with both
 BOLT 12 and BOLT 11 (with blinded paths), since some implementations of BOLT 12 (phoenixd) do not expose endpoints to create a `lni` invoice from the static BOLT 12 offer.
-- This hash is sent to the relay during circuit establishment. This is the primary key that the relay uses to verify the client has paid.
+- This hash is sent to the relay (via an onion message) during circuit establishment. This is the primary key that the relay uses to verify the client has paid.
 
 b. Payment Rounds
 
@@ -119,7 +119,7 @@ b. Payment Rounds
 
 c. Privacy Guarantees
 
-- Blinded paths in BOLT 12 (and some implementation in BOLT 11) ensures payments are unlinkable to specific circuits or clients.
+- Blinded paths in BOLT 12 (and some implementations via BOLT 11 like LND ) ensures payments are unlinkable to specific circuits or clients.
 - The preimages, payment hashes and hashed payment id do not reveal client identities.
 
 ### (4) Implementation Details
@@ -188,5 +188,5 @@ Here is a model of TOPS rounds. Any given round can be terminated if either part
 7    ->  1 sat
 8    ->  1 sat
 9    ->  1 sat
-10   ->  1 sats
+10   ->  1 sat
 ```
