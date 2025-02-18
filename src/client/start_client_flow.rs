@@ -1,6 +1,6 @@
 
 use crate::rpc::{self, RpcConfig};
-use crate::client::simple_relay_selection_algo;
+use crate::client::{build_circuit, simple_relay_selection_algo};
 
 // 1. Relay Descriptor Lookup
 // 2. Handshake Fee
@@ -11,16 +11,19 @@ use crate::client::simple_relay_selection_algo;
 // 7. Circuit Kill. Repeat
 pub async fn start_client_flow(rpc_config: RpcConfig) {
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
         
         // 1. Relay Descriptor Lookup
-        let selected_relays = simple_relay_selection_algo(rpc_config.clone()).await.unwrap();
+        let selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
         println!("Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}", selected_relays);
 
         // 2. Handshake Fee (simple algo is 0, so skip for now)
 
         // 3. Circuit build
         // EXTENDPAIDCIRCUIT
+        let circuit_id = build_circuit(&rpc_config, selected_relays).await.unwrap();
+        println!("Created paid Circuit with ID: {}", circuit_id);
+
 
         // 4. Test Bandwidth
 

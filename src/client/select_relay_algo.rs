@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 // 3. Prefer 0 handshake fee
 // TODO optimize this algo as more relays are added (not currently optimized)
 pub async fn simple_relay_selection_algo(
-    rpc_config: RpcConfig,
+    rpc_config: &RpcConfig,
 ) -> Result<Vec<Relay>, Box<dyn Error>> {
     let relays = get_relay_descriptors(&rpc_config).await.unwrap();
     // Ok(relays)

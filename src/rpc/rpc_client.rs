@@ -22,42 +22,22 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
-    // Authenticate with the control port using the hardcoded password
-    println!("Authenticating...");
-    writer
-        .write_all(format!("AUTHENTICATE \"{}\"\r\n", config.rpc_password).as_bytes())
-        .await?;
+    let content = format!(
+        "AUTHENTICATE \"{}\"\r\n{}\r\nQUIT\r\n",
+        config.rpc_password, config.command
+    );
+    writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
 
+    // Read until EOF
     let mut response = String::new();
-    reader.read_line(&mut response).await?;
-    if !response.starts_with("250") {
-        return Err("Authentication failed".into());
-    }
-
-    // Send the command
-    println!("Sending {} command...", config.command);
-    writer
-        .write_all(format!("{}\r\n", config.command).as_bytes())
-        .await?;
-    writer.flush().await?;
-
-    // Read response line by line
-    let mut response = String::new();
-    let mut line = String::new();
-
     loop {
-        line.clear();
+        let mut line = String::new();
         let bytes_read = reader.read_line(&mut line).await?;
         if bytes_read == 0 {
-            break; // EOF
-        }
-        response.push_str(&line);
-
-        // Check for "250 OK" which indicates end of response
-        if line.trim().starts_with("250 ") {
             break;
         }
+        response.push_str(&line);
     }
 
     Ok(response)
