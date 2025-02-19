@@ -7,6 +7,8 @@ pub use database::{Db, DbError, Payment};
 mod client;
 mod rpc;
 use client::start_client_flow;
+mod utils;
+pub use utils::*;
 
 #[tokio::main]
 async fn main() {

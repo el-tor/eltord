@@ -14,6 +14,10 @@ TestingDirAuthVoteGuard *
 TestingMinExitFlagThreshold 0
 Nickname eltordtest
 
+Log notice file ./tmp/tor-rust/notice.log
+Log info file ./tmp/tor-rust/info.log
+Log debug file ./tmp/tor-rust/debug.log
+
 ElTorPayHashHop1 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
 ElTorPayHashHop2 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
 ElTorPayHashHop3 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
@@ -31,14 +35,13 @@ ElTorPreimageHop7 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186
 
 ## Relay Config
 PaymentBolt12Offer lno1234
-PaymentBip353 me@example.com
-PaymentBolt11Lnurl LNURL1234
-PaymentBolt11LightningAddress me@example.com
+# PaymentBip353 me@example.com
+# PaymentBolt11Lnurl LNURL1234
+# PaymentBolt11LightningAddress me@example.com
 PaymentRateMsats 1000
 PaymentInterval 60
+# Not being used, need to think more about this, hardcode to 10 now so we can pass in 10 payment id hashed during circuit build
 PaymentInvervalRounds 10
-PaymentHandshakeFee 0
-# PaymentBandwidthQuota 0
 
 ## Client Config
 PaymentCircuitMaxFee 11000 # about $1 at 100k bitcoin price

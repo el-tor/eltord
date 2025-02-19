@@ -17,6 +17,9 @@ pub struct Relay {
     pub payment_interval: Option<u32>,
     pub payment_interval_rounds: Option<u32>,
     pub payment_handshake_fee: Option<u32>,
+    pub payment_handshake_fee_payhash: Option<String>,
+    pub payment_handshake_fee_preimage: Option<String>,
+    pub payment_id_hashes_10: Option<Vec<String>>,
 }
 
 pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box<dyn Error>> {
@@ -56,6 +59,9 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
                     payment_interval: None,
                     payment_interval_rounds: None,
                     payment_handshake_fee: None,
+                    payment_id_hashes_10: None,
+                    payment_handshake_fee_payhash: None,
+                    payment_handshake_fee_preimage: None,
                 });
             }
         } else if line.starts_with("fingerprint ") {
@@ -103,6 +109,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
                 }
             }
         } else if line.starts_with("PaymentInvervalRounds ") {
+            // TODO Not being used, need to think more about this, hardcode to 10 now so we can pass in 10 payment id hashed during circuit build
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentInvervalRounds ".len()..].parse::<u32>() {
                     relay.payment_interval_rounds = Some(rate);

@@ -22,6 +22,10 @@ pub struct Payment {
     pub relay_fingerprint: String,
     pub updated_at: i64,
     pub amount_msat: i64,
+    pub handshake_fee_payhash: Option<String>,
+    pub handshake_fee_preimage: Option<String>,
+    pub paid: bool,
+    pub expires_at: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,9 +43,13 @@ impl Db {
                 .map_err(|e| DbError::IoErr {
                     reason: e.to_string(),
                 })?;
-            serde_json::from_str(&contents).map_err(|e| DbError::DeserializationErr {
-                reason: e.to_string(),
-            })?
+            if contents.trim().is_empty() {
+                Vec::new()
+            } else {
+                serde_json::from_str(&contents).map_err(|e| DbError::DeserializationErr {
+                    reason: e.to_string(),
+                })?
+            }
         } else {
             Vec::new()
         };
@@ -101,6 +109,10 @@ mod tests {
             relay_fingerprint: "1".to_string(),
             updated_at: 1,
             amount_msat: 1,
+            handshake_fee_payhash: Some("1".to_string()),
+            handshake_fee_preimage: Some("1".to_string()),
+            paid: false.clone(),
+            expires_at: 1,
         };
 
         let db = Db::new("payments.json".to_string()).unwrap();

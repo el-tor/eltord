@@ -1,7 +1,5 @@
-use crate::rpc::{extend_paid_circuit, Relay, RpcConfig};
-use rand::Rng;
-use sha2::{Digest, Sha256};
-use hex;
+use crate::{rpc::{extend_paid_circuit, Relay, RpcConfig}};
+use crate::utils::get_random_payhash_and_preimage;
 
 struct ExtendPaidCircuitRow {
     relay_fingerprint: String,
@@ -20,28 +18,16 @@ struct ExtendPaidCircuitRow {
 // 4. return the circuit id so the client can watch it.
 pub async fn build_circuit(
     rpc_config: &RpcConfig,
-    relays: Vec<Relay>,
+    relays: &Vec<Relay>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut extend_paid_circuit_rows = Vec::new();
 
-    
-    for relay in relays {
-        let (handshake_payhash, handshake_preimage) = get_random_payhash_and_preimage();
-        print!("Handshake Payment Hash: {}\n", handshake_payhash);
-        print!("Handshake Payment Preimage: {}\n", handshake_preimage);
-        let mut payment_hashes = Vec::new();
-        let mut payment_ids_concatinated_10 = String::new();
-        for _ in 0..10 {
-            let (payhash, preimage) = get_random_payhash_and_preimage();
-            payment_hashes.push(payhash.clone());
-            payment_ids_concatinated_10.push_str(&payhash);
-        }
-
+    for relay in relays.iter() {
         let row = ExtendPaidCircuitRow {
             relay_fingerprint: relay.fingerprint.clone(),
-            handshake_fee_payment_hash: handshake_payhash,
-            handshake_fee_preimage: handshake_preimage,
-            payment_ids_concatinated_10: payment_ids_concatinated_10,
+            handshake_fee_payment_hash: relay.payment_handshake_fee_payhash.clone().unwrap_or_default(),
+            handshake_fee_preimage: relay.payment_handshake_fee_preimage.clone().unwrap_or_default(),
+            payment_ids_concatinated_10: relay.payment_id_hashes_10.clone().unwrap_or_default().join(""),
         };
         extend_paid_circuit_rows.push(row);
     }
@@ -62,12 +48,21 @@ pub async fn build_circuit(
     Ok(circuit_id)
 }
 
-// Generate random payment hash and preimage
-fn get_random_payhash_and_preimage() -> (String, String) {
-    let mut rng = rand::thread_rng();
-    let preimage: [u8; 32] = rng.gen();
-    let mut hasher = Sha256::new();
-    hasher.update(&preimage);
-    let payment_hash = hasher.finalize();
-    (hex::encode(payment_hash), hex::encode(preimage))
+pub fn pregen_extend_paid_circuit_hashes(selected_relays: &mut Vec<Relay>, payment_rounds: u16) -> &Vec<Relay> {
+    for relay in selected_relays.iter_mut() {
+        // Generate payhash and preimage for handshake fee
+        let (handshake_payhash, handshake_preimage) = get_random_payhash_and_preimage();
+        print!("Handshake Payment Hash: {}\n", handshake_payhash);
+        print!("Handshake Payment Preimage: {}\n", handshake_preimage);
+        relay.payment_handshake_fee_payhash = Some(handshake_payhash);
+        relay.payment_handshake_fee_preimage = Some(handshake_preimage);
+        
+        // Generate 10 payment id hashes for each round of payment in the circuit lifetime
+        let mut payment_id_hashes_10 = Vec::new();
+        for _ in 0..payment_rounds { 
+            payment_id_hashes_10.push(get_random_payhash_and_preimage().0);
+        }
+        relay.payment_id_hashes_10 = Some(payment_id_hashes_10);
+    }
+    selected_relays
 }

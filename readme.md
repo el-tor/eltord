@@ -78,3 +78,10 @@ cargo build -vv --features=vendored-openssl
 cargo run --bin eltor -vv --features=vendored-openssl
 ```
 
+.env
+```
+PHOENIXD_URL=http://localhost:9740
+PHOENIXD_PASSWORD={{YOUR_PW}}
+PHOENIXD_TEST_PAYMENT_HASH={{{{YOUR_TEST_PAYMENT_HASH}}}} 
+PAYMENT_INTERVAL_ROUNDS=10 # Not being used, need to think more about this, hardcode to 10 now so we can pass in 10 payment id hashed during circuit build
+```

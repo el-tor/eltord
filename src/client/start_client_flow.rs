@@ -1,43 +1,80 @@
-
+use crate::client::{
+    build_circuit, init_payments_ledger, pregen_extend_paid_circuit_hashes,
+    simple_relay_selection_algo,
+};
 use crate::rpc::{self, RpcConfig};
-use crate::client::{build_circuit, simple_relay_selection_algo};
+use std::env;
 
-// 1. Relay Descriptor Lookup
-// 2. Handshake Fee
-// 3. Circuit build
-// 4. Test Bandwidth
-// 5. Init Payments Ledger
-// 6. Client Bandwidth Watcher
-// 7. Circuit Kill. Repeat
+/// Starts the client flow for building and managing circuits.
+///
+/// This function performs the following steps:
+/// 1. Relay Descriptor Lookup
+/// 2. Handshake Fee (currently skipped)
+/// 3. Pre-generate payment ID hashes for the circuit
+/// 4. Circuit build
+/// 5. Test Bandwidth (currently not implemented)
+/// 6. Initialize Payments Ledger
+/// 7. Client Bandwidth Watcher and payment loops (currently not implemented)
+/// 8. Circuit Kill and repeat
+///
+/// # Arguments
+///
+/// * `rpc_config` - Configuration for the RPC client.
+///
+/// # Notes
+///
+/// - The function currently sleeps for 6 seconds before starting the flow.
+/// - The number of payment rounds is determined by the `PAYMENT_INTERVAL_ROUNDS` environment variable, defaulting to 10 if not set.
+/// - The function selects relays using a simple relay selection algorithm and builds a circuit with the selected relays.
+/// - A backup circuit is planned but not yet implemented.
+/// - Bandwidth testing and client bandwidth watcher are placeholders for future implementation.
+/// - The function is designed to loop for building and managing multiple circuits, but the loop is currently commented out.
 pub async fn start_client_flow(rpc_config: RpcConfig) {
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
-        
-        // 1. Relay Descriptor Lookup
-        let selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
-        println!("Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}", selected_relays);
+    // loop {
+    tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
-        // 2. Handshake Fee (simple algo is 0, so skip for now)
+    let payment_rounds: u16 = env::var("PAYMENT_INTERVAL_ROUNDS")
+        .unwrap_or(10.to_string())
+        .parse()
+        .unwrap();
 
-        // 3. Circuit build
-        // EXTENDPAIDCIRCUIT
-        let circuit_id = build_circuit(&rpc_config, selected_relays).await.unwrap();
-        println!("Created paid Circuit with ID: {}", circuit_id);
+    // 1. Relay Descriptor Lookup
+    let mut selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
+    println!(
+        "Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}",
+        selected_relays
+    );
+    // TODO backup circuit
+    // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
+    // 2. Handshake Fee (simple algo is 0, so skip for now)
 
-        // 4. Test Bandwidth
+    // 3. Pregenerate payment id hashes for the circuit
+    // TODO for bolt11 get a real payment hash from the invoice via the lightning node, like LND
+    pregen_extend_paid_circuit_hashes(&mut selected_relays, payment_rounds);
 
-        // 5. Init Payments Ledger
-        // Make sure to pay each relay in the circuit out of band using lightning
+    // 4. Circuit build
+    // EXTENDPAIDCIRCUIT
+    let circuit_id = build_circuit(&rpc_config, &selected_relays).await.unwrap();
+    println!("Created paid Circuit with ID: {}", circuit_id);
+    // TODO implement backup circuit
+    // let backup_circuit_id = build_circuit(&rpc_config, backup_selected_relays).await.unwrap();
+    // println!("Created backup paid Circuit with ID: {}", backup_circuit_id);
 
-        // 6. Client Bandwidth Watcher and payment loops
+    // 5. Test Bandwidth
+    // TODO: Implement bandwidth test
 
-        // 7. Circuit Kill. Repeat
+    // 6. Init Payments Ledger
+    init_payments_ledger(&selected_relays, circuit_id);
 
-        // => => loop this for the desired number of circuits (Tor typically has backup circuits in case one fails)
-        // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup
-        // for _ in 0..2 {
-            // Implement the logic for building and managing circuits here
-        // }
-    }
+    // 7. Client Bandwidth Watcher and payment loops
+
+    // 8. Circuit Kill. Repeat
+
+    // => => loop this for the desired number of circuits (Tor typically has backup circuits in case one fails)
+    // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup
+    // for _ in 0..2 {
+    // Implement the logic for building and managing circuits here
+    // }
+    //}
 }
