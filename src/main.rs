@@ -1,14 +1,12 @@
 use dotenv::dotenv;
 use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
-use rpc::RpcConfig;
 use std::env;
 mod database;
-pub use database::{Db, DbError, Payment};
 mod client;
 mod rpc;
-use client::start_client_flow;
 mod utils;
-pub use utils::*;
+mod types;
+use types::RpcConfig;
 
 #[tokio::main]
 async fn main() {
@@ -28,7 +26,7 @@ async fn main() {
         command: "".into(),
     };
     tokio::spawn(async move {
-        start_client_flow(rpc_config).await
+        client::start_client_flow(rpc_config).await
     });
 
     println!("Starting Tor...");

@@ -1,16 +1,10 @@
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use crate::types::RpcConfig;
 
 // TOR RPC Commands
 // https://spec.torproject.org/control-spec/commands.html?highlight=Setevent#extended_events
-
-#[derive(Debug, Clone)]
-pub struct RpcConfig {
-    pub addr: String,
-    pub rpc_password: String,
-    pub command: String,
-}
 
 // Implementing the Send trait for RpcConfig
 unsafe impl Send for RpcConfig {}

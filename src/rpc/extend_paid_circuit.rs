@@ -1,7 +1,6 @@
-use super::{rpc_client, RpcConfig};
+use super::rpc_client;
 use std::error::Error;
-
-
+use crate::types::RpcConfig;
 
 // EXTENDPAIDCIRCUIT 0
 // fingerprint_entry_guard handshake_fee_payment_hash+handshake_fee_preimage+10_payment_ids_concatinated

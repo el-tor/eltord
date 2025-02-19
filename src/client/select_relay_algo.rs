@@ -1,6 +1,6 @@
-use crate::rpc::{
-    get_conf, get_conf_payment_circuit_max_fee, get_current_consensus, get_relay_descriptors, ConsensusRelay, Relay, RelayTag, RpcConfig
-};
+use crate::rpc;
+use crate::rpc::{ConsensusRelay, RelayTag};
+use crate::types::{Relay, RpcConfig};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -15,10 +15,12 @@ use std::sync::{Arc, Mutex};
 pub async fn simple_relay_selection_algo(
     rpc_config: &RpcConfig,
 ) -> Result<Vec<Relay>, Box<dyn Error>> {
-    let relays = get_relay_descriptors(&rpc_config).await.unwrap();
+    let relays = rpc::get_relay_descriptors(&rpc_config).await.unwrap();
     // Ok(relays)
     // Assuming PaymentCircuitMaxFee is defined somewhere
-    let payment_circuit_max_fee = get_conf_payment_circuit_max_fee(&rpc_config).await.unwrap();
+    let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config)
+        .await
+        .unwrap();
     println!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
@@ -28,7 +30,7 @@ pub async fn simple_relay_selection_algo(
         .collect();
 
     // Get relays then sort by guard, middle, exit
-    let consensus_relays = get_current_consensus(&rpc_config).await.unwrap();
+    let consensus_relays = rpc::get_current_consensus(&rpc_config).await.unwrap();
     let consensus_relays: Vec<ConsensusRelay> = consensus_relays
         .into_iter()
         .filter(|r| r.tags.contains(&RelayTag::Running))
@@ -80,7 +82,10 @@ pub async fn simple_relay_selection_algo(
     if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
         selected_relays.push((*guard).clone());
     }
-    if let Some(middle) = middle_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+    if let Some(middle) = middle_relays
+        .iter()
+        .find(|&&r| !selected_relays.contains(r))
+    {
         selected_relays.push((*middle).clone());
     }
     if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
@@ -88,9 +93,9 @@ pub async fn simple_relay_selection_algo(
     }
 
     let mut total_fee = 0;
-    
+
     // TODO calculate within max fee range here
-    
+
     if selected_relays.len() != 3 {
         return Err("Could not find suitable relays".into());
     }

@@ -1,4 +1,5 @@
-use super::{rpc_client, RpcConfig};
+use super::rpc_client;
+use crate::types::RpcConfig;
 use std::error::Error;
 
 #[derive(Debug, Clone)]

@@ -1,8 +1,7 @@
-use crate::client::{
-    build_circuit, init_payments_ledger, pregen_extend_paid_circuit_hashes,
-    simple_relay_selection_algo,
-};
-use crate::rpc::{self, RpcConfig};
+use super::circuit;
+use crate::types::RpcConfig;
+use super::select_relay_algo;
+use super::payments_ledger;
 use std::env;
 
 /// Starts the client flow for building and managing circuits.
@@ -39,7 +38,7 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
         .unwrap();
 
     // 1. Relay Descriptor Lookup
-    let mut selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
+    let mut selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config).await.unwrap();
     println!(
         "Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}",
         selected_relays
@@ -51,11 +50,11 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
 
     // 3. Pregenerate payment id hashes for the circuit
     // TODO for bolt11 get a real payment hash from the invoice via the lightning node, like LND
-    pregen_extend_paid_circuit_hashes(&mut selected_relays, payment_rounds);
+    circuit::pregen_extend_paid_circuit_hashes(&mut selected_relays, payment_rounds);
 
     // 4. Circuit build
     // EXTENDPAIDCIRCUIT
-    let circuit_id = build_circuit(&rpc_config, &selected_relays).await.unwrap();
+    let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays).await.unwrap();
     println!("Created paid Circuit with ID: {}", circuit_id);
     // TODO implement backup circuit
     // let backup_circuit_id = build_circuit(&rpc_config, backup_selected_relays).await.unwrap();
@@ -65,7 +64,7 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
     // TODO: Implement bandwidth test
 
     // 6. Init Payments Ledger
-    init_payments_ledger(&selected_relays, circuit_id);
+    payments_ledger::init_payments_ledger(&selected_relays, circuit_id);
 
     // 7. Client Bandwidth Watcher and payment loops
 

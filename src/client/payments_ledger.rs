@@ -1,4 +1,5 @@
-use crate::{database, rpc::Relay};
+use crate::database;
+use crate::types::Relay;
 
 pub fn init_payments_ledger(selected_relays: &Vec<Relay>, circuit_id: String) {
     for relay in selected_relays.iter() {

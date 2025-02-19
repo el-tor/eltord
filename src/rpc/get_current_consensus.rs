@@ -1,4 +1,6 @@
-use super::{rpc_client, RpcConfig, microdesc_to_fingerprint};
+use super::rpc_client;
+use crate::utils::microdesc_to_fingerprint;
+use crate::types::RpcConfig;
 use std::error::Error;
 
 #[derive(Debug, Clone, PartialEq)]
