@@ -57,9 +57,6 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays).await.unwrap();
     println!("Created paid Circuit with ID: {}", circuit_id);
     println!("Connect your browser via sock5 on: {}", 18057); // TODO remove hardcodded socks5 port
-    // TODO implement backup circuit
-    // let backup_circuit_id = build_circuit(&rpc_config, backup_selected_relays).await.unwrap();
-    // println!("Created backup paid Circuit with ID: {}", backup_circuit_id);
 
     // 5. Test Bandwidth
     // TODO: Implement bandwidth test
@@ -68,7 +65,7 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     payments_ledger::init_payments_ledger(&selected_relays, &circuit_id);
 
     // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
-    let payment_loop_result = payments_loop::start_payments_loop(&circuit_id).await;
+    let payment_loop_result = payments_loop::start_payments_loop(&selected_relays,&circuit_id).await;
 
     // => => loop logic above for the desired number of circuits (Tor typically has backup circuits in case one fails)
     // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup

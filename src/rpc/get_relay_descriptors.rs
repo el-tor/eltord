@@ -1,6 +1,5 @@
 use super::rpc_client;
-use crate::types::Relay;
-use crate::types::RpcConfig;
+use crate::types::{Relay, RpcConfig};
 use std::error::Error;
 
 pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box<dyn Error>> {
@@ -37,12 +36,14 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
                     payment_bolt11_lnurl: None,
                     payment_bolt11_lightning_address: None,
                     payment_rate_msats: None,
-                    payment_interval: None,
+                    payment_interval_seconds: None,
                     payment_interval_rounds: None,
                     payment_handshake_fee: None,
                     payment_id_hashes_10: None,
                     payment_handshake_fee_payhash: None,
                     payment_handshake_fee_preimage: None,
+                    relay_tag: None,
+                    hop: None,
                 });
             }
         } else if line.starts_with("fingerprint ") {
@@ -86,7 +87,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
         } else if line.starts_with("PaymentInterval ") {
             if let Some(relay) = &mut current_relay {
                 if let Ok(rate) = line["PaymentInterval ".len()..].parse::<u32>() {
-                    relay.payment_interval = Some(rate);
+                    relay.payment_interval_seconds = Some(rate);
                 }
             }
         } else if line.starts_with("PaymentInvervalRounds ") {

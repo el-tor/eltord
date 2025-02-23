@@ -1,32 +1,7 @@
 use super::rpc_client;
 use crate::utils::microdesc_to_fingerprint;
-use crate::types::RpcConfig;
+use crate::types::{RpcConfig, ConsensusRelay, RelayTag};
 use std::error::Error;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RelayTag {
-    Guard,
-    Exit,
-    Authority,
-    Fast,
-    HSDir,
-    Running,
-    Stable,
-    V2Dir,
-    Valid,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ConsensusRelay {
-    pub nickname: String,
-    pub fingerprint: String,
-    pub contact: Option<String>,
-    pub bandwidth: Option<u32>,
-    pub ip: Option<String>,
-    pub port: Option<u16>,
-    pub tags: Vec<RelayTag>,
-    pub policy: Option<String>,
-}
 
 pub async fn get_current_consensus(
     config: &RpcConfig,

@@ -9,7 +9,7 @@ pub fn init_payments_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
             let mut row = database::Payment {
                 payment_id: payment_id_hash.to_string(),
                 circ_id: circuit_id.to_string(),
-                interval_seconds: relay.payment_interval.unwrap_or(60) as i64,
+                interval_seconds: relay.payment_interval_seconds.unwrap_or(60) as i64,
                 round: i,
                 relay_fingerprint: relay.fingerprint.clone(),
                 updated_at: chrono::Utc::now().timestamp(),
@@ -17,11 +17,12 @@ pub fn init_payments_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
                 handshake_fee_payhash: None,
                 handshake_fee_preimage: None,
                 paid: false,
-                expires_at: chrono::Utc::now().timestamp() + relay.payment_interval.unwrap_or(0) as i64,
+                expires_at: chrono::Utc::now().timestamp() + (relay.payment_interval_seconds.unwrap_or(0) as i64  * i ), // expires now + 60 seconds for round 1, now + 120 seconds for round 2, etc
                 bolt11_invoice: None, // TODO implement
                 bolt12_offer: relay.payment_bolt12_offer.clone(), // TODO lookup payment preference from relay based on what capabilities your wallet has
                 preimage: None,
                 fee: None,
+                has_error: false,
             };
             if i == 1 {
                 row.handshake_fee_payhash = relay.payment_handshake_fee_payhash.clone();

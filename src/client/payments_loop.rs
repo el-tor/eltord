@@ -1,6 +1,7 @@
 use super::bandwidth_test;
 use crate::database::{Db, Payment};
 use crate::lightning;
+use crate::types::Relay;
 use lni::phoenixd::PhoenixdNode;
 use lni::PayInvoiceResponse;
 use std::env;
@@ -9,21 +10,49 @@ use std::env;
 // if no then do bandwidth test
 // if good then pay relay
 // wait for next round
-pub async fn start_payments_loop(circuit_id: &String) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_payments_loop(
+    relays: &Vec<Relay>,
+    circuit_id: &String,
+) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::new("payments.json".to_string()).unwrap();
     let wallet = lightning::load_wallet().await;
     let mut round = 1;
-    println!("Starting payments loop for circuit: {:?}", circuit_id);
+    let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
+        .unwrap_or("0".to_string())
+        .parse()
+        .unwrap();
     while round <= 10 {
-        let payments = match db.lookup_payments(circuit_id.to_string(), round) {
-            Ok(payments) => payments,
-            Err(_) => return Err("Payment for the circuit not found".into()),
-        };
-        for payment in payments.iter() {
-            if (!is_round_expired((&payment)) && bandwidth_test::is_bandwidth_good()) {
-                pay_relay(&wallet, &payment).await;
-                // TODO write fee and preimage to ledger and handle errors/retry
+        println!(
+            "Round {:?} - Starting payments loop for circuit: {:?}",
+            round, circuit_id
+        );
+        for relay in relays.iter() {
+            let payment_id_hash = match &relay.payment_id_hashes_10 {
+                Some(hashes) => hashes[round - 1].clone(),
+                None => return Err("Payment ID hashes not found".into()),
+            };
+            let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
+                Ok(payment) => payment.unwrap(),
+                Err(_) => return Err("Payment for the circuit not found".into()),
+            };
+            if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
+                let pay_resp = pay_relay(&wallet, &payment).await;
+                match pay_resp {
+                    Ok(pay_resp) => {
+                        payment.preimage = Some(pay_resp.preimage);
+                        payment.fee = Some(pay_resp.fee);
+                        payment.paid = true;
+                        db.update_payment(payment).unwrap();
+                    }
+                    Err(_) => {
+                        println!("Payment failed for payment id: {:?}", payment.payment_id);
+                        payment.has_error = true;
+                        db.update_payment(payment).unwrap();
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
             } else {
+                println!("Kill circuit round is expired");
                 kill_circuit();
                 break;
             }
@@ -32,7 +61,6 @@ pub async fn start_payments_loop(circuit_id: &String) -> Result<(), Box<dyn std:
         // TODO figure out how to do for relays with different interval_seconds, hardcode 45 second intervals for now
         wait_for_next_round(45);
     }
-
     Ok(())
 }
 
@@ -49,7 +77,7 @@ fn is_round_expired(payment: &Payment) -> bool {
 }
 
 fn wait_for_next_round(interval_seconds: i64) {
-    print!("Waiting for next round {}...", chrono::Utc::now());
+    println!("Waiting for next round {}...", chrono::Utc::now());
     std::thread::sleep(std::time::Duration::from_secs(interval_seconds as u64));
 }
 
@@ -57,12 +85,17 @@ async fn pay_relay(
     wallet: &PhoenixdNode,
     payment: &Payment,
 ) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
-
     let amount_msats = payment.amount_msat;
     println!(
-        "Paying {} sats relay: {:?}",
+        "Paying {} sats relay: {:?} with payment id: {:?}",
         amount_msats / 1000,
-        Some(payment.bolt12_offer.clone())
+        Some(
+            payment
+                .bolt12_offer
+                .clone()
+                .map(|offer| offer.chars().take(10).collect::<String>())
+        ),
+        payment.payment_id
     );
     // TODO Retry strategy
     let pay_resp = wallet
@@ -74,11 +107,17 @@ async fn pay_relay(
         .await;
     match pay_resp {
         Ok(result) => {
-            println!("Payment successful");
+            println!(
+                "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
+                payment.payment_id, result.preimage, result.fee
+            );
             Ok(result)
         }
         Err(e) => {
-            println!("Payment failed: {:?}", e);
+            println!(
+                "Payment failed for payment id: {:?} with error {:?}",
+                payment.payment_id, e
+            );
             Err("Payment failed".into())
         }
     }

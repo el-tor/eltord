@@ -1,5 +1,5 @@
 use crate::rpc;
-use crate::rpc::{ConsensusRelay, RelayTag};
+use crate::types::{ConsensusRelay, RelayTag};
 use crate::types::{Relay, RpcConfig};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
@@ -100,7 +100,7 @@ pub async fn simple_relay_selection_algo(
         return Err("Could not find suitable relays".into());
     }
 
-    let matched_relays: Vec<Relay> = selected_relays
+    let mut matched_relays: Vec<Relay> = selected_relays
         .iter()
         .filter_map(|consensus_relay| {
             filtered_relays
@@ -109,6 +109,19 @@ pub async fn simple_relay_selection_algo(
                 .map(|relay| (*relay).clone())
         })
         .collect();
+
+    // add tags and hop numbers
+    let mut i = 1;
+    for relay in matched_relays.iter_mut() {
+        relay.relay_tag = Some(match i {
+            1 => RelayTag::Guard,
+            2 => RelayTag::Middle,
+            3 => RelayTag::Exit,
+            _ => unreachable!(),
+        });
+        relay.hop = Some(i);
+        i += 1;
+    }
 
     Ok(matched_relays)
 }

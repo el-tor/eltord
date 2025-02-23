@@ -30,7 +30,8 @@ pub struct Payment {
     pub bolt11_invoice: Option<String>,
     pub bolt12_offer: Option<String>,
     pub preimage: Option<String>,
-    pub fee: Option<String>,
+    pub fee: Option<i64>,
+    pub has_error: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,7 +93,20 @@ impl Db {
         self.save()
     }
 
-    // todo upsert row function
+    // todo update row function by payment_id
+    pub fn update_payment(&self, payment: Payment) -> Result<(), DbError> {
+        let mut data = self.data.lock().unwrap();
+        let index = data
+            .iter()
+            .position(|p| p.payment_id == payment.payment_id)
+            .ok_or(DbError::IoErr {
+                reason: "Payment not found".to_string(),
+            })?;
+        data[index] = payment;
+        drop(data); // Explicitly drop the lock before saving
+        self.save()
+    }
+
 
     pub fn lookup_payment_by_id(&self, payment_id: String) -> Result<Option<Payment>, DbError> {
         let data = self.data.lock().unwrap();
@@ -134,6 +148,7 @@ mod tests {
             bolt12_offer: None,
             preimage: None,
             fee: None,
+            has_error: false,
         };
         let payment2 = Payment {
             payment_id: "2".to_string(),
@@ -151,6 +166,7 @@ mod tests {
             bolt12_offer: None,
             preimage: None,
             fee: None,
+            has_error: false,
         };
 
         let db = Db::new("payments.json".to_string()).unwrap();

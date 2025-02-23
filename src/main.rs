@@ -1,12 +1,12 @@
 use dotenv::dotenv;
 use libtor::{HiddenServiceVersion, Tor, TorAddress, TorFlag};
 use std::env;
-mod database;
 mod client;
-mod rpc;
-mod utils;
+mod database;
 mod lightning;
+mod rpc;
 mod types;
+mod utils;
 use types::RpcConfig;
 
 #[tokio::main]
@@ -26,29 +26,25 @@ async fn main() {
         rpc_password: password.clone(),
         command: "".into(),
     };
-    let rpc_config2 = rpc_config.clone();
-    tokio::spawn(async move {
-        client::start_client_flow(&rpc_config).await
-    });
+    // let rpc_config2 = rpc_config.clone();
+    tokio::spawn(async move { client::start_client_flow(&rpc_config).await });
     // backup circuit
-    // tokio::spawn(async move {
-    //     client::start_client_flow(&rpc_config2).await
-    // });
+    // tokio::spawn(async move { client::start_client_flow(&rpc_config2).await });
 
     println!("Starting Tor...");
     let tor = Tor::new()
-        .flag(TorFlag::DataDirectory("tmp/tor-rust".into()))
+        .flag(TorFlag::DataDirectory("./tmp/tor-rust".into()))
         .flag(TorFlag::SocksPort(18057))
         .flag(TorFlag::ControlPort(control_port.into()))
         .flag(TorFlag::HashedControlPassword(
             hashed_password.trim().into(),
         ))
-        //.flag(TorFlag::HiddenServiceDir("./tmp/tor-rust/hs-dir".into()))
-        //.flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
-        //.flag(TorFlag::HiddenServicePort(
-        //    TorAddress::Port(4747),
-        //    None.into(),
-        //))
+        .flag(TorFlag::HiddenServiceDir("./tmp/tor-rust/hs-dir".into()))
+        .flag(TorFlag::HiddenServiceVersion(HiddenServiceVersion::V3))
+        .flag(TorFlag::HiddenServicePort(
+            TorAddress::Port(4747),
+            None.into(),
+        ))
         .flag(TorFlag::ConfigFile("torrc".into()))
         .start();
 }
