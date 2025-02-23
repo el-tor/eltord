@@ -18,6 +18,7 @@ pub enum DbError {
 pub struct Payment {
     pub payment_id: String,
     pub circ_id: String,
+    pub interval_seconds: i64,
     pub round: i64,
     pub relay_fingerprint: String,
     pub updated_at: i64,
@@ -26,6 +27,10 @@ pub struct Payment {
     pub handshake_fee_preimage: Option<String>,
     pub paid: bool,
     pub expires_at: i64,
+    pub bolt11_invoice: Option<String>,
+    pub bolt12_offer: Option<String>,
+    pub preimage: Option<String>,
+    pub fee: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,13 +91,24 @@ impl Db {
         drop(data); // Explicitly drop the lock before saving
         self.save()
     }
- 
-    pub fn lookup_payment(&self, payment_id: String) -> Result<Option<Payment>, DbError> {
+
+    // todo upsert row function
+
+    pub fn lookup_payment_by_id(&self, payment_id: String) -> Result<Option<Payment>, DbError> {
         let data = self.data.lock().unwrap();
         Ok(data
             .iter()
             .find(|payment| payment.payment_id == payment_id)
             .cloned())
+    }
+
+    pub fn lookup_payments(&self, circuit_id: String, round: i64) -> Result<Vec<Payment>, DbError> {
+        let data = self.data.lock().unwrap();
+        Ok(data
+            .iter()
+            .filter(|payment| payment.circ_id == circuit_id && payment.round == round)
+            .cloned()
+            .collect())
     }
 }
 
@@ -105,6 +121,7 @@ mod tests {
         let payment = Payment {
             payment_id: "1".to_string(),
             circ_id: "1".to_string(),
+            interval_seconds: 60,
             round: 1,
             relay_fingerprint: "1".to_string(),
             updated_at: 1,
@@ -113,12 +130,37 @@ mod tests {
             handshake_fee_preimage: Some("1".to_string()),
             paid: false.clone(),
             expires_at: 1,
+            bolt11_invoice: None,
+            bolt12_offer: None,
+            preimage: None,
+            fee: None,
+        };
+        let payment2 = Payment {
+            payment_id: "2".to_string(),
+            circ_id: "1".to_string(),
+            interval_seconds: 60,
+            round: 2,
+            relay_fingerprint: "1".to_string(),
+            updated_at: 1,
+            amount_msat: 1,
+            handshake_fee_payhash: Some("1".to_string()),
+            handshake_fee_preimage: Some("1".to_string()),
+            paid: false.clone(),
+            expires_at: 1,
+            bolt11_invoice: None,
+            bolt12_offer: None,
+            preimage: None,
+            fee: None,
         };
 
         let db = Db::new("payments.json".to_string()).unwrap();
         db.write_payment(payment).unwrap();
+        db.write_payment(payment2).unwrap();
 
-        let payment1 = db.lookup_payment("1".to_string()).unwrap();
-        assert_eq!(payment1.unwrap().payment_id, "1".to_string());
+        let payment_lookup = db.lookup_payment_by_id("1".to_string()).unwrap();
+        assert_eq!(payment_lookup.unwrap().payment_id, "1".to_string());
+
+        let relays_to_pay = db.lookup_payments("1".to_string(), 2).unwrap();
+        assert_eq!(relays_to_pay[0].payment_id, "2".to_string());
     }
 }

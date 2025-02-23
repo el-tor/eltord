@@ -3,6 +3,9 @@ DirAuthority test001a orport=5056 no-v2 v3ident=6E3F628396DFD5CDBC11ED07737E773D
 DirAuthority test002a orport=5057 no-v2 v3ident=E2810899CDCA0E985EA0031F9636E4A55FF8D416 127.0.0.12:7057 52A4FEA9DF61CEBA58C8BF5F1F651A732EFEAB14
 DirAuthority test003a orport=5058 no-v2 v3ident=E09BD2F44B8F4C150F55D1A0A1D61AF017929620 127.0.0.13:7058 65323B020F0CACD10306CDD76C7BD1F94C798E8E
 
+SocksPort 0.0.0.0:18057
+DNSPort 0.0.0.0:8853
+
 DownloadExtraInfo 1
 FetchUselessDescriptors 1
 TestingTorNetwork 1
@@ -12,7 +15,16 @@ TestingDirAuthVoteHSDir *
 V3AuthNIntervalsValid 2
 TestingDirAuthVoteGuard *
 TestingMinExitFlagThreshold 0
+UseDefaultFallbackDirs 0
+AssumeReachable 1
+
+
+HiddenServiceDir tmp/tor-rust/hs-dir
+HiddenServiceVersion 3
+HiddenServicePort 80 127.0.0.1:4747
+
 Nickname eltordtest
+MapAddress satsname22.onion 6ixdgmkrujri5ucmtc2c3lqyowl3ojusne6w67yn2aiog2xhmvvni2yd.onion
 
 Log notice file ./tmp/tor-rust/notice.log
 Log info file ./tmp/tor-rust/info.log

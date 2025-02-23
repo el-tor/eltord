@@ -1,4 +1,5 @@
 use super::circuit;
+use crate::client::payments_loop;
 use crate::types::RpcConfig;
 use super::select_relay_algo;
 use super::payments_ledger;
@@ -13,8 +14,7 @@ use std::env;
 /// 4. Circuit build
 /// 5. Test Bandwidth (currently not implemented)
 /// 6. Initialize Payments Ledger
-/// 7. Client Bandwidth Watcher and payment loops (currently not implemented)
-/// 8. Circuit Kill and repeat
+/// 7. Client Bandwidth Watcher and payment loops, Circuit Kill and repeat
 ///
 /// # Arguments
 ///
@@ -28,7 +28,7 @@ use std::env;
 /// - A backup circuit is planned but not yet implemented.
 /// - Bandwidth testing and client bandwidth watcher are placeholders for future implementation.
 /// - The function is designed to loop for building and managing multiple circuits, but the loop is currently commented out.
-pub async fn start_client_flow(rpc_config: RpcConfig) {
+pub async fn start_client_flow(rpc_config: &RpcConfig) {
     // loop {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
@@ -56,6 +56,7 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
     // EXTENDPAIDCIRCUIT
     let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays).await.unwrap();
     println!("Created paid Circuit with ID: {}", circuit_id);
+    println!("Connect your browser via sock5 on: {}", 18057); // TODO remove hardcodded socks5 port
     // TODO implement backup circuit
     // let backup_circuit_id = build_circuit(&rpc_config, backup_selected_relays).await.unwrap();
     // println!("Created backup paid Circuit with ID: {}", backup_circuit_id);
@@ -64,16 +65,15 @@ pub async fn start_client_flow(rpc_config: RpcConfig) {
     // TODO: Implement bandwidth test
 
     // 6. Init Payments Ledger
-    payments_ledger::init_payments_ledger(&selected_relays, circuit_id);
+    payments_ledger::init_payments_ledger(&selected_relays, &circuit_id);
 
-    // 7. Client Bandwidth Watcher and payment loops
+    // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
+    let payment_loop_result = payments_loop::start_payments_loop(&circuit_id).await;
 
-    // 8. Circuit Kill. Repeat
-
-    // => => loop this for the desired number of circuits (Tor typically has backup circuits in case one fails)
+    // => => loop logic above for the desired number of circuits (Tor typically has backup circuits in case one fails)
     // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup
     // for _ in 0..2 {
-    // Implement the logic for building and managing circuits here
+        // logic from 7.
     // }
     //}
 }
