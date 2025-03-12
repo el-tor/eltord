@@ -39,6 +39,7 @@ pub async fn start_payments_loop(
                 let pay_resp = pay_relay(&wallet, &payment).await;
                 match pay_resp {
                     Ok(pay_resp) => {
+                        payment.payment_hash = Some(pay_resp.payment_hash);
                         payment.preimage = Some(pay_resp.preimage);
                         payment.fee = Some(pay_resp.fee);
                         payment.paid = true;

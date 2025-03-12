@@ -4,6 +4,7 @@ use std::env;
 mod client;
 mod database;
 mod lightning;
+mod relay;
 mod rpc;
 mod types;
 mod utils;
@@ -30,6 +31,8 @@ async fn main() {
     tokio::spawn(async move { client::start_client_flow(&rpc_config).await });
     // backup circuit
     // tokio::spawn(async move { client::start_client_flow(&rpc_config2).await });
+
+    // tokio::spawn(async move { relay::start_relay_flow().await });
 
     println!("Starting Tor...");
     let tor = Tor::new()

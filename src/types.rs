@@ -1,5 +1,7 @@
+use serde::Serialize;
 
-#[derive(Debug, Clone)]
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Relay {
     pub nickname: String,
     pub fingerprint: String,
@@ -30,7 +32,7 @@ pub struct RpcConfig {
     pub command: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum RelayTag {
     Guard,
     Exit,

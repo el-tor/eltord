@@ -54,10 +54,16 @@ pub async fn build_circuit(
         ));
     }
     command.push_str(".");
-    print!("EXTENDPAIDCIRCUIT Command: {}", command);
+    println!("EXTENDPAIDCIRCUIT Command: {}", command);
     let circuit_id = rpc::extend_paid_circuit(&rpc_config, command)
         .await
         .unwrap();
+    let event_data = serde_json::json!({
+        "event": "CIRCUIT_BUILT",
+        "circuit_id": circuit_id,
+        "relays": relays
+    });
+    println!("EVENT:{}:ENDEVENT", event_data.to_string());
     Ok(circuit_id)
 }
 
@@ -72,8 +78,8 @@ pub fn pregen_extend_paid_circuit_hashes(
     for relay in selected_relays.iter_mut() {
         // Generate payhash and preimage for handshake fee
         let (handshake_payhash, handshake_preimage) = get_random_payhash_and_preimage();
-        print!("Handshake Payment Hash: {}\n", handshake_payhash);
-        print!("Handshake Payment Preimage: {}\n", handshake_preimage);
+        println!("Handshake Payment Hash: {}\n", handshake_payhash);
+        println!("Handshake Payment Preimage: {}\n", handshake_preimage);
         relay.payment_handshake_fee_payhash = Some(handshake_payhash);
         relay.payment_handshake_fee_preimage = Some(handshake_preimage);
 
