@@ -1,0 +1,61 @@
+DirAuthority test000a orport=5055 no-v2 v3ident=653EF7D6D6FFAE753389B807DA6CA9E8FAB6FC03 127.0.0.10:7055 A7649D89B48EEE5FB1C4583C73F8DA6888A19C12
+DirAuthority test001a orport=5056 no-v2 v3ident=6E3F628396DFD5CDBC11ED07737E773DC41B0854 127.0.0.11:7056 44629A3B9DE184A6A0DBA0A0DE54916D24339B2B
+DirAuthority test002a orport=5057 no-v2 v3ident=E2810899CDCA0E985EA0031F9636E4A55FF8D416 127.0.0.12:7057 52A4FEA9DF61CEBA58C8BF5F1F651A732EFEAB14
+DirAuthority test003a orport=5058 no-v2 v3ident=E09BD2F44B8F4C150F55D1A0A1D61AF017929620 127.0.0.13:7058 65323B020F0CACD10306CDD76C7BD1F94C798E8E
+
+# SocksPort 0.0.0.0:18057
+# DNSPort 0.0.0.0:8853
+
+DownloadExtraInfo 1
+FetchUselessDescriptors 1
+TestingTorNetwork 1
+PathsNeededToBuildCircuits 0.67
+TestingDirAuthVoteExit *
+TestingDirAuthVoteHSDir *
+V3AuthNIntervalsValid 2
+TestingDirAuthVoteGuard *
+TestingMinExitFlagThreshold 0
+UseDefaultFallbackDirs 0
+AssumeReachable 1
+
+
+# HiddenServiceDir ./tmp/tor-rust/hs-dir
+# HiddenServiceVersion 3
+# HiddenServicePort 80 127.0.0.1:4747
+
+Nickname eltordtest
+MapAddress satsname22.onion 6ixdgmkrujri5ucmtc2c3lqyowl3ojusne6w67yn2aiog2xhmvvni2yd.onion
+
+Log notice file ./tmp/tor-rust/notice.log
+Log info file ./tmp/tor-rust/info.log
+Log debug file ./tmp/tor-rust/debug.log
+
+ElTorPayHashHop1 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop2 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop3 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop4 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop5 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop6 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPayHashHop7 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e
+ElTorPreimageHop1 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop2 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop3 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop4 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop5 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop6 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+ElTorPreimageHop7 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+
+## Relay Config
+PaymentBolt12Offer lno1234
+# PaymentBip353 me@example.com
+# PaymentBolt11Lnurl LNURL1234
+# PaymentBolt11LightningAddress me@example.com
+PaymentRateMsats 1000
+PaymentInterval 60
+# Not being used, need to think more about this, hardcode to 10 now so we can pass in 10 payment id hashed during circuit build
+PaymentInvervalRounds 10
+
+## Client Config
+PaymentCircuitMaxFee 11000 # about $1 at 100k bitcoin price
+PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true
+PaymentLightningNodeConfig type=lnd url=http://lnd.com macaroon=mac1234
