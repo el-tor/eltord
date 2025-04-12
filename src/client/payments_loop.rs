@@ -41,7 +41,7 @@ pub async fn start_payments_loop(
                     Ok(pay_resp) => {
                         payment.payment_hash = Some(pay_resp.payment_hash);
                         payment.preimage = Some(pay_resp.preimage);
-                        payment.fee = Some(pay_resp.fee);
+                        payment.fee = Some(pay_resp.fee_msats);
                         payment.paid = true;
                         db.update_payment(payment).unwrap();
                     }
@@ -104,13 +104,12 @@ async fn pay_relay(
             payment.bolt12_offer.clone().unwrap(),
             amount_msats,
             Some(payment.payment_id.clone()),
-        )
-        .await;
+        );
     match pay_resp {
         Ok(result) => {
             println!(
                 "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
-                payment.payment_id, result.preimage, result.fee
+                payment.payment_id, result.preimage, result.fee_msats
             );
             Ok(result)
         }

@@ -1,4 +1,4 @@
-use lni::phoenixd::ListTransactionsParams;
+use lni::types::ListTransactionsParams;
 
 // 1. Set Torrc Config
 // 2. Handshake
@@ -14,13 +14,10 @@ pub async fn start_relay_flow() {
 
     let params = ListTransactionsParams {
         from: 0,
-        until: 0,
         limit: 100,
-        offset: 0,
-        unpaid: false,
-        invoice_type: "all".to_string(),
+        payment_hash: None,
     };
-    match wallet.list_transactions(params).await {
+    match wallet.list_transactions(params) {
         Ok(txns) => {
             println!("Relay recent transactions: {:?}", txns);
         }
@@ -28,5 +25,4 @@ pub async fn start_relay_flow() {
             panic!("Failed to list transactions: {:?}", e);
         }
     }
-
 }
