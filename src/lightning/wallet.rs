@@ -1,37 +1,101 @@
-use std::env;
+use std::{env, string};
 
+use lni::cln::{ClnConfig, ClnNode};
+use lni::lnd::{LndConfig, LndNode};
 use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
+use lni::LightningNode;
 
-pub async fn load_wallet() -> PhoenixdNode {
+use crate::rpc::get_conf;
+use crate::types::RpcConfig;
+
+pub async fn load_wallet(rpc_config: &RpcConfig) -> LightningNode {
     println!("Loading wallet...");
-    get_lightning_node_info().await
+    let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await;
+    let lightning_node = tokio::task::block_in_place(||get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
+    lightning_node
 }
 
-pub fn lookup_default_lightning_node_from_torrc(){
-    // let torrc = std::fs::read_to_string("/etc/tor/torrc").unwrap();
-    // let mut lines = torrc.lines();
-    // let mut lightning_node = None;
-    // for line in lines {
-    //     if line.contains("HiddenServicePort 9735") {
-    //         let parts: Vec<&str> = line.split_whitespace().collect();
-    //         lightning_node = Some(parts[2].to_string());
-    //         break;
-    //     }
-    // }
-    // lightning_node
+pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) -> (String, String) {
+    let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
+        .await
+        .unwrap();
+    let str = lightning_conf_str.clone().as_str();
+    // parse the string "PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true"
+    // TODO handle mutliple configs for PaymentLightningNodeConfig and choose default
+    let node_type = get_value(lightning_conf_str.clone(), "type".to_string());
+    (node_type.unwrap().to_string(), lightning_conf_str)
 }
 
-pub async fn get_lightning_node_info() -> PhoenixdNode {
-    // TODO: read from torrc file
-    let url = env::var("PHOENIXD_URL").unwrap();
-    let password = env::var("PHOENIXD_PASSWORD").unwrap();
-    let config = PhoenixdConfig {
-        url: url.clone(),
-        password: password.clone(),
-        ..Default::default()
-    };
-    let node = PhoenixdNode::new(config);
-    let info = node.get_info().unwrap();
-    println!("Node info: {:?}", info);
-    node
+pub fn get_lightning_node(
+    (node_type, lightning_conf_str): (String, String),
+) -> LightningNode {
+    let node_type_str = node_type.as_str();
+    match node_type_str {
+        "phoenixd" => {
+            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+                .expect("url not found in torrc config");
+            let password = get_value(lightning_conf_str.clone(), "password".to_string())
+                .expect("password not found in torrc config");
+            let config = PhoenixdConfig {
+                url: url.clone(),
+                password: password.clone(),
+                ..Default::default()
+            };
+            let u = url.clone().as_str();
+            let node = PhoenixdNode::new(config);
+            let info = node.get_info().unwrap();
+            println!("Phoenixd Node info: {:?}", info);
+            LightningNode::Phoenixd(node)
+        }
+        "lnd" => {
+            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+                .expect("url not found in torrc config");
+            let macaroon = get_value(lightning_conf_str.clone(), "macaroon".to_string())
+                .expect("macaroon not found in torrc config");
+            let config = LndConfig {
+                url: url.clone(),
+                macaroon: macaroon.clone(),
+                ..Default::default()
+            };
+            let node = LndNode::new(config);
+            let info = node.get_info().unwrap();
+            println!("LND Node info: {:?}", info);
+            LightningNode::Lnd(node)
+        }
+        "cln" => {
+            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+                .expect("url not found in torrc config");
+            let rune = get_value(lightning_conf_str.clone(), "rune".to_string())
+                .expect("rune not found in torrc config");
+            let config = ClnConfig {
+                url: url.clone(),
+                rune: rune.clone(),
+                ..Default::default()
+            };
+            let node = ClnNode::new(config);
+            let info = node.get_info().unwrap();
+            println!("CLN Node info: {:?}", info);
+            LightningNode::Cln(node)
+        }
+        _ => panic!("Unsupported node type: {}", node_type),
+    }
+}
+
+fn get_value(lightning_conf_str: String, key: String) -> Option<String> {
+    let binding = lightning_conf_str
+        .replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
+    let parts: Vec<&str> = binding
+        .split_whitespace()
+        .collect();
+    dbg!(&parts);
+    let mut val: Option<&str> = None;
+    for part in parts {
+        let formatted_key = format!("{}=", key);
+        if part.contains(&formatted_key) {
+            val = Some(part.split("=").collect::<Vec<&str>>()[1]);
+            break;
+        }
+    }
+    dbg!(&val);
+    Some(val.unwrap_or_default().to_string())
 }

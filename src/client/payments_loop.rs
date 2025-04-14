@@ -1,9 +1,9 @@
 use super::bandwidth_test;
 use crate::database::{Db, Payment};
-use crate::lightning;
 use crate::types::Relay;
+use crate::{lightning, rpc};
 use lni::phoenixd::PhoenixdNode;
-use lni::PayInvoiceResponse;
+use lni::{LightningNode, PayInvoiceResponse};
 use std::env;
 
 // is round expired
@@ -11,11 +11,12 @@ use std::env;
 // if good then pay relay
 // wait for next round
 pub async fn start_payments_loop(
+    rpc_config: &crate::types::RpcConfig,
     relays: &Vec<Relay>,
     circuit_id: &String,
+    wallet: &LightningNode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::new("payments.json".to_string()).unwrap();
-    let wallet = lightning::load_wallet().await;
     let mut round = 1;
     let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
         .unwrap_or("0".to_string())
@@ -36,7 +37,7 @@ pub async fn start_payments_loop(
                 Err(_) => return Err("Payment for the circuit not found".into()),
             };
             if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
-                let pay_resp = pay_relay(&wallet, &payment).await;
+                let pay_resp = tokio::task::block_in_place(||pay_relay(&wallet, &payment));
                 match pay_resp {
                     Ok(pay_resp) => {
                         payment.payment_hash = Some(pay_resp.payment_hash);
@@ -82,8 +83,8 @@ fn wait_for_next_round(interval_seconds: i64) {
     std::thread::sleep(std::time::Duration::from_secs(interval_seconds as u64));
 }
 
-async fn pay_relay(
-    wallet: &PhoenixdNode,
+fn pay_relay(
+    wallet: &LightningNode,
     payment: &Payment,
 ) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
     let amount_msats = payment.amount_msat;
@@ -98,29 +99,36 @@ async fn pay_relay(
         ),
         payment.payment_id
     );
-    // TODO Retry strategy
-    let pay_resp = wallet
-        .pay_offer(
-            payment.bolt12_offer.clone().unwrap(),
-            amount_msats,
-            Some(payment.payment_id.clone()),
-        );
-    match pay_resp {
-        Ok(result) => {
-            println!(
-                "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
-                payment.payment_id, result.preimage, result.fee_msats
+
+    // TODO trait for wallet
+    match wallet {
+        LightningNode::Phoenixd(node) => {
+            let pay_resp = node.pay_offer(
+                payment.bolt12_offer.clone().unwrap(),
+                amount_msats,
+                Some(payment.payment_id.clone()),
             );
-            Ok(result)
+            match pay_resp {
+                Ok(result) => {
+                    println!(
+                        "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
+                        payment.payment_id, result.preimage, result.fee_msats
+                    );
+                    Ok(result)
+                }
+                Err(e) => {
+                    println!(
+                        "Payment failed for payment id: {:?} with error {:?}",
+                        payment.payment_id, e
+                    );
+                    Err("Payment failed".into())
+                }
+            }
         }
-        Err(e) => {
-            println!(
-                "Payment failed for payment id: {:?} with error {:?}",
-                payment.payment_id, e
-            );
-            Err("Payment failed".into())
-        }
+        _ => Err("Unknown node type".into()),
     }
+
+    // TODO Retry strategy
 }
 
 fn kill_circuit() {}
