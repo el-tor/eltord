@@ -1,8 +1,6 @@
 use super::bandwidth_test;
 use crate::database::{Db, Payment};
 use crate::types::Relay;
-use crate::{lightning, rpc};
-use lni::phoenixd::PhoenixdNode;
 use lni::{LightningNode, PayInvoiceResponse};
 use std::env;
 
@@ -14,7 +12,7 @@ pub async fn start_payments_loop(
     rpc_config: &crate::types::RpcConfig,
     relays: &Vec<Relay>,
     circuit_id: &String,
-    wallet: &LightningNode,
+    wallet: Box<dyn LightningNode + Send + Sync>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::new("payments.json".to_string()).unwrap();
     let mut round = 1;
@@ -37,7 +35,7 @@ pub async fn start_payments_loop(
                 Err(_) => return Err("Payment for the circuit not found".into()),
             };
             if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
-                let pay_resp = tokio::task::block_in_place(||pay_relay(&wallet, &payment));
+                let pay_resp = tokio::task::block_in_place(|| pay_relay(&wallet, &payment));
                 match pay_resp {
                     Ok(pay_resp) => {
                         payment.payment_hash = Some(pay_resp.payment_hash);
@@ -84,7 +82,7 @@ fn wait_for_next_round(interval_seconds: i64) {
 }
 
 fn pay_relay(
-    wallet: &LightningNode,
+    wallet: &Box<dyn LightningNode + Send + Sync>,
     payment: &Payment,
 ) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
     let amount_msats = payment.amount_msat;
@@ -100,32 +98,26 @@ fn pay_relay(
         payment.payment_id
     );
 
-    // TODO trait for wallet
-    match wallet {
-        LightningNode::Phoenixd(node) => {
-            let pay_resp = node.pay_offer(
-                payment.bolt12_offer.clone().unwrap(),
-                amount_msats,
-                Some(payment.payment_id.clone()),
+    let pay_resp = wallet.pay_offer(
+        payment.bolt12_offer.clone().unwrap(),
+        amount_msats,
+        Some(payment.payment_id.clone()),
+    );
+    match pay_resp {
+        Ok(result) => {
+            println!(
+                "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
+                payment.payment_id, result.preimage, result.fee_msats
             );
-            match pay_resp {
-                Ok(result) => {
-                    println!(
-                        "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
-                        payment.payment_id, result.preimage, result.fee_msats
-                    );
-                    Ok(result)
-                }
-                Err(e) => {
-                    println!(
-                        "Payment failed for payment id: {:?} with error {:?}",
-                        payment.payment_id, e
-                    );
-                    Err("Payment failed".into())
-                }
-            }
+            Ok(result)
         }
-        _ => Err("Unknown node type".into()),
+        Err(e) => {
+            println!(
+                "Payment failed for payment id: {:?} with error {:?}",
+                payment.payment_id, e
+            );
+            Err("Payment failed".into())
+        }
     }
 
     // TODO Retry strategy

@@ -8,10 +8,10 @@ use lni::LightningNode;
 use crate::rpc::get_conf;
 use crate::types::RpcConfig;
 
-pub async fn load_wallet(rpc_config: &RpcConfig) -> LightningNode {
+pub async fn load_wallet(rpc_config: &RpcConfig) -> Box<dyn LightningNode + Send + Sync> {
     println!("Loading wallet...");
     let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await;
-    let lightning_node = tokio::task::block_in_place(||get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
+    let lightning_node = tokio::task::block_in_place(|| get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
     lightning_node
 }
 
@@ -28,7 +28,7 @@ pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) ->
 
 pub fn get_lightning_node(
     (node_type, lightning_conf_str): (String, String),
-) -> LightningNode {
+) -> Box<dyn LightningNode + Send + Sync> {
     let node_type_str = node_type.as_str();
     match node_type_str {
         "phoenixd" => {
@@ -42,10 +42,10 @@ pub fn get_lightning_node(
                 ..Default::default()
             };
             let u = url.clone().as_str();
-            let node = PhoenixdNode::new(config);
+            let node: Box<dyn LightningNode + Send + Sync> = Box::new(PhoenixdNode::new(config));
             let info = node.get_info().unwrap();
             println!("Phoenixd Node info: {:?}", info);
-            LightningNode::Phoenixd(node)
+            node
         }
         "lnd" => {
             let url = get_value(lightning_conf_str.clone(), "url".to_string())
@@ -57,10 +57,10 @@ pub fn get_lightning_node(
                 macaroon: macaroon.clone(),
                 ..Default::default()
             };
-            let node = LndNode::new(config);
+            let node: Box<dyn LightningNode + Send + Sync> = Box::new(LndNode::new(config));
             let info = node.get_info().unwrap();
             println!("LND Node info: {:?}", info);
-            LightningNode::Lnd(node)
+            node
         }
         "cln" => {
             let url = get_value(lightning_conf_str.clone(), "url".to_string())
@@ -72,21 +72,19 @@ pub fn get_lightning_node(
                 rune: rune.clone(),
                 ..Default::default()
             };
-            let node = ClnNode::new(config);
+            let node: Box<dyn LightningNode + Send + Sync> = Box::new(ClnNode::new(config));
             let info = node.get_info().unwrap();
             println!("CLN Node info: {:?}", info);
-            LightningNode::Cln(node)
+            node
         }
         _ => panic!("Unsupported node type: {}", node_type),
     }
 }
 
 fn get_value(lightning_conf_str: String, key: String) -> Option<String> {
-    let binding = lightning_conf_str
-        .replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
-    let parts: Vec<&str> = binding
-        .split_whitespace()
-        .collect();
+    let binding =
+        lightning_conf_str.replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
+    let parts: Vec<&str> = binding.split_whitespace().collect();
     dbg!(&parts);
     let mut val: Option<&str> = None;
     for part in parts {
