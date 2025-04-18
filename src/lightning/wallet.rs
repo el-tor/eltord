@@ -19,10 +19,9 @@ pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) ->
     let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
         .await
         .unwrap();
-    let str = lightning_conf_str.clone().as_str();
     // parse the string "PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true"
     // TODO handle mutliple configs for PaymentLightningNodeConfig and choose default
-    let node_type = get_value(lightning_conf_str.clone(), "type".to_string());
+    let node_type = get_default_value(lightning_conf_str.clone(), "type".to_string());
     (node_type.unwrap().to_string(), lightning_conf_str)
 }
 
@@ -32,9 +31,9 @@ pub fn get_lightning_node(
     let node_type_str = node_type.as_str();
     match node_type_str {
         "phoenixd" => {
-            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+            let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
                 .expect("url not found in torrc config");
-            let password = get_value(lightning_conf_str.clone(), "password".to_string())
+            let password = get_default_value(lightning_conf_str.clone(), "password".to_string())
                 .expect("password not found in torrc config");
             let config = PhoenixdConfig {
                 url: url.clone(),
@@ -48,9 +47,9 @@ pub fn get_lightning_node(
             node
         }
         "lnd" => {
-            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+            let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
                 .expect("url not found in torrc config");
-            let macaroon = get_value(lightning_conf_str.clone(), "macaroon".to_string())
+            let macaroon = get_default_value(lightning_conf_str.clone(), "macaroon".to_string())
                 .expect("macaroon not found in torrc config");
             let config = LndConfig {
                 url: url.clone(),
@@ -63,9 +62,9 @@ pub fn get_lightning_node(
             node
         }
         "cln" => {
-            let url = get_value(lightning_conf_str.clone(), "url".to_string())
+            let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
                 .expect("url not found in torrc config");
-            let rune = get_value(lightning_conf_str.clone(), "rune".to_string())
+            let rune = get_default_value(lightning_conf_str.clone(), "rune".to_string())
                 .expect("rune not found in torrc config");
             let config = ClnConfig {
                 url: url.clone(),
@@ -81,19 +80,26 @@ pub fn get_lightning_node(
     }
 }
 
-fn get_value(lightning_conf_str: String, key: String) -> Option<String> {
-    let binding =
-        lightning_conf_str.replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
-    let parts: Vec<&str> = binding.split_whitespace().collect();
-    dbg!(&parts);
-    let mut val: Option<&str> = None;
-    for part in parts {
-        let formatted_key = format!("{}=", key);
-        if part.contains(&formatted_key) {
-            val = Some(part.split("=").collect::<Vec<&str>>()[1]);
-            break;
+fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> {
+    let config_array = lightning_conf_str.split("\r\n").collect::<Vec<&str>>();
+
+    for config in config_array {
+        if config.contains("default=true") {
+            let binding =
+                config.replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
+            let parts: Vec<&str> = binding.split_whitespace().collect();
+            dbg!(&parts);
+            let mut val: Option<&str> = None;
+            for part in parts {
+                let formatted_key = format!("{}=", key);
+                if part.contains(&formatted_key) {
+                    val = Some(part.split("=").collect::<Vec<&str>>()[1]);
+                    break;
+                }
+            }
+            dbg!(&val);
+            return Some(val.unwrap_or_default().to_string());
         }
     }
-    dbg!(&val);
-    Some(val.unwrap_or_default().to_string())
+    None
 }
