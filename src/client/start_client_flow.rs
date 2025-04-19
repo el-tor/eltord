@@ -71,8 +71,13 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     payments_ledger::init_payments_ledger(&selected_relays, &circuit_id);
 
     // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
-    let payment_loop_result =
-        payments_loop::start_payments_loop(rpc_config, &selected_relays, &circuit_id, lightning_wallet).await;
+    let payment_loop_result = payments_loop::start_payments_loop(
+        rpc_config,
+        &selected_relays,
+        &circuit_id,
+        lightning_wallet,
+    )
+    .await;
 
     // => => loop logic above for the desired number of circuits (Tor typically has backup circuits in case one fails)
     // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup

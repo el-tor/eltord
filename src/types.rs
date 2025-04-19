@@ -28,7 +28,7 @@ pub struct Relay {
 #[derive(Debug, Clone)]
 pub struct RpcConfig {
     pub addr: String,
-    pub rpc_password: String,
+    pub rpc_password: Option<String>,
     pub command: String,
 }
 

@@ -79,18 +79,37 @@ pub async fn simple_relay_selection_algo(
     let mut selected_relays = Vec::new();
     let mut total_fee = 0;
 
+    // Entry
     if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
         selected_relays.push((*guard).clone());
     }
+    // Middle
     if let Some(middle) = middle_relays
         .iter()
         .find(|&&r| !selected_relays.contains(r))
     {
         selected_relays.push((*middle).clone());
     }
-    if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-        selected_relays.push((*exit).clone());
-    }
+    // Exit
+    dbg!(exit_relays.clone());
+    let exit_fingerprints = rpc::get_conf_exit_nodes(&rpc_config).await.unwrap();
+    dbg!(exit_fingerprints.clone());
+    // // dbg!(exit_fingerprints.clone());
+    // if (exit_fingerprints.len() > 0) {
+    //     // TODO: if {us},{de} etc.. then find an exit in that country
+    //     // TODO: parse nickname vs fingerprint
+    //     // TODO: also check if StrictNodes is set in torrc
+    //     if let Some(exit) = exit_relays.iter().find(|&&r| {
+    //         Some(r.nickname.clone()) == exit_fingerprints.first().cloned()
+    //             && !selected_relays.contains(r)
+    //     }) {
+    //         selected_relays.push((*exit).clone());
+    //     }
+    // } else {
+        if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+            selected_relays.push((*exit).clone());
+        }
+    //}
 
     let mut total_fee = 0;
 

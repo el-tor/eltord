@@ -30,3 +30,5 @@ payments.json
 *tmp
 
 **torrc.dev
+**torrc.relay.dev
+**torrc.client.dev

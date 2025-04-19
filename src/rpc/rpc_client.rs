@@ -1,7 +1,7 @@
+use crate::types::RpcConfig;
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use crate::types::RpcConfig;
 
 // TOR RPC Commands
 // https://spec.torproject.org/control-spec/commands.html?highlight=Setevent#extended_events
@@ -16,10 +16,16 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
 
-    let content = format!(
-        "AUTHENTICATE \"{}\"\r\n{}\r\nQUIT\r\n",
-        config.rpc_password, config.command
-    );
+    let pw = config.rpc_password.clone().filter(|p| !p.is_empty());
+
+    let content = if pw.is_some() {
+        format!(
+            "AUTHENTICATE \"{}\"\r\n{}\r\nQUIT\r\n",
+            pw.unwrap(), config.command
+        )
+    } else {
+        format!("{}\r\nQUIT\r\n", config.command)
+    };
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
 
@@ -35,4 +41,42 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     }
 
     Ok(response)
+}
+
+pub async fn rpc_event_listener(
+    config: RpcConfig,
+    event: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Connecting to Tor control port...");
+    let stream = TcpStream::connect(config.addr.clone()).await?;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+
+    let pw = config.rpc_password.clone().filter(|p| !p.is_empty());
+
+    // Authenticate and subscribe to events (e.g., CIRC, NOTICE, etc.)
+    let content = if pw.is_some() {
+        format!(
+            "AUTHENTICATE \"{}\"\r\nSETEVENTS {}\r\n",
+            pw.unwrap(), event
+        )
+    } else {
+        format!("SETEVENTS {}\r\n", event)
+    };
+    writer.write_all(content.as_bytes()).await?;
+    writer.flush().await?;
+
+    // Continuously read and print events
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            break; // Connection closed
+        }
+        // TODO How to handle the event stream data?
+        println!("Tor event: {}", line.trim_end());
+    }
+
+    Ok(())
 }
