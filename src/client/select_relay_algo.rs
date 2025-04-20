@@ -38,29 +38,47 @@ pub async fn simple_relay_selection_algo(
     let mut guard_relays = Vec::new();
     let mut middle_relays = Vec::new();
     let mut exit_relays = Vec::new();
+    let preferred_exit_relays = rpc::get_conf_exit_nodes(&rpc_config).await;
+    // TODO preferred_exit_fingerprints might contain a relay name, need to handle if its a nickname and then lookup the fingerprint
     for r in &consensus_relays {
+        let preferred_exit_fingerprint = &Some(preferred_exit_relays.clone().unwrap().value);
+
         if r.tags.contains(&RelayTag::Guard) {
-            if (filtered_relays
+            if filtered_relays
                 .iter()
-                .any(|relay| relay.fingerprint == r.fingerprint))
+                .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
+                .any(|relay| relay.fingerprint == r.fingerprint)
             {
                 guard_relays.push(r);
             }
         }
         if r.tags.contains(&RelayTag::Running) {
-            if (filtered_relays
+            if filtered_relays
                 .iter()
-                .any(|relay| relay.fingerprint == r.fingerprint))
+                .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
+                .any(|relay| relay.fingerprint == r.fingerprint)
             {
                 middle_relays.push(r);
             }
         }
         if r.tags.contains(&RelayTag::Exit) {
-            if (filtered_relays
-                .iter()
-                .any(|relay| relay.fingerprint == r.fingerprint))
+            if preferred_exit_fingerprint.is_some()
+                && !preferred_exit_fingerprint.as_ref().unwrap().is_empty()
             {
-                exit_relays.push(r);
+                // TODO: if value of ExitNodes is {us},{de} etc.. then find an exit in that country
+                // TODO: also check if StrictNodes is set in torrc
+                // TODO: if value is nickname then look fingerprint from nickname
+                if preferred_exit_fingerprint.as_ref().unwrap().as_str() == &r.fingerprint {
+                    exit_relays.push(r);
+                }
+            } else {
+                if filtered_relays
+                    .iter()
+                    .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
+                    .any(|relay| relay.fingerprint == r.fingerprint)
+                {
+                    exit_relays.push(r);
+                }
             }
         }
         println!("{:?}", r);
@@ -91,25 +109,9 @@ pub async fn simple_relay_selection_algo(
         selected_relays.push((*middle).clone());
     }
     // Exit
-    dbg!(exit_relays.clone());
-    let exit_fingerprints = rpc::get_conf_exit_nodes(&rpc_config).await.unwrap();
-    dbg!(exit_fingerprints.clone());
-    // // dbg!(exit_fingerprints.clone());
-    // if (exit_fingerprints.len() > 0) {
-    //     // TODO: if {us},{de} etc.. then find an exit in that country
-    //     // TODO: parse nickname vs fingerprint
-    //     // TODO: also check if StrictNodes is set in torrc
-    //     if let Some(exit) = exit_relays.iter().find(|&&r| {
-    //         Some(r.nickname.clone()) == exit_fingerprints.first().cloned()
-    //             && !selected_relays.contains(r)
-    //     }) {
-    //         selected_relays.push((*exit).clone());
-    //     }
-    // } else {
-        if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-            selected_relays.push((*exit).clone());
-        }
-    //}
+    if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+        selected_relays.push((*exit).clone());
+    }
 
     let mut total_fee = 0;
 

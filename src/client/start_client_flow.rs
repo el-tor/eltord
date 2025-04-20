@@ -44,9 +44,9 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
         .await
         .unwrap();
     println!(
-        "Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}",
-        selected_relays
+        "Build circuit EXTENDPAIDCIRCUIT with these selected relays",
     );
+    dbg!(&selected_relays);
     // TODO backup circuit
     // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
