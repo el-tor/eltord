@@ -21,10 +21,11 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     let content = if pw.is_some() {
         format!(
             "AUTHENTICATE \"{}\"\r\n{}\r\nQUIT\r\n",
-            pw.unwrap(), config.command
+            pw.unwrap(),
+            config.command
         )
     } else {
-        format!("{}\r\nQUIT\r\n", config.command)
+        format!("AUTHENTICATE\r\n{}\r\nQUIT\r\n", config.command)
     };
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
@@ -58,10 +59,11 @@ pub async fn rpc_event_listener(
     let content = if pw.is_some() {
         format!(
             "AUTHENTICATE \"{}\"\r\nSETEVENTS {}\r\n",
-            pw.unwrap(), event
+            pw.unwrap(),
+            event
         )
     } else {
-        format!("SETEVENTS {}\r\n", event)
+        format!("AUTHENTICATE\r\nSETEVENTS {}\r\n", event)
     };
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
