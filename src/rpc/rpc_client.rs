@@ -1,4 +1,5 @@
-use crate::types::RpcConfig;
+use crate::types::{EventCallback, RpcConfig};
+use lni::LightningNode;
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -47,6 +48,8 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
 pub async fn rpc_event_listener(
     config: RpcConfig,
     event: String,
+    event_callback: Box<dyn EventCallback + Send + Sync>,
+    wallet: &(dyn LightningNode + Send + Sync),
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to Tor control port...");
     let stream = TcpStream::connect(config.addr.clone()).await?;
@@ -76,8 +79,8 @@ pub async fn rpc_event_listener(
         if bytes_read == 0 {
             break; // Connection closed
         }
-        // TODO How to handle the event stream data?
         println!("Tor event: {}", line.trim_end());
+        event_callback.success(Some(line.clone().trim_end().to_string()), wallet);
     }
 
     Ok(())

@@ -36,12 +36,16 @@ async fn main() {
     main_run_with_args(args).await;
 }
 
-
 pub async fn main_run_with_args<I, S>(args: I)
 where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    println!("PID: {}", std::process::id());
+    // println!("Press Enter to continue...");
+    // let mut input = String::new();
+    // std::io::stdin().read_line(&mut input).unwrap();
+    
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
     dbg!(mode.clone());
     let rpc_config = get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
