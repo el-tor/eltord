@@ -2,12 +2,15 @@ use super::payments_watcher::start_payments_watcher;
 use crate::{rpc::get_torrc_value, types::RpcConfig};
 
 // 1. Torrc Config
-// 2. Handshake Fee?
-// 3. Start payment watcher
-// 4. Listen for the Event PAYMENT_ID_HASH_RECEIVED
-//      4a. On PAYMENT_ID_HASH_RECEIVED write a row to the ledger
-//      4b. Then kick off OnInvoiceEvents (Auditor Loop)
-//          - 4b1. Loop: Kill circuit if payment is not received within window
+// 2. Start payment watcher
+// 3. Listen for the Tor Event PAYMENT_ID_HASH_RECEIVED
+//    - 3a. On PAYMENT_ID_HASH_RECEIVED write a row to the ledger
+//    - 3b. Decode the payment_hashes via the 12 hash wire_format 
+//           "handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10"
+//    - 3c. If you require a handshake fee check the handshake_payment_hash + handshake_preimage
+//    - 3d. Write the payment_id_hash_round1 to payment_id_hash_round10 to the ledger
+// 4. Then kick off OnLnInvoiceEvents (Auditor Loop)
+//    - 4a. Loop: Kill circuit if payment is not received within window
 pub async fn start_relay_flow(rpc_config: &RpcConfig) {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
@@ -27,10 +30,7 @@ pub async fn start_relay_flow(rpc_config: &RpcConfig) {
         println!("BOLT12 offer not found in torrc config. Running in free mode.");
     }
 
-    // 2. Handshake Fee?
-    // TODO
-
-    // 3 + 4. Start the payment watcher 
+    // 2 - 4. Start the payment watcher 
     let rpc_config_clone = rpc_config.clone();
     tokio::spawn(async move {
         start_payments_watcher(&rpc_config_clone, &*wallet).await;

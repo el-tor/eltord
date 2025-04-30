@@ -14,6 +14,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
     let mut relays = Vec::new();
     let mut current_relay: Option<Relay> = None;
 
+    // TODO: fix crash if relay has not descriptors
     for line in rpc.lines() {
         if line.starts_with("router ") {
             // Store the previous relay if it exists
