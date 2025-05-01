@@ -1,7 +1,7 @@
 use crate::database;
 use crate::types::Relay;
 
-pub fn init_payments_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
+pub fn init_payments_sent_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
     for relay in selected_relays.iter() {
         let mut i = 1;
         for payment_id_hash in relay.payment_id_hashes_10.clone().unwrap().iter() {
@@ -29,10 +29,10 @@ pub fn init_payments_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
                 row.handshake_fee_payhash = relay.payment_handshake_fee_payhash.clone();
                 row.handshake_fee_preimage = relay.payment_handshake_fee_preimage.clone();
             }
-            let db = database::Db::new("payments.json".to_string()).unwrap();
+            let db = database::Db::new("payments_sent.json".to_string()).unwrap();
             db.write_payment(row).unwrap();
             i += 1;
         }
     }
-    println!("Init row in payments ledger for circuit: {:?}", circuit_id);
+    println!("Init row in payments sent ledger for circuit: {:?}", circuit_id);
 }

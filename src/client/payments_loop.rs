@@ -14,7 +14,7 @@ pub async fn start_payments_loop(
     circuit_id: &String,
     wallet: Box<dyn LightningNode + Send + Sync>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = Db::new("payments.json".to_string()).unwrap();
+    let db = Db::new("payments_sent.json".to_string()).unwrap();
     let mut round = 1;
     let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
         .unwrap_or("0".to_string())

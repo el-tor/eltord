@@ -26,6 +26,8 @@
 *.log
 
 payments.json
+payments_received.json
+payments_sent.json
 
 *tmp
 

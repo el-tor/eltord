@@ -1,5 +1,5 @@
 use crate::{
-    relay::{self, RelayPayments},
+    relay::{self, init_payments_received_ledger, RelayPayments},
     rpc::rpc_event_listener,
     types::{EventCallback, RpcConfig},
 };
@@ -29,38 +29,55 @@ struct OnTorEventPaymentIdHashReceivedCallback {}
 impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
     fn success(&self, response: Option<String>, wallet: &(dyn LightningNode + Send + Sync)) {
         dbg!(response.clone());
-
+        let mut circ_id= "UNKNOWN".to_string();
         let payment_hashes = if let Some(resp) = response.as_ref() {
+            // EVENT WIRE_FORMAT "650 EVENT_PAYMENT_ID_HASH_RECEIVED <CIRC_ID> <PAYHASHES>"
             if resp.starts_with("650 EVENT_PAYMENT_ID_HASH_RECEIVED ") {
-                Some(resp["650 EVENT_PAYMENT_ID_HASH_RECEIVED ".len()..].to_string())
+                let rest = &resp["650 EVENT_PAYMENT_ID_HASH_RECEIVED ".len()..];
+                let mut parts = rest.splitn(2, ' ');
+                circ_id = parts.next().unwrap_or("").to_string();
+                let hashes_part = parts.next().unwrap_or("").to_string();
+                Some(hashes_part)
             } else {
                 None
             }
         } else {
             None
         };
-        dbg!(payment_hashes.clone());
+        dbg!(circ_id.clone(), payment_hashes.clone());
 
         if payment_hashes.is_some() {
             // 3a. On PAYMENT_ID_HASH_RECEIVED write a row to the ledger
-            // 3b. Decode the payment_hashes via the 12 hash wire_format
-            //        "handshake_payment_hash + handshake_preimage + payment_id_hash_round1 + payment_id_hash_round2 + ...payment_id_hash_round10"
+            // 3b. Decode the payment_hashes from the wire_format
             let relay_payments = RelayPayments::from_wire_format(&payment_hashes.clone().unwrap());
-            // 3c. If you require a handshake fee check the handshake_payment_hash + handshake_preimage
-            // 3d. Write the payment_id_hash_round1 to payment_id_hash_round10 to the ledger
 
-            // TODO Loop relay_payments and kick off each watcher
+            // 3c. If you require a handshake fee check the handshake_payment_hash + handshake_preimage
+            // TODO verify handshake
+
+            // 3d. Write the payment_id_hash_round1 thru payment_id_hash_round10 to the ledger
+            init_payments_received_ledger(&relay_payments, &circ_id);
 
             // 4. Then kick off OnInvoiceEvents (Auditor Loop)
-            let params = lni::types::OnInvoiceEventParams {
-                search: Some(relay_payments.payhashes[0].clone()),
-                polling_delay_sec: 3,
-                max_polling_sec: 60,
-                ..Default::default()
-            };
-            let callback = OnLnInvoiceEventCallback {};
-            tokio::task::block_in_place(|| wallet.on_invoice_events(params, Box::new(callback)));
-            //.await;
+            // TODO: naaive implementation
+            for i in 0..relay_payments.payhashes.len() {
+                let current_round_payment_hash = relay_payments.payhashes[i].clone();
+                println!(
+                    "Round {}: Payment watcher for payment hash {} for circuit {}",
+                    i, current_round_payment_hash, circ_id
+                );
+                let params = lni::types::OnInvoiceEventParams {
+                    search: Some(current_round_payment_hash),
+                    polling_delay_sec: 3,
+                    max_polling_sec: 60,
+                    ..Default::default()
+                };
+                let callback = OnLnInvoiceEventCallback {};
+                tokio::task::block_in_place(|| {
+                    wallet.on_invoice_events(params, Box::new(callback))
+                });
+                // sleep for 60 seconds before next loop TODO better time management
+                std::thread::sleep(std::time::Duration::from_secs(60));
+            }
         }
     }
     fn failure(&self, error: Option<String>) {
@@ -88,21 +105,26 @@ impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
         }
     }
     fn pending(&self, transaction: Option<Transaction>) {
-
         match transaction.clone() {
             Some(txn) => {
-                println!("Pending payment for payment hash {} with the preimage {}", txn.payment_hash, txn.preimage);
+                println!(
+                    "Pending payment for payment hash {} with the preimage {}",
+                    txn.payment_hash, txn.preimage
+                );
                 dbg!(transaction.clone());
             }
             None => {
                 println!("No transaction found");
             }
-        }        
+        }
     }
     fn failure(&self, transaction: Option<Transaction>) {
         match transaction.clone() {
             Some(txn) => {
-                println!("Failed payment for payment hash {} with the preimage {}", txn.payment_hash, txn.preimage);
+                println!(
+                    "Failed payment for payment hash {} with the preimage {}",
+                    txn.payment_hash, txn.preimage
+                );
                 dbg!(transaction.clone());
             }
             None => {

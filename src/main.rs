@@ -42,9 +42,9 @@ where
     S: Into<String>,
 {
     println!("PID: {}", std::process::id());
-    println!("Press Enter to continue...");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input).unwrap();
+    //println!("Press Enter to continue...");
+    //let mut input = String::new();
+    // std::io::stdin().read_line(&mut input).unwrap();
     
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
     dbg!(mode.clone());

@@ -1,5 +1,5 @@
 use super::circuit;
-use super::payments_ledger;
+use super::payments_sent_ledger;
 use super::select_relay_algo;
 use crate::client::payments_loop;
 use crate::types::RpcConfig;
@@ -68,7 +68,7 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     // TODO: Implement bandwidth test
 
     // 6. Init Payments Ledger
-    payments_ledger::init_payments_ledger(&selected_relays, &circuit_id);
+    payments_sent_ledger::init_payments_sent_ledger(&selected_relays, &circuit_id);
 
     // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
     let payment_loop_result = payments_loop::start_payments_loop(
