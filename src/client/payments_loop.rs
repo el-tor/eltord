@@ -34,7 +34,14 @@ pub async fn start_payments_loop(
                 Ok(payment) => payment.unwrap(),
                 Err(_) => return Err("Payment for the circuit not found".into()),
             };
-            if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
+            // dbg!(payment.clone());
+            // if zero amount, skip
+            if payment.amount_msat == 0 {
+                println!(
+                    "Payment amount is zero, skipping payment id: {:?}",
+                    payment.payment_id
+                );
+            } else if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
                 let pay_resp = tokio::task::block_in_place(|| pay_relay(&wallet, &payment));
                 match pay_resp {
                     Ok(pay_resp) => {

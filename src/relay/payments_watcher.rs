@@ -92,7 +92,7 @@ impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
     fn success(&self, transaction: Option<Transaction>) {
         match transaction.clone() {
             Some(txn) => {
-                println!("Successfully received payment for payment hash {} with the preimage {}. Keeping the circuit open for antoher 60 seconds"
+                println!("Successfully received payment for payment hash {} with the preimage {}. Keeping the circuit open for another 60 seconds..."
                 , txn.payment_hash, txn.preimage);
 
                 // check if the payment is received within the window in the payments leder
