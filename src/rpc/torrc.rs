@@ -174,9 +174,10 @@ pub async fn get_rpc_config_from_torrc(
         let mut address = "127.0.0.1".to_string();
         let mut port = "9999".to_string();
         for entry in &entries {
-            if entry.key == "Address" && !entry.value.is_empty() {
-                address = entry.value.clone();
-            }
+            // TODO - probably remove this becuase a Relay might use a public address and we dont want to use a public IP for the control port
+            // if entry.key == "Address" && !entry.value.is_empty() {
+            //     address = entry.value.clone();
+            // }
             if entry.key == "ControlPort" && !entry.value.is_empty() {
                 port = entry.value.clone();
             }

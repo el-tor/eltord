@@ -62,7 +62,7 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
         .await
         .unwrap();
     println!("Created paid Circuit with ID: {}", circuit_id);
-    println!("Connect your browser via sock5 on: {}", 18057); // TODO remove hardcodded socks5 port
+    println!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
 
     // 5. Test Bandwidth
     // TODO: Implement bandwidth test

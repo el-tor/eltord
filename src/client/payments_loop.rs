@@ -36,7 +36,7 @@ pub async fn start_payments_loop(
             };
             // dbg!(payment.clone());
             // if zero amount, skip
-            if payment.amount_msat == 0 {
+            if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
                 println!(
                     "Payment amount is zero, skipping payment id: {:?}",
                     payment.payment_id

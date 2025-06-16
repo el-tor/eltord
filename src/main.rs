@@ -45,7 +45,7 @@ where
     //println!("Press Enter to continue...");
     //let mut input = String::new();
     // std::io::stdin().read_line(&mut input).unwrap();
-    
+
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
     dbg!(mode.clone());
     let rpc_config = get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
@@ -55,13 +55,14 @@ where
         std::process::exit(1);
     }
     let rpc_config = rpc_config.unwrap();
+    // let rpc_config_2 = rpc_config.clone();
     let rpc_config_relay = rpc_config.clone();
 
     if mode == "client" || mode.is_empty() {
         println!("Starting Client Flow...");
         tokio::spawn(async move { client::start_client_flow(&rpc_config.clone()).await });
         // backup circuit
-        // tokio::spawn(async move { client::start_client_flow(&rpc_config).await });
+        // tokio::spawn(async move { client::start_client_flow(&rpc_config_2).await });
     }
 
     if mode == "relay" || mode.is_empty() {
