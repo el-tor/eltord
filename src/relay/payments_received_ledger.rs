@@ -26,7 +26,7 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
             has_error: false,
         };
 
-        let db = database::Db::new("payments_received.json".to_string()).unwrap();
+        let db = database::Db::new("data/payments_received.json".to_string()).unwrap();
         db.write_payment(row).unwrap();
         i += 1;
     }

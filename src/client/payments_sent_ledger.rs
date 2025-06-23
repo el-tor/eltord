@@ -29,7 +29,7 @@ pub fn init_payments_sent_ledger(selected_relays: &Vec<Relay>, circuit_id: &Stri
                 row.handshake_fee_payhash = relay.payment_handshake_fee_payhash.clone();
                 row.handshake_fee_preimage = relay.payment_handshake_fee_preimage.clone();
             }
-            let db = database::Db::new("payments_sent.json".to_string()).unwrap();
+            let db = database::Db::new("data/payments_sent.json".to_string()).unwrap();
             db.write_payment(row).unwrap();
             i += 1;
         }
