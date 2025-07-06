@@ -142,25 +142,24 @@ jobs:
             cargo build --release --verbose --target ${{ matrix.platform.target }}
           fi
 
-      # - name: Rename binaries
-      #   run: |
-      #     mkdir -p artifacts
-      #     mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin, '.exe') && 'exe' || 'bin' }}
-      #     mv /home/runner/code/eltor-app/backend/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin_backend }} artifacts/eltor-backend-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin_backend, '.exe') && 'exe' || 'bin' }}
-      #   shell: bash
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts
+          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin, '.exe') && 'exe' || 'bin' }}
+        shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: eltord-${{ matrix.platform.os_name }}
           path: |
-            /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor
+            artifacts
           if-no-files-found: error
 
-      # - name: Release binary
-      #   if: github.event_name == 'release'
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: artifacts/eltord-${{ matrix.platform.os_name }}.bin
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release binary
+        # if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/eltord-${{ matrix.platform.os_name }}.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
