@@ -9,12 +9,12 @@ Spec
 - [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
 
 
-eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `eltorrc` with these additional settings:
+eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `torrc` with these additional settings:
 
 Config
 ------
-`eltorrc`
-```
+`torrc`
+```sh
 ### Client Settings ###
 
 ## Lightning node settings
@@ -61,23 +61,50 @@ PaymentBolt11LightningAddress name@domain.com
 
 Run
 ---
-```
+```sh
+### Run just the relay with no settings
 cargo build
 cargo run
-# or you can pass in torrc path
-cargo run -- -f /path/to/torrc 
-# or can set env var TORRC_DEV
+
+### Other ways to run
+# 1. Run the Relay or Client
+cargo run relay
+cargo run client
+
+# 2. Relay or Client with args*
+# *(pw is ControlPort clear password (not hashed))
+cargo run client -f torrc.client.dev -pw password1234_
+cargo run relay -f torrc.relay.dev -pw password1234_
+
+# 3. Relay or Client with env vars*
+# *(nice to use with debugger if you set ARGS in .env file)
+ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
+ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
 ```
 
 .env
-```
+```sh
 PHOENIXD_URL=http://localhost:9740
 PHOENIXD_PASSWORD={{YOUR_PW}}
 PHOENIXD_TEST_PAYMENT_HASH={{{{YOUR_TEST_PAYMENT_HASH}}}} 
 PAYMENT_INTERVAL_ROUNDS=10 # Not being used, need to think more about this, hardcode to 10 now so we can pass in 10 payment id hashed during circuit build
 ```
 dev
+```sh
+ARGS="eltord client -f torrc.client.dev -pw password1234_"
 ```
-# for dev set and create a torrc.dev file in the root of the project
-TORRC_DEV=torrc.dev
+
+torrc
+======
+`torrc.relay.dev`
+```sh
+# see the torrc sample file this project
+```
+
+`torrc.client.dev`
+```sh
+# same as the torrc sample file but minus theses settings
+- OrPort
+- PaymentBolt12Offer
+- ExitRelay
 ```

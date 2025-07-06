@@ -19,6 +19,7 @@ pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) ->
     let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
         .await
         .unwrap();
+    dbg!(&lightning_conf_str);
     // parse the string "PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true"
     // TODO handle mutliple configs for PaymentLightningNodeConfig and choose default
     let node_type = get_default_value(lightning_conf_str.clone(), "type".to_string());

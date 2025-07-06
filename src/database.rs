@@ -172,7 +172,8 @@ mod tests {
             has_error: false,
         };
 
-        let db = Db::new("payments.json".to_string()).unwrap();
+        let db = Db::new("data/payments_sent.json".to_string()).unwrap();
+
         db.write_payment(payment).unwrap();
         db.write_payment(payment2).unwrap();
 

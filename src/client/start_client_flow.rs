@@ -1,5 +1,5 @@
 use super::circuit;
-use super::payments_ledger;
+use super::payments_sent_ledger;
 use super::select_relay_algo;
 use crate::client::payments_loop;
 use crate::types::RpcConfig;
@@ -44,9 +44,9 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
         .await
         .unwrap();
     println!(
-        "Build circuit EXTENDPAIDCIRCUIT with these selected relays {:?}",
-        selected_relays
+        "Build circuit EXTENDPAIDCIRCUIT with these selected relays",
     );
+    dbg!(&selected_relays);
     // TODO backup circuit
     // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
@@ -62,17 +62,22 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
         .await
         .unwrap();
     println!("Created paid Circuit with ID: {}", circuit_id);
-    println!("Connect your browser via sock5 on: {}", 18057); // TODO remove hardcodded socks5 port
+    println!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
 
     // 5. Test Bandwidth
     // TODO: Implement bandwidth test
 
     // 6. Init Payments Ledger
-    payments_ledger::init_payments_ledger(&selected_relays, &circuit_id);
+    payments_sent_ledger::init_payments_sent_ledger(&selected_relays, &circuit_id);
 
     // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
-    let payment_loop_result =
-        payments_loop::start_payments_loop(rpc_config, &selected_relays, &circuit_id, lightning_wallet).await;
+    let payment_loop_result = payments_loop::start_payments_loop(
+        rpc_config,
+        &selected_relays,
+        &circuit_id,
+        lightning_wallet,
+    )
+    .await;
 
     // => => loop logic above for the desired number of circuits (Tor typically has backup circuits in case one fails)
     // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup

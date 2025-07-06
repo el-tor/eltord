@@ -14,7 +14,7 @@ pub async fn start_payments_loop(
     circuit_id: &String,
     wallet: Box<dyn LightningNode + Send + Sync>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = Db::new("payments.json".to_string()).unwrap();
+    let db = Db::new("data/payments_sent.json".to_string()).unwrap();
     let mut round = 1;
     let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
         .unwrap_or("0".to_string())
@@ -34,7 +34,14 @@ pub async fn start_payments_loop(
                 Ok(payment) => payment.unwrap(),
                 Err(_) => return Err("Payment for the circuit not found".into()),
             };
-            if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
+            // dbg!(payment.clone());
+            // if zero amount, skip
+            if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
+                println!(
+                    "Payment amount is zero, skipping payment id: {:?}",
+                    payment.payment_id
+                );
+            } else if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
                 let pay_resp = tokio::task::block_in_place(|| pay_relay(&wallet, &payment));
                 match pay_resp {
                     Ok(pay_resp) => {

@@ -1,5 +1,5 @@
+use lni::LightningNode;
 use serde::Serialize;
-
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Relay {
@@ -14,7 +14,7 @@ pub struct Relay {
     pub payment_bolt11_lnurl: Option<String>,
     pub payment_bolt11_lightning_address: Option<String>,
     pub payment_rate_msats: Option<u32>,
-    pub payment_interval_seconds: Option<u32>, 
+    pub payment_interval_seconds: Option<u32>,
     pub payment_interval_rounds: Option<u32>,
     pub payment_handshake_fee: Option<u32>,
     pub payment_handshake_fee_payhash: Option<String>,
@@ -24,11 +24,10 @@ pub struct Relay {
     pub hop: Option<i64>,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct RpcConfig {
     pub addr: String,
-    pub rpc_password: String,
+    pub rpc_password: Option<String>,
     pub command: String,
 }
 
@@ -56,4 +55,9 @@ pub struct ConsensusRelay {
     pub port: Option<u16>,
     pub tags: Vec<RelayTag>,
     pub policy: Option<String>,
+}
+
+pub trait EventCallback {
+    fn success(&self, response: Option<String>, wallet: &(dyn LightningNode + Send + Sync));
+    fn failure(&self, error: Option<String>);
 }

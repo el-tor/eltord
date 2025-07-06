@@ -26,7 +26,13 @@
 *.log
 
 payments.json
+payments_received.json
+payments_sent.json
 
 *tmp
 
 **torrc.dev
+**torrc.relay.dev
+**torrc.client.dev
+**torrc.client.prod
+**torrc.relay.prod

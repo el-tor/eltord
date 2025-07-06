@@ -1,7 +1,7 @@
 mod start_client_flow;
 mod select_relay_algo;
 mod circuit;
-mod payments_ledger;
+mod payments_sent_ledger;
 mod payments_loop;
 mod bandwidth_test;
 

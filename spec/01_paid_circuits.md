@@ -149,7 +149,7 @@ A relay wants to start sharing his bandwidth. Configure payment preferences and 
 Steps:
 1. Set Torrc Config
 2. Handshake
-3. Emit Event `EXTENDPAIDCIRCUIT`
+3. Watch emitted Event `PAYMENT_ID_HASH_RECEIVED`
 4. Start Relay Payment Watcher
 5. Init Payments Ledger
 6. Start Lightning payment watcher
@@ -195,7 +195,7 @@ A relay receives a handshake cell to extend/create a circuit from a client willi
 Handshake Fee check: A relay receives an onion message to `EXTENDPAIDCIRCUIT`. Verify the `handshake_fee_payment_hash` and `handshake_fee_preimage`. 
 If no fee is required you can ignore the padded data.
 
-<b>3. Emit Event</b>
+<b>3. Watch emitted Event PAYMENT_ID_HASH_RECEIVED</b>
 
 The tor daemon will emit the event `EXTEND_PAID_CIRCUIT` for the relay watcher to verify against the lighting database.
 
