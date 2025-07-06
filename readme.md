@@ -108,3 +108,17 @@ torrc
 - PaymentBolt12Offer
 - ExitRelay
 ```
+
+
+TODO
+====
+1. simply read the payments-sent.json in as the same dir as the TOR DataDirectory
+2. simplify the default command:
+```
+# from
+./eltor client -f torrc -pw password1234_
+# to 
+./eltor
+```
+3. Should the same binary run both the client and relay? like always run client, but also run relay if bolt12 is configured?
+4. rotate the payments-sent.json file after a few thousand rows

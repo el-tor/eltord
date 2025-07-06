@@ -152,9 +152,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.platform.os_name }}
+          name: eltord-${{ matrix.platform.os_name }}
           path: |
-            /home/runner/code/eltord/target
+            /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor
           if-no-files-found: error
 
       # - name: Release binary
