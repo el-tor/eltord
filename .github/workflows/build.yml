@@ -145,7 +145,7 @@ jobs:
       - name: Rename binaries
         run: |
           mkdir -p artifacts
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin, '.exe') && 'exe' || 'bin' }}
+          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
         shell: bash
 
       - name: Upload artifacts
@@ -160,6 +160,6 @@ jobs:
         # if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/eltord-${{ matrix.platform.os_name }}.bin
+          files: artifacts/${{ matrix.platform.os_name }}/eltord
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
