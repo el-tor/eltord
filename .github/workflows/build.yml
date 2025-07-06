@@ -105,7 +105,7 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd /home/runner/code/eltord && git checkout relay-flows-2
+          cd /home/runner/code/eltord && git checkout master
           cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys
@@ -134,7 +134,7 @@ jobs:
       - name: Rename binary
         run: |
           mkdir -p artifacts
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}${{ matrix.platform.bin | replace('.exe', '') }}.bin
+          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}${{ matrix.platform.bin }}.bin
         shell: bash
 
       - name: Upload artifact
