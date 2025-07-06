@@ -144,7 +144,7 @@ jobs:
 
       - name: Rename binaries
         run: |
-          mkdir -p artifacts
+          mkdir -p artifacts/${{ matrix.platform.os_name }}
           mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
         shell: bash
 
