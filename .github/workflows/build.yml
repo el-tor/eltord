@@ -131,24 +131,19 @@ jobs:
             cargo build --release --verbose --target ${{ matrix.platform.target }}
           fi
 
-      - name: Debug eltor-backend target directory
-        working-directory: /home/runner/code/eltor-app/backend
-        run: ls -la target/${{ matrix.platform.target }}/release
-
-      - name: Rename binaries
-        run: |
-          mkdir -p artifacts
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin, '.exe') && 'exe' || 'bin' }}
-          mv /home/runner/code/eltor-app/backend/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin_backend }} artifacts/eltor-backend-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin_backend, '.exe') && 'exe' || 'bin' }}
-        shell: bash
+      # - name: Rename binaries
+      #   run: |
+      #     mkdir -p artifacts
+      #     mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin }} artifacts/eltord-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin, '.exe') && 'exe' || 'bin' }}
+      #     mv /home/runner/code/eltor-app/backend/target/${{ matrix.platform.target }}/release/${{ matrix.platform.bin_backend }} artifacts/eltor-backend-${{ matrix.platform.os_name }}.${{ contains(matrix.platform.bin_backend, '.exe') && 'exe' || 'bin' }}
+      #   shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.platform.os_name }}
           path: |
-            artifacts/eltord-${{ matrix.platform.os_name }}.*
-            artifacts/eltor-backend-${{ matrix.platform.os_name }}.*
+            /home/runner/code
           if-no-files-found: error
 
       # - name: Release binary
