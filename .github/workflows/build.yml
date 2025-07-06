@@ -20,9 +20,14 @@ jobs:
       matrix:
         platform:
           - os_name: Linux-x86_64
-            os: ubuntu:20.04
-            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
             bin: eltord
+            use_cross: true
+          # - os_name: Linux-x86_64
+          #   os: ubuntu:20.04
+          #   target: x86_64-unknown-linux-gnu
+          #   bin: eltord
           # - os_name: Linux-aarch64
           #   os: ubuntu:20.04
           #   target: aarch64-unknown-linux-gnu
@@ -78,6 +83,12 @@ jobs:
             bison \
             unzip \
             clang
+
+      - name: Install musl-tools for Linux builds
+        if: matrix.platform.use_cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev
 
       - name: Install macOS dependencies
         if: matrix.platform.os == 'macos-latest'
