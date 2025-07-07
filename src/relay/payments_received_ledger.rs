@@ -18,7 +18,7 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
             handshake_fee_preimage: Some(relay_payments.handshake_preimage.clone()),
             paid: false,
             expires_at: chrono::Utc::now().timestamp() + 60,
-            bolt11_invoice: None,                         // TODO implement
+            bolt11_invoice: None,                               // TODO implement
             bolt12_offer: Some("MY_BOLT_12_OFFER".to_string()), // TODO lookup
             payment_hash: None,
             preimage: None,
@@ -26,7 +26,16 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
             has_error: false,
         };
 
-        let db = database::Db::new("data/payments_received.json".to_string()).unwrap();
+        // Create data folder if it doesn't exist
+        // TODO read from config file
+        std::fs::create_dir_all("data").unwrap();
+        // Create payments_received.json file if it doesn't exist
+        let payments_received_path = "data/payments_received.json";
+        if !std::path::Path::new(payments_received_path).exists() {
+            std::fs::File::create(payments_received_path).unwrap();
+        }
+
+        let db = database::Db::new(payments_received_path.to_string()).unwrap();
         db.write_payment(row).unwrap();
         i += 1;
     }
