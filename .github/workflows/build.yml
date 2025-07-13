@@ -156,7 +156,7 @@ jobs:
         run: |
           # Install autotools and build dependencies through MSYS2
           C:\msys64\usr\bin\bash.exe -lc "pacman -Syu --noconfirm"
-          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm autotools automake autoconf libtool make pkg-config mingw-w64-x86_64-toolchain mingw-w64-x86_64-openssl mingw-w64-x86_64-zlib"
+          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm autotools automake autoconf libtool make pkg-config dos2unix mingw-w64-x86_64-toolchain mingw-w64-x86_64-openssl mingw-w64-x86_64-zlib"
 
       - name: Set Windows environment
         run: |
@@ -171,11 +171,13 @@ jobs:
         run: |
           # Check that required tools are available
           which gcc || echo "gcc not found"
+          which x86_64-w64-mingw32-gcc || echo "mingw32-gcc not found"
           which make || echo "make not found" 
           which autoconf || echo "autoconf not found"
           which automake || echo "automake not found"
           which aclocal || echo "aclocal not found"
           which libtool || echo "libtool not found"
+          which dos2unix || echo "dos2unix not found"
         shell: bash
 
       - name: Clone git dependencies
@@ -196,13 +198,24 @@ jobs:
       - name: Build libeltor-sys
         run: |
           cd D:/a/code/libeltor-sys
-          # Ensure autotools are available
+          # Ensure autotools are available and fix line endings
           export PATH="/c/msys64/usr/bin:/c/msys64/mingw64/bin:$PATH"
+          
+          # Fix line endings in configure files before building
+          find . -name "*.ac" -o -name "*.in" -o -name "*.sh" | xargs dos2unix 2>/dev/null || true
+          
           ls -la && ls -la scripts
           chmod +x scripts/copy.sh scripts/build.sh
           ./scripts/copy.sh
           mkdir -p patches libtor-src/patches
           touch patches/.keep libtor-src/patches/.keep
+          
+          # Set environment for cross-compilation
+          export CC=x86_64-w64-mingw32-gcc
+          export CXX=x86_64-w64-mingw32-g++
+          export AR=x86_64-w64-mingw32-ar
+          export RANLIB=x86_64-w64-mingw32-ranlib
+          
           cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
         shell: bash
 
