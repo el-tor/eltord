@@ -1,6 +1,16 @@
 name: Build eltord Binary
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Choose which platform to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
   push:
     tags:
       - 'v*' # Trigger on version tags like v1.0.0
@@ -15,34 +25,15 @@ permissions:
   contents: write # Needed for uploading release assets
 
 jobs:
-  build:
-    name: Build eltord - ${{ matrix.platform.os_name }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os_name: Linux-x86_64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            bin: eltord
-          - os_name: Windows-x86_64
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bin: eltord.exe
-          # - os_name: Linux-aarch64
-          #   os: ubuntu-latest
-          #   target: aarch64-unknown-linux-gnu
-          #   bin: eltord
-          #   use_cross: true
-          # - os_name: macOS-x86_64
-          #   os: macos-latest
-          #   target: x86_64-apple-darwin
-          #   bin: eltord
-          # - os_name: macOS-aarch64
-          #   os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   bin: eltord
+  build-linux:
+    name: Build eltord - Linux-x86_64
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: ubuntu-latest
+      PLATFORM_TARGET: x86_64-unknown-linux-gnu
+      PLATFORM_BIN: eltord
+      PLATFORM_OS_NAME: Linux-x86_64
 
     steps:
       - name: Checkout repository
@@ -52,13 +43,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: ${{ matrix.platform.target }}
+          targets: ${{ env.PLATFORM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        if: matrix.platform.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -82,83 +72,43 @@ jobs:
             unzip \
             clang
 
-      - name: Install macOS dependencies
-        if: matrix.platform.os == 'macos-latest'
-        run: |
-          brew install openssl@3 sqlite libevent tor
-
-      - name: Install Windows dependencies
-        if: matrix.platform.os == 'windows-latest'
-        run: |
-          choco install -y openssl sqlite git make mingw
-
       - name: Clone git dependencies
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            git clone https://github.com/el-tor/eltor.git D:/a/code/eltor
-            git clone https://github.com/lightning-node-interface/lni.git D:/a/code/lni
-            git clone https://github.com/el-tor/libeltor-sys.git D:/a/code/libeltor-sys
-            git clone https://github.com/el-tor/libeltor.git D:/a/code/libeltor
-            git clone https://github.com/el-tor/eltord.git D:/a/code/eltord
-          else
-            git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
-            git clone https://github.com/lightning-node-interface/lni.git /home/runner/code/lni
-            git clone https://github.com/el-tor/libeltor-sys.git /home/runner/code/libeltor-sys
-            git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
-            git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
-          fi
-        shell: bash
+          git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git /home/runner/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git /home/runner/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
+          git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
 
       - name: Checkout specific branches
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cd D:/a/code/eltord && git checkout master
-            cd D:/a/code/lni && git checkout search
-          else
-            cd /home/runner/code/eltord && git checkout master
-            cd /home/runner/code/lni && git checkout search
-          fi
-        shell: bash
+          cd /home/runner/code/eltord && git checkout master
+          cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cd D:/a/code/libeltor-sys
-          else
-            cd /home/runner/code/libeltor-sys
-          fi
+          cd /home/runner/code/libeltor-sys
           ls -la && ls -la scripts
           chmod +x scripts/copy.sh scripts/build.sh
           ./scripts/copy.sh
           mkdir -p patches libtor-src/patches
           touch patches/.keep libtor-src/patches/.keep
-          cargo build --release --verbose --target ${{ matrix.platform.target }}
-        shell: bash
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Build eltord
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cd D:/a/code/eltord
-          else
-            cd /home/runner/code/eltord
-          fi
-          cargo build --release --verbose --target ${{ matrix.platform.target }}
-        shell: bash
+          cd /home/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Rename binaries
         run: |
-          mkdir -p artifacts/${{ matrix.platform.os_name }}
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            mv D:/a/code/eltord/target/${{ matrix.platform.target }}/release/eltor.exe artifacts/${{ matrix.platform.os_name }}/eltord.exe
-          else
-            mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
-          fi
-        shell: bash
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/eltord
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: eltord-${{ matrix.platform.os_name }}
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
           path: |
             artifacts
           if-no-files-found: error
@@ -167,6 +117,114 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ matrix.platform.os_name }}/*
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build eltord - Windows-x86_64
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: windows-latest
+      PLATFORM_TARGET: x86_64-pc-windows-msvc
+      PLATFORM_BIN: eltord.exe
+      PLATFORM_OS_NAME: Windows-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ env.PLATFORM_TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Windows dependencies
+        run: |
+          # Install basic tools
+          choco install -y git
+          
+          # Install OpenSSL (pre-compiled)
+          choco install -y openssl
+          
+          # Install pkg-config equivalent for Windows
+          choco install -y pkgconfiglite
+          
+          # Set environment variables for OpenSSL
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL-Win64\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL-Win64\include" >> $env:GITHUB_ENV
+
+      - name: Set Windows environment
+        run: |
+          # Add paths to system PATH
+          echo "C:\Program Files\OpenSSL-Win64\bin" >> $env:GITHUB_PATH
+          
+          # Set Rust build flags
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
+
+      - name: Clone git dependencies
+        run: |
+          git clone https://github.com/el-tor/eltor.git D:/a/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git D:/a/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git D:/a/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git D:/a/code/libeltor
+          git clone https://github.com/el-tor/eltord.git D:/a/code/eltord
+        shell: bash
+
+      - name: Checkout specific branches
+        run: |
+          cd D:/a/code/eltord && git checkout master
+          cd D:/a/code/lni && git checkout search
+        shell: bash
+
+      - name: Build libeltor-sys
+        run: |
+          cd D:/a/code/libeltor-sys
+          # Use vendored OpenSSL for Windows
+          export OPENSSL_STATIC=1
+          export OPENSSL_NO_VENDOR=0
+          ls -la && ls -la scripts
+          chmod +x scripts/copy.sh scripts/build.sh
+          ./scripts/copy.sh
+          mkdir -p patches libtor-src/patches
+          touch patches/.keep libtor-src/patches/.keep
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+        shell: bash
+
+      - name: Build eltord
+        run: |
+          cd D:/a/code/eltord
+          # Use vendored OpenSSL for Windows
+          export OPENSSL_STATIC=1
+          export OPENSSL_NO_VENDOR=0
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+        shell: bash
+
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv D:/a/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/eltord.exe
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
+          path: |
+            artifacts
+          if-no-files-found: error
+
+      - name: Release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
