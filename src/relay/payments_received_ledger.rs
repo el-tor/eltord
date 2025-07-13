@@ -1,5 +1,6 @@
 use crate::types::Relay;
 use crate::{database, relay};
+use log::info;
 
 use super::{relay_payments, RelayPayments};
 
@@ -40,7 +41,7 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
         i += 1;
     }
 
-    println!(
+    info!(
         "Init row in payments received ledger for circuit: {:?}",
         circuit_id
     );

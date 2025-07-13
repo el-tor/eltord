@@ -3,6 +3,40 @@ eltor
 
 `eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. 
 
+**⚡ New: Library Support**
+Eltord can now be used both as a standalone binary and as a library in other Rust projects! See [LIBRARY_USAGE.md](./LIBRARY_USAGE.md) for details.
+
+## Usage
+
+### As a Binary
+```bash
+# Run as relay (default)
+cargo run
+
+# Run as client
+cargo run client
+
+# Run with custom torrc file
+cargo run client -f torrc.client.dev -pw password1234_
+```
+
+### As a Library
+```rust
+use eltor::{init_and_run, start_client, start_relay};
+
+#[tokio::main]
+async fn main() {
+    // Option 1: Full initialization with .env and argument parsing
+    init_and_run().await;
+    
+    // Option 2: Start specific components
+    // let rpc_config = get_rpc_config_from_torrc("torrc", None).await.unwrap();
+    // start_client(&rpc_config).await;
+}
+```
+
+See the [examples/](./examples/) directory for complete usage examples.
+
 Spec
 ----
 - [(00) - El Tor Spec](./spec/00_spec.md)

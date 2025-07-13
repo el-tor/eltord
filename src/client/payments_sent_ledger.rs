@@ -1,5 +1,6 @@
 use crate::database;
 use crate::types::Relay;
+use log::info;
 
 pub fn init_payments_sent_ledger(selected_relays: &Vec<Relay>, circuit_id: &String) {
     for relay in selected_relays.iter() {
@@ -42,7 +43,7 @@ pub fn init_payments_sent_ledger(selected_relays: &Vec<Relay>, circuit_id: &Stri
             i += 1;
         }
     }
-    println!(
+    info!(
         "Init row in payments sent ledger for circuit: {:?}",
         circuit_id
     );

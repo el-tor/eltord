@@ -2,6 +2,20 @@
 name = "eltor"
 version = "0.0.1"
 edition = "2018"
+description = "Tor network fork with paid relay functionality and Lightning Network integration"
+readme = "readme.md"
+repository = "https://github.com/el-tor/eltord"
+license = "MIT"
+keywords = ["tor", "lightning", "privacy", "bitcoin", "networking"]
+categories = ["network", "bitcoin", "privacy"]
+
+[lib]
+name = "eltor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "eltor"
+path = "src/main.rs"
 
 [dependencies]
 libtor = { path = "../libeltor/libtor" }
@@ -21,10 +35,8 @@ sha2 = "0.10.8"
 hex = "0.4.3"
 chrono = "0.4"
 tokio-test = "0.4"
-
-[[bin]]
-name = "eltor"
-path = "src/main.rs"
+env_logger = "0.10"
+log = "0.4"
 
 [features]
 vendored-openssl = ["libtor-sys/vendored-openssl"]
