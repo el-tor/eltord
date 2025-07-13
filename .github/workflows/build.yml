@@ -146,19 +146,17 @@ jobs:
 
       - name: Install Windows dependencies
         run: |
-          # Install MinGW for GNU target
-          choco install -y mingw
+          # Install MSYS2 which provides MinGW and is more reliable
+          choco install -y msys2
           
           # Install basic build tools
-          choco install -y git make
-          
-          # Refresh environment
-          refreshenv
+          choco install -y git
 
       - name: Set Windows environment
         run: |
-          # Add MinGW to PATH
-          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $env:GITHUB_PATH
+          # Add MSYS2 MinGW to PATH (more reliable than standalone MinGW)
+          echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          echo "C:\msys64\usr\bin" >> $env:GITHUB_PATH
           
           # Set Rust build flags for GNU target
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
