@@ -116,6 +116,24 @@ ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
 ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
 ```
 
+Release
+-------
+To create a new release:
+
+```sh
+# Create and push a release tag (triggers GitHub Actions build)
+./scripts/release.sh 1.0.0
+
+# Or for pre-release versions
+./scripts/release.sh 1.0.0-beta
+```
+
+The release script will:
+1. Update the version in `Cargo.toml`
+2. Create a git tag (e.g., `v1.0.0`)
+3. Push the tag to GitHub
+4. Trigger GitHub Actions to build binaries and create a release
+
 .env
 ```sh
 PHOENIXD_URL=http://localhost:9740

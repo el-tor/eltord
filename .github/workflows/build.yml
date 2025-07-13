@@ -1,6 +1,9 @@
 name: Build eltord Binary
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0
   # push:
   #   branches: [main]
   # pull_request:
@@ -21,18 +24,17 @@ jobs:
         platform:
           - os_name: Linux-x86_64
             os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             bin: eltord
-            use_cross: true
-          # - os_name: Linux-x86_64
-          #   os: ubuntu:20.04
-          #   target: x86_64-unknown-linux-gnu
-          #   bin: eltord
+          - os_name: Windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: eltord.exe
           # - os_name: Linux-aarch64
-          #   os: ubuntu:20.04
+          #   os: ubuntu-latest
           #   target: aarch64-unknown-linux-gnu
           #   bin: eltord
-          #   use_cross: true # Use cross-rs for ARM Linux
+          #   use_cross: true
           # - os_name: macOS-x86_64
           #   os: macos-latest
           #   target: x86_64-apple-darwin
@@ -41,10 +43,6 @@ jobs:
           #   os: macos-latest
           #   target: aarch64-apple-darwin
           #   bin: eltord
-          # - os_name: Windows-x86_64
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bin: eltord.exe
 
     steps:
       - name: Checkout repository
@@ -60,7 +58,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        if: matrix.platform.os == 'ubuntu:20.04'
+        if: matrix.platform.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -84,12 +82,6 @@ jobs:
             unzip \
             clang
 
-      - name: Install musl-tools for Linux builds
-        if: matrix.platform.use_cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
-
       - name: Install macOS dependencies
         if: matrix.platform.os == 'macos-latest'
         run: |
@@ -100,52 +92,67 @@ jobs:
         run: |
           choco install -y openssl sqlite git make mingw
 
-      - name: Install cross-rs for Linux ARM
-        if: matrix.platform.use_cross
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall --no-confirm cross
-
       - name: Clone git dependencies
         run: |
-          git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
-          git clone https://github.com/lightning-node-interface/lni.git /home/runner/code/lni
-          git clone https://github.com/el-tor/libeltor-sys.git /home/runner/code/libeltor-sys
-          git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
-          git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            git clone https://github.com/el-tor/eltor.git D:/a/code/eltor
+            git clone https://github.com/lightning-node-interface/lni.git D:/a/code/lni
+            git clone https://github.com/el-tor/libeltor-sys.git D:/a/code/libeltor-sys
+            git clone https://github.com/el-tor/libeltor.git D:/a/code/libeltor
+            git clone https://github.com/el-tor/eltord.git D:/a/code/eltord
+          else
+            git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
+            git clone https://github.com/lightning-node-interface/lni.git /home/runner/code/lni
+            git clone https://github.com/el-tor/libeltor-sys.git /home/runner/code/libeltor-sys
+            git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
+            git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
+          fi
+        shell: bash
 
       - name: Checkout specific branches
         run: |
-          cd /home/runner/code/eltord && git checkout master
-          cd /home/runner/code/lni && git checkout search
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cd D:/a/code/eltord && git checkout master
+            cd D:/a/code/lni && git checkout search
+          else
+            cd /home/runner/code/eltord && git checkout master
+            cd /home/runner/code/lni && git checkout search
+          fi
+        shell: bash
 
       - name: Build libeltor-sys
-        working-directory: /home/runner/code/libeltor-sys
         run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cd D:/a/code/libeltor-sys
+          else
+            cd /home/runner/code/libeltor-sys
+          fi
           ls -la && ls -la scripts
           chmod +x scripts/copy.sh scripts/build.sh
           ./scripts/copy.sh
           mkdir -p patches libtor-src/patches
           touch patches/.keep libtor-src/patches/.keep
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
-          else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
-          fi
+          cargo build --release --verbose --target ${{ matrix.platform.target }}
+        shell: bash
 
       - name: Build eltord
-        working-directory: /home/runner/code/eltord
         run: |
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cd D:/a/code/eltord
           else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
+            cd /home/runner/code/eltord
           fi
+          cargo build --release --verbose --target ${{ matrix.platform.target }}
+        shell: bash
 
       - name: Rename binaries
         run: |
           mkdir -p artifacts/${{ matrix.platform.os_name }}
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv D:/a/code/eltord/target/${{ matrix.platform.target }}/release/eltor.exe artifacts/${{ matrix.platform.os_name }}/eltord.exe
+          else
+            mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
+          fi
         shell: bash
 
       - name: Upload artifacts
@@ -157,9 +164,9 @@ jobs:
           if-no-files-found: error
 
       - name: Release binary
-        # if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ matrix.platform.os_name }}/eltord
+          files: artifacts/${{ matrix.platform.os_name }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
