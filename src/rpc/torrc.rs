@@ -1,3 +1,5 @@
+use log::info;
+
 use super::rpc_client;
 use crate::types::RpcConfig;
 use std::{error::Error, io::BufRead};
@@ -26,7 +28,7 @@ pub async fn get_torrc_value(config: &RpcConfig, keywords: &[String]) -> Vec<Tor
         match get_conf(config, key.clone()).await {
             Ok(resp) => {
                 let resp = resp.trim();
-                dbg!(resp);
+                info!("resp: {:?}", resp);
                 if resp.is_empty() {
                     continue;
                 }
@@ -110,6 +112,7 @@ fn parse_kv_data(val: &str) -> Vec<KV> {
 }
 
 pub async fn get_conf(config: &RpcConfig, setting: String) -> Result<String, Box<dyn Error>> {
+    info!("get_conf: {:?}", config);
     let rpc = rpc_client(RpcConfig {
         addr: config.clone().addr,
         rpc_password: config.clone().rpc_password,
@@ -147,7 +150,7 @@ pub async fn get_conf_payment_circuit_max_fee(config: &RpcConfig) -> Result<u64,
 /// Handles comma and space separated values, curly-brace country codes, and nicknames.
 pub async fn get_conf_exit_nodes(config: &RpcConfig) -> Option<TorrcEntry> {
     let conf = get_torrc_value(config, &["ExitNodes".to_string()]).await;
-    dbg!(conf.clone());
+    info!("conf: {:?}", conf);
     if conf.is_empty() {
         return None;
     }
@@ -321,7 +324,7 @@ PaymentLightningNodeConfig type=lnd url=http://lnd.com macaroon=mac1234
             "PaymentLightningNodeConfig".to_string(),
         ];
         let result = test_get_torrc_value_inner(&config, &keys, torrc).await;
-        dbg!(result.clone());
+        info!("Test result: {:?}", result);
         assert_eq!(
             result,
             vec![

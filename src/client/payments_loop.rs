@@ -2,6 +2,7 @@ use super::bandwidth_test;
 use crate::database::{Db, Payment};
 use crate::types::Relay;
 use lni::{LightningNode, PayInvoiceResponse};
+use log::{debug, info, warn};
 use std::env;
 
 // is round expired
@@ -21,7 +22,7 @@ pub async fn start_payments_loop(
         .parse()
         .unwrap();
     while round <= 10 {
-        println!(
+        info!(
             "Round {:?} - Starting payments loop for circuit: {:?}",
             round, circuit_id
         );
@@ -37,7 +38,7 @@ pub async fn start_payments_loop(
             // dbg!(payment.clone());
             // if zero amount, skip
             if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
-                println!(
+                info!(
                     "Payment amount is zero, skipping payment id: {:?}",
                     payment.payment_id
                 );
@@ -52,21 +53,21 @@ pub async fn start_payments_loop(
                         db.update_payment(payment).unwrap();
                     }
                     Err(_) => {
-                        println!("Payment failed for payment id: {:?}", payment.payment_id);
+                        warn!("Payment failed for payment id: {:?}", payment.payment_id);
                         payment.has_error = true;
                         db.update_payment(payment).unwrap();
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
             } else {
-                println!("Kill circuit round is expired");
+                warn!("Kill circuit round is expired");
                 kill_circuit();
                 break;
             }
         }
         round += 1;
         // TODO figure out how to do for relays with different interval_seconds, hardcode 45 second intervals for now
-        wait_for_next_round(45);
+        wait_for_next_round(45).await;
     }
     Ok(())
 }
@@ -83,9 +84,9 @@ fn is_round_expired(payment: &Payment) -> bool {
     false
 }
 
-fn wait_for_next_round(interval_seconds: i64) {
-    println!("Waiting for next round {}...", chrono::Utc::now());
-    std::thread::sleep(std::time::Duration::from_secs(interval_seconds as u64));
+async fn wait_for_next_round(interval_seconds: i64) {
+    info!("Waiting for next round {}...", chrono::Utc::now());
+    tokio::time::sleep(tokio::time::Duration::from_secs(interval_seconds as u64)).await;
 }
 
 fn pay_relay(
@@ -93,7 +94,7 @@ fn pay_relay(
     payment: &Payment,
 ) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
     let amount_msats = payment.amount_msat;
-    println!(
+    info!(
         "Paying {} sats relay: {:?} with payment id: {:?}",
         amount_msats / 1000,
         Some(
@@ -112,14 +113,14 @@ fn pay_relay(
     );
     match pay_resp {
         Ok(result) => {
-            println!(
+            info!(
                 "Payment successful for payment id {:?} with preimage {:?} and fee {:?}",
                 payment.payment_id, result.preimage, result.fee_msats
             );
             Ok(result)
         }
         Err(e) => {
-            println!(
+            warn!(
                 "Payment failed for payment id: {:?} with error {:?}",
                 payment.payment_id, e
             );

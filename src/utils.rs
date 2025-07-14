@@ -1,10 +1,10 @@
-
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use hex;
 use std::fmt::Write;
 use base64;
 use base64::decode;
+use log::{info, debug};
 
 // Generate random payment hash and preimage
 pub fn get_random_payhash_and_preimage() -> (String, String) {
@@ -24,7 +24,7 @@ pub fn microdesc_to_fingerprint(base64_id: &str) -> Option<String> {
     for byte in bytes.iter() {
         write!(&mut hex_fingerprint, "{:02X}", byte).ok()?;
     }
-    println!("Tor Hex FP {}", hex_fingerprint);
+    info!("Tor Hex FP {}", hex_fingerprint);
     Some(hex_fingerprint)
 }
 

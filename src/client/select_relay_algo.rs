@@ -6,6 +6,7 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
+use log::{info, debug};
 
 // Simple Relay Selection Algo
 // 1. Pick 3 relays, 1 entry, 1 middle, 1 exit at random
@@ -21,7 +22,7 @@ pub async fn simple_relay_selection_algo(
     let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config)
         .await
         .unwrap();
-    println!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
+    info!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
     let filtered_relays: Vec<&Relay> = relays
@@ -81,7 +82,7 @@ pub async fn simple_relay_selection_algo(
                 }
             }
         }
-        println!("{:?}", r);
+        info!("{:?}", r);
     }
 
     // Shuffle the filtered relays

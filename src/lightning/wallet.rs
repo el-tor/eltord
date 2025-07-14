@@ -1,4 +1,5 @@
 use std::{env, string};
+use log::{info, debug};
 
 use lni::cln::{ClnConfig, ClnNode};
 use lni::lnd::{LndConfig, LndNode};
@@ -8,22 +9,24 @@ use lni::LightningNode;
 use crate::rpc::get_conf;
 use crate::types::RpcConfig;
 
-pub async fn load_wallet(rpc_config: &RpcConfig) -> Box<dyn LightningNode + Send + Sync> {
-    println!("Loading wallet...");
-    let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await;
+pub async fn load_wallet(rpc_config: &RpcConfig) -> Result<Box<dyn LightningNode + Send + Sync>, Box<dyn std::error::Error>> {
+    info!("Loading wallet...");
+    let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await?;
     let lightning_node = tokio::task::block_in_place(|| get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
-    lightning_node
+    Ok(lightning_node)
 }
 
-pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) -> (String, String) {
+pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) -> Result<(String, String), Box<dyn std::error::Error>> {
+    info!("Looking up default lightning node from torrc with config: {:?}", rpc_config);
     let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
         .await
-        .unwrap();
-    dbg!(&lightning_conf_str);
+        .map_err(|e| format!("Failed to get PaymentLightningNodeConfig from torrc: {}", e))?;
+    info!("Lightning config string: {}", lightning_conf_str);
     // parse the string "PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true"
     // TODO handle mutliple configs for PaymentLightningNodeConfig and choose default
-    let node_type = get_default_value(lightning_conf_str.clone(), "type".to_string());
-    (node_type.unwrap().to_string(), lightning_conf_str)
+    let node_type = get_default_value(lightning_conf_str.clone(), "type".to_string())
+        .ok_or("No 'type' found in PaymentLightningNodeConfig")?;
+    Ok((node_type.to_string(), lightning_conf_str))
 }
 
 pub fn get_lightning_node(
@@ -44,7 +47,7 @@ pub fn get_lightning_node(
             let u = url.clone().as_str();
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(PhoenixdNode::new(config));
             let info = node.get_info().unwrap();
-            println!("Phoenixd Node info: {:?}", info);
+            info!("Phoenixd Node info: {:?}", info);
             node
         }
         "lnd" => {
@@ -59,7 +62,7 @@ pub fn get_lightning_node(
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(LndNode::new(config));
             let info = node.get_info().unwrap();
-            println!("LND Node info: {:?}", info);
+            info!("LND Node info: {:?}", info);
             node
         }
         "cln" => {
@@ -74,7 +77,7 @@ pub fn get_lightning_node(
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(ClnNode::new(config));
             let info = node.get_info().unwrap();
-            println!("CLN Node info: {:?}", info);
+            info!("CLN Node info: {:?}", info);
             node
         }
         _ => panic!("Unsupported node type: {}", node_type),
@@ -89,7 +92,7 @@ fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> 
             let binding =
                 config.replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
             let parts: Vec<&str> = binding.split_whitespace().collect();
-            dbg!(&parts);
+            info!("Config parts: {:?}", parts);
             let mut val: Option<&str> = None;
             for part in parts {
                 let formatted_key = format!("{}=", key);
@@ -98,7 +101,7 @@ fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> 
                     break;
                 }
             }
-            dbg!(&val);
+            info!("Extracted value: {:?}", val);
             return Some(val.unwrap_or_default().to_string());
         }
     }

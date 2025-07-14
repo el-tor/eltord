@@ -1,6 +1,19 @@
 name: Build eltord Binary
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Choose which platform to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
+  push:
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0
   # push:
   #   branches: [main]
   # pull_request:
@@ -12,39 +25,15 @@ permissions:
   contents: write # Needed for uploading release assets
 
 jobs:
-  build:
-    name: Build eltord - ${{ matrix.platform.os_name }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os_name: Linux-x86_64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            bin: eltord
-            use_cross: true
-          # - os_name: Linux-x86_64
-          #   os: ubuntu:20.04
-          #   target: x86_64-unknown-linux-gnu
-          #   bin: eltord
-          # - os_name: Linux-aarch64
-          #   os: ubuntu:20.04
-          #   target: aarch64-unknown-linux-gnu
-          #   bin: eltord
-          #   use_cross: true # Use cross-rs for ARM Linux
-          # - os_name: macOS-x86_64
-          #   os: macos-latest
-          #   target: x86_64-apple-darwin
-          #   bin: eltord
-          # - os_name: macOS-aarch64
-          #   os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   bin: eltord
-          # - os_name: Windows-x86_64
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bin: eltord.exe
+  build-linux:
+    name: Build eltord - Linux-x86_64
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: ubuntu-latest
+      PLATFORM_TARGET: x86_64-unknown-linux-gnu
+      PLATFORM_BIN: eltord
+      PLATFORM_OS_NAME: Linux-x86_64
 
     steps:
       - name: Checkout repository
@@ -54,13 +43,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: ${{ matrix.platform.target }}
+          targets: ${{ env.PLATFORM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        if: matrix.platform.os == 'ubuntu:20.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -84,28 +72,6 @@ jobs:
             unzip \
             clang
 
-      - name: Install musl-tools for Linux builds
-        if: matrix.platform.use_cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
-
-      - name: Install macOS dependencies
-        if: matrix.platform.os == 'macos-latest'
-        run: |
-          brew install openssl@3 sqlite libevent tor
-
-      - name: Install Windows dependencies
-        if: matrix.platform.os == 'windows-latest'
-        run: |
-          choco install -y openssl sqlite git make mingw
-
-      - name: Install cross-rs for Linux ARM
-        if: matrix.platform.use_cross
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall --no-confirm cross
-
       - name: Clone git dependencies
         run: |
           git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
@@ -120,46 +86,177 @@ jobs:
           cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys
-        working-directory: /home/runner/code/libeltor-sys
         run: |
+          cd /home/runner/code/libeltor-sys
           ls -la && ls -la scripts
           chmod +x scripts/copy.sh scripts/build.sh
           ./scripts/copy.sh
           mkdir -p patches libtor-src/patches
           touch patches/.keep libtor-src/patches/.keep
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
-          else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
-          fi
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Build eltord
-        working-directory: /home/runner/code/eltord
         run: |
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
-          else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
-          fi
+          cd /home/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Rename binaries
         run: |
-          mkdir -p artifacts/${{ matrix.platform.os_name }}
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
-        shell: bash
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/eltord
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: eltord-${{ matrix.platform.os_name }}
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
           path: |
             artifacts
           if-no-files-found: error
 
       - name: Release binary
-        # if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ matrix.platform.os_name }}/eltord
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build eltord - Windows-x86_64
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: windows-latest
+      PLATFORM_TARGET: x86_64-pc-windows-gnu
+      PLATFORM_BIN: eltord.exe
+      PLATFORM_OS_NAME: Windows-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ env.PLATFORM_TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Windows dependencies
+        run: |
+          # Install MSYS2 which provides MinGW and is more reliable
+          choco install -y msys2
+          
+          # Install basic build tools
+          choco install -y git
+
+      - name: Install MSYS2 packages
+        run: |
+          # Install autotools and build dependencies through MSYS2
+          C:\msys64\usr\bin\bash.exe -lc "pacman -Syu --noconfirm"
+          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm base-devel autotools automake autoconf libtool make pkg-config dos2unix mingw-w64-x86_64-toolchain mingw-w64-x86_64-gcc mingw-w64-x86_64-binutils mingw-w64-x86_64-openssl mingw-w64-x86_64-zlib"
+
+      - name: Set Windows environment
+        run: |
+          # Add MSYS2 MinGW to PATH (more reliable than standalone MinGW)
+          echo "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+          echo "C:\msys64\usr\bin" >> $env:GITHUB_PATH
+          
+          # Set Rust build flags for GNU target
+          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $env:GITHUB_ENV
+          
+          # Set cross-compilation environment variables
+          echo "CC=x86_64-w64-mingw32-gcc" >> $env:GITHUB_ENV
+          echo "CXX=x86_64-w64-mingw32-g++" >> $env:GITHUB_ENV
+          echo "AR=x86_64-w64-mingw32-ar" >> $env:GITHUB_ENV
+          echo "RANLIB=x86_64-w64-mingw32-ranlib" >> $env:GITHUB_ENV
+
+      - name: Verify build tools
+        run: |
+          # Check that required tools are available
+          echo "=== Checking basic tools ==="
+          which gcc || echo "gcc not found"
+          which make || echo "make not found" 
+          which autoconf || echo "autoconf not found"
+          which automake || echo "automake not found"
+          which aclocal || echo "aclocal not found"
+          which libtool || echo "libtool not found"
+          which dos2unix || echo "dos2unix not found"
+          
+          echo "=== Checking MinGW cross-compilation tools ==="
+          which x86_64-w64-mingw32-gcc || echo "x86_64-w64-mingw32-gcc not found"
+          which x86_64-w64-mingw32-ar || echo "x86_64-w64-mingw32-ar not found"
+          which x86_64-w64-mingw32-ranlib || echo "x86_64-w64-mingw32-ranlib not found"
+          
+          echo "=== Listing MinGW tools in /c/msys64/mingw64/bin ==="
+          ls -la /c/msys64/mingw64/bin/ | grep -E "(gcc|ar|ranlib)" | head -10 || true
+          
+          echo "=== Environment variables ==="
+          echo "CC: $CC"
+          echo "AR: $AR"
+          echo "RANLIB: $RANLIB"
+          echo "PATH: $PATH"
+        shell: bash
+
+      - name: Clone git dependencies
+        run: |
+          git clone https://github.com/el-tor/eltor.git D:/a/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git D:/a/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git D:/a/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git D:/a/code/libeltor
+          git clone https://github.com/el-tor/eltord.git D:/a/code/eltord
+        shell: bash
+
+      - name: Checkout specific branches
+        run: |
+          cd D:/a/code/eltord && git checkout master
+          cd D:/a/code/lni && git checkout search
+        shell: bash
+
+      - name: Build libeltor-sys
+        run: |
+          cd D:/a/code/libeltor-sys
+          
+          ls -la && ls -la scripts
+          chmod +x scripts/copy.sh scripts/build.sh
+          ./scripts/copy.sh
+          mkdir -p patches libtor-src/patches
+          touch patches/.keep libtor-src/patches/.keep
+          
+          # Fix line endings in the libtor source directory after copy
+          if [ -d "libtor-src" ]; then
+            find libtor-src -name "*.ac" -o -name "*.in" -o -name "*.sh" -o -name "configure*" | xargs -r dos2unix 2>/dev/null || true
+          fi
+          
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+        shell: bash
+
+      - name: Build eltord
+        run: |
+          cd D:/a/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+        shell: bash
+
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv D:/a/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/eltord.exe
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
+          path: |
+            artifacts
+          if-no-files-found: error
+
+      - name: Release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

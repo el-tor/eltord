@@ -4,6 +4,7 @@ use crate::{
     types::{EventCallback, RpcConfig},
 };
 use lni::{types::Transaction, LightningNode};
+use log::{info, warn, debug};
 
 // 2. Start payment watcher
 pub async fn start_payments_watcher(
@@ -28,7 +29,7 @@ pub async fn start_payments_watcher(
 struct OnTorEventPaymentIdHashReceivedCallback {}
 impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
     fn success(&self, response: Option<String>, wallet: &(dyn LightningNode + Send + Sync)) {
-        dbg!(response.clone());
+        info!("Event response: {:?}", response);
         let mut circ_id= "UNKNOWN".to_string();
         let payment_hashes = if let Some(resp) = response.as_ref() {
             // EVENT WIRE_FORMAT "650 EVENT_PAYMENT_ID_HASH_RECEIVED <CIRC_ID> <PAYHASHES>"
@@ -44,7 +45,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
         } else {
             None
         };
-        dbg!(circ_id.clone(), payment_hashes.clone());
+        info!("Circuit ID: {:?}, Payment hashes: {:?}", circ_id, payment_hashes);
 
         if payment_hashes.is_some() {
             // 3a. On PAYMENT_ID_HASH_RECEIVED write a row to the ledger
@@ -61,7 +62,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
             // TODO: naaive implementation
             for i in 0..relay_payments.payhashes.len() {
                 let current_round_payment_hash = relay_payments.payhashes[i].clone();
-                println!(
+                info!(
                     "Round {}: Payment watcher for payment hash {} for circuit {}",
                     i, current_round_payment_hash, circ_id
                 );
@@ -81,7 +82,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
         }
     }
     fn failure(&self, error: Option<String>) {
-        println!("epic fail {}", error.unwrap());
+        warn!("epic fail {}", error.unwrap());
     }
 }
 
@@ -92,43 +93,43 @@ impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
     fn success(&self, transaction: Option<Transaction>) {
         match transaction.clone() {
             Some(txn) => {
-                println!("Successfully received payment for payment hash {} with the preimage {}. Keeping the circuit open for another 60 seconds..."
+                info!("Successfully received payment for payment hash {} with the preimage {}. Keeping the circuit open for another 60 seconds..."
                 , txn.payment_hash, txn.preimage);
 
                 // check if the payment is received within the window in the payments leder
 
-                dbg!(transaction.clone());
+                info!("Settled transaction: {:?}", transaction);
             }
             None => {
-                println!("No transaction found");
+                info!("No transaction found");
             }
         }
     }
     fn pending(&self, transaction: Option<Transaction>) {
         match transaction.clone() {
             Some(txn) => {
-                println!(
+                info!(
                     "Pending payment for payment hash {} with the preimage {}",
                     txn.payment_hash, txn.preimage
                 );
-                dbg!(transaction.clone());
+                info!("Pending transaction: {:?}", transaction);
             }
             None => {
-                println!("No transaction found");
+                info!("No transaction found");
             }
         }
     }
     fn failure(&self, transaction: Option<Transaction>) {
         match transaction.clone() {
             Some(txn) => {
-                println!(
+                warn!(
                     "Failed payment for payment hash {} with the preimage {}",
                     txn.payment_hash, txn.preimage
                 );
-                dbg!(transaction.clone());
+                warn!("Failed transaction: {:?}", transaction);
             }
             None => {
-                println!("No transaction found");
+                info!("No transaction found");
             }
         }
     }
