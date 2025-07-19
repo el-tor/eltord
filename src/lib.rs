@@ -1,8 +1,7 @@
 use dotenv::dotenv;
-use env_logger;
 use libtor::{Tor, TorFlag};
 use std::env;
-use log::{info, debug, warn, error};
+use log::{info, warn, error};
 use tokio::task::JoinHandle;
 
 pub mod client;
@@ -13,10 +12,66 @@ pub mod rpc;
 pub mod types;
 pub mod utils;
 
-use types::RpcConfig;
-
 // Re-export commonly used functions for library consumers
 pub use rpc::get_rpc_config_from_torrc;
+pub use types::RpcConfig;
+
+// Logging macros with prefixes for easy identification
+#[macro_export]
+macro_rules! client_info {
+    ($($arg:tt)*) => {
+        log::info!("[CLIENT] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! client_debug {
+    ($($arg:tt)*) => {
+        log::debug!("[CLIENT] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! client_warn {
+    ($($arg:tt)*) => {
+        log::warn!("[CLIENT] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! client_error {
+    ($($arg:tt)*) => {
+        log::error!("[CLIENT] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! relay_info {
+    ($($arg:tt)*) => {
+        log::info!("[RELAY] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! relay_debug {
+    ($($arg:tt)*) => {
+        log::debug!("[RELAY] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! relay_warn {
+    ($($arg:tt)*) => {
+        log::warn!("[RELAY] {}", format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! relay_error {
+    ($($arg:tt)*) => {
+        log::error!("[RELAY] {}", format!($($arg)*))
+    };
+}
 
 /// Main entry point for running eltord with provided arguments
 /// 
@@ -69,18 +124,27 @@ where
 
     let mut tasks = Vec::new();
 
-    if mode == "client" || mode.is_empty() {
-        info!("Starting Client Flow...");
+    if mode == "client" {
+        info!("[CLIENT] Starting Client-only Flow...");
         let client_handle = client::start_client_flow(&rpc_config.clone()).await;
         tasks.push(client_handle);
-        // backup circuit
-        // tokio::spawn(async move { client::start_client_flow(&rpc_config_2).await });
-    }
-
-    if mode == "relay" || mode.is_empty() {
-        info!("Starting Relay Flow...");
+    } else if mode == "both" {
+        info!("[RELAY] Starting both Client + Relay Flows...");
+        // Relay mode runs both client and relay flows
+        info!("[CLIENT] Starting Client Flow (relay acts as client too)...");
+        let client_handle = client::start_client_flow(&rpc_config_relay.clone()).await;
+        tasks.push(client_handle);
+        info!("[RELAY] Starting Relay Flow...");
         let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
         tasks.push(relay_handle);
+    } else if mode == "relay" {
+        // Default case - should not happen with current parsing
+        info!("[DEFAULT] Starting Relay Flow...");
+        let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
+        tasks.push(relay_handle);
+    } else {
+        error!("Unknown mode: {}. Use 'client', 'relay', or 'both'", mode);
+        std::process::exit(1);
     }
 
     // Wait for all tasks to complete (they run indefinitely)
@@ -109,28 +173,22 @@ where
 ///     init_and_run().await;
 /// }
 /// ```
-pub async fn init_and_run() {
-    // Initialize logger for binary execution (library users handle their own logging)
-    // Enable logging to stdout with info level and above
-    env_logger::Builder::from_default_env()
-        .target(env_logger::Target::Stdout)
-        .filter_level(log::LevelFilter::Info)
-        .format_timestamp_secs()
-        .write_style(env_logger::WriteStyle::Always)
-        .init();
-    
+pub async fn init_and_run() {    
     dotenv().ok();
     // Check if ARGS are set in .env, and use it if present such as:
     // ARGS="eltord client -f torrc.client.dev -pw password1234_"
     // ARGS="eltord relay -f torrc.relay.dev -pw password1234_"
+    // ARGS="eltord both -f torrc.relay.dev -pw password1234_"
     let env_args = env::var("ARGS").ok();
+    dbg!(env_args.clone());
     info!("Environment args: {:?}", env_args);
     let args: Vec<String> = if let Some(env_args) = env_args {
         env_args.split_whitespace().map(|s| s.to_string()).collect()
     } else {
         std::env::args().collect()
     };
-    info!("Parsed args: {:?}", args);
+    dbg!(args.clone());
+    info!("Parsed args: {:?}", args.clone());
     run_with_args(args).await;
 }
 
@@ -159,14 +217,14 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter().skip(1); // Skip program name such as eltord
-    let mut mode = "relay".to_string(); // Default mode is relay
+    let mut mode = "client".to_string(); // default to client mode
     let mut torrc_path = "torrc".to_string(); // Default torrc path is in same folder as eltord binary named torrc
     let mut control_port_password: Option<String> = None;
 
     // Check if first argument is "client" or "relay"
     if let Some(arg1) = args.next() {
         info!("First argument: {:?}", arg1);
-        if arg1 == "client" || arg1 == "relay" {
+        if arg1 == "client" || arg1 == "relay" || arg1 == "both" {
             mode = arg1;
         } else if arg1 == "-f" {
             // Handle "cargo run -f torrc"
@@ -259,6 +317,16 @@ impl EltordTasks {
         }
     }
 
+    /// Add a client task to the task manager
+    pub fn add_client_task(&mut self, task: JoinHandle<()>) {
+        self.client_task = Some(task);
+    }
+
+    /// Add a relay task to the task manager
+    pub fn add_relay_task(&mut self, task: JoinHandle<()>) {
+        self.relay_task = Some(task);
+    }
+
     /// Wait for all spawned tasks to complete
     pub async fn join_all(self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.client_task {
@@ -285,11 +353,44 @@ impl EltordTasks {
     }
 }
 
-/// Start eltord flows and return task handles for proper management
-/// This allows library consumers to control task lifecycle and ensure logs aren't lost
-pub async fn start_with_task_management(args: impl Iterator<Item = impl Into<String>>) -> Result<EltordTasks, Box<dyn std::error::Error>> {
+
+/// Initialize eltord and return RPC config for manual flow management
+/// This allows you to start client and relay flows independently
+/// 
+/// Workflow:
+/// - If mode is "client": Only client flow will be available
+/// - If mode is "both": Both client and relay flows will be available (relay acts as client too)
+/// - If mode is "relay": Only relay flows will be available
+/// 
+/// # Arguments
+/// 
+/// * `args` - Command line arguments for configuration
+/// 
+/// # Returns
+/// 
+/// Tuple containing (RPC configuration, mode) for flow management
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use eltor::{initialize_eltord, start_client, start_relay};
+/// 
+/// #[tokio::main]
+/// async fn main() {
+///     let args = vec!["eltor".to_string(), "client".to_string(), "-f".to_string(), "torrc.client.dev".to_string()];
+///     let (rpc_config, mode) = initialize_eltord(args).await.unwrap();
+///     
+///     // Always start client 
+///     let client_task = start_client(&rpc_config).await;
+///     
+///     // Only start relay if mode is "relay"
+///     if mode == "relay" {
+///         let relay_task = start_relay(&rpc_config).await;
+///     }
+/// }
+/// ```
+pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) -> Result<(RpcConfig, String), Box<dyn std::error::Error>> {
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
-    info!("Mode: {:?}", mode);
     let rpc_config = self::get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
     info!("RPC Config: {:?}", rpc_config);
     if rpc_config.is_none() {
@@ -297,29 +398,35 @@ pub async fn start_with_task_management(args: impl Iterator<Item = impl Into<Str
     }
     let rpc_config = rpc_config.unwrap();
 
-    info!("Starting Tor...");
+    // Check if Tor is already running on this port
+    let addr = rpc_config.addr.clone();
+    info!("Checking if Tor is already running on {}...", addr);
+    
+    // Try to connect to see if Tor is already running
+    if let Ok(_) = tokio::net::TcpStream::connect(&addr).await {
+        info!("Tor appears to already be running on {}, skipping Tor startup", addr);
+        return Ok((rpc_config, mode));
+    }
+
+    info!("Starting new Tor instance...");
     let torrc_path_clone = torrc_path.clone();
-    let _tor = tokio::task::spawn_blocking(move || {
+    let tor_handle = tokio::task::spawn_blocking(move || {
         Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone)).start()
     });
+    
+    // Store the handle so we can manage the Tor instance lifecycle
+    // For now we'll detach it, but this could be improved to allow cleanup
+    let _ = tor_handle;
     
     // Give Tor a moment to start up before trying to connect
     info!("Waiting for Tor to initialize...");
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
-    let mut tasks = EltordTasks::new();
-
-    if mode == "client" || mode.is_empty() {
-        info!("Starting Client Flow...");
-        let rpc_config_client = rpc_config.clone();
-        tasks.client_task = Some(client::start_client_flow(&rpc_config_client).await);
+    // Verify Tor started successfully
+    if let Err(_) = tokio::net::TcpStream::connect(&addr).await {
+        return Err(format!("Failed to connect to Tor on {} after startup", addr).into());
     }
-
-    if mode == "relay" || mode.is_empty() {
-        info!("Starting Relay Flow...");
-        let rpc_config_relay = rpc_config.clone();
-        tasks.relay_task = Some(relay::start_relay_flow(&rpc_config_relay).await);
-    }
-
-    Ok(tasks)
+    
+    info!("Tor instance started successfully on {}", addr);
+    Ok((rpc_config, mode))
 }

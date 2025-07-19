@@ -3,8 +3,8 @@ use super::payments_sent_ledger;
 use super::select_relay_algo;
 use crate::client::payments_loop;
 use crate::types::RpcConfig;
+use crate::{client_info, client_warn};
 use std::env;
-use log::{info, debug, warn, error};
 
 /// Starts the client flow for building and managing circuits.
 ///
@@ -44,8 +44,8 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
     let lightning_wallet = match crate::lightning::load_wallet(&rpc_config).await {
         Ok(wallet) => wallet,
         Err(e) => {
-            warn!("Failed to load Lightning wallet: {}. Client will continue without Lightning functionality.", e);
-            warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
+            client_warn!("Failed to load Lightning wallet: {}. Client will continue without Lightning functionality.", e);
+            client_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
             return;
         }
     };
@@ -59,10 +59,10 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
     let mut selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config)
         .await
         .unwrap();
-    info!(
+    client_info!(
         "Build circuit EXTENDPAIDCIRCUIT with these selected relays"
     );
-    info!("Selected relays: {:?}", &selected_relays);
+    client_info!("Selected relays: {:?}", &selected_relays);
     // TODO backup circuit
     // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
@@ -77,8 +77,8 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
     let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays)
         .await
         .unwrap();
-    info!("Created paid Circuit with ID: {}", circuit_id);
-    info!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
+    client_info!("Created paid Circuit with ID: {}", circuit_id);
+    client_info!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
 
     // 5. Test Bandwidth
     // TODO: Implement bandwidth test

@@ -9,12 +9,14 @@ Eltord can now be used both as a standalone binary and as a library in other Rus
 ## Usage
 
 ### As a Binary
-```bash
-# Run as relay (default)
-cargo run
 
-# Run as client
+
+```bash
+# Run as client (default)
 cargo run client
+
+# Run as relay 
+cargo run
 
 # Run with custom torrc file
 cargo run client -f torrc.client.dev -pw password1234_
@@ -26,12 +28,27 @@ use eltor::{init_and_run, start_client, start_relay};
 
 #[tokio::main]
 async fn main() {
-    // Option 1: Full initialization with .env and argument parsing
-    init_and_run().await;
-    
-    // Option 2: Start specific components
-    // let rpc_config = get_rpc_config_from_torrc("torrc", None).await.unwrap();
-    // start_client(&rpc_config).await;
+   // 1. Setup global logger configuration
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Stdout)
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_secs()
+        .write_style(env_logger::WriteStyle::Always)
+        .init();
+
+    // Set args for relay, like where to find the torrc file
+    println!("\n--- Running both Client+Relay flow ---");
+    let both_args = vec![
+        "eltord".to_string(),
+        "both".to_string(),
+        "-f".to_string(),
+        "torrc.relay.prod".to_string(),
+        "-pw".to_string(),
+        "password1234_".to_string(),
+    ];
+
+    // Start eltord as both client and relay
+    run_with_args(both_args).await;
 }
 ```
 

@@ -1,6 +1,6 @@
 use super::payments_watcher::start_payments_watcher;
-use crate::{rpc::get_torrc_value, types::RpcConfig};
-use log::{debug, error, info, warn};
+use crate::{rpc::get_torrc_value, types::RpcConfig, relay_info, relay_warn, relay_error};
+use log::debug;
 
 // 1. Torrc Config
 // 2. Start payment watcher
@@ -26,8 +26,8 @@ async fn relay_flow_impl(rpc_config: &RpcConfig) {
     let wallet = match crate::lightning::load_wallet(&rpc_config).await {
         Ok(wallet) => wallet,
         Err(e) => {
-            warn!("Failed to load Lightning wallet: {}. Relay will continue without Lightning functionality.", e);
-            warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
+            relay_warn!("Failed to load Lightning wallet: {}. Relay will continue without Lightning functionality.", e);
+            relay_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
             return;
         }
     };
@@ -39,24 +39,24 @@ async fn relay_flow_impl(rpc_config: &RpcConfig) {
         .iter()
         .find(|e| e.key == "PaymentBolt12Offer")
         .map(|entry| entry.value.clone());
-    info!("BOLT12 offer from torrc: {:?}", bolt12);
+    relay_info!("BOLT12 offer from torrc: {:?}", bolt12);
     if !bolt12.is_some() {
-        info!("BOLT12 offer not found in torrc config. Running in free mode.");
+        relay_info!("BOLT12 offer not found in torrc config. Running in free mode.");
     } else {
-        info!("BOLT12 offer found in torrc config. Running in paid mode.");
+        relay_info!("BOLT12 offer found in torrc config. Running in paid mode.");
     }
 
     // 2 - 4. Start the payment watcher 
-    info!("Starting payment watcher...");
+    relay_info!("Starting payment watcher...");
     let rpc_config_clone = rpc_config.clone();
     let payment_watcher_handle = tokio::spawn(async move {
         if let Err(e) = start_payments_watcher(&rpc_config_clone, &*wallet).await {
-            error!("Payment watcher failed: {:?}", e);
+            relay_error!("Payment watcher failed: {:?}", e);
         }
     });
 
     // Wait for the payment watcher to complete (it runs indefinitely)
     if let Err(e) = payment_watcher_handle.await {
-        error!("Payment watcher task panicked: {:?}", e);
+        relay_error!("Payment watcher task panicked: {:?}", e);
     }
 }
