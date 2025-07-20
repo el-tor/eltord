@@ -1,3 +1,97 @@
+//! # Eltor - Enhanced Tor with Paid Relays
+//! 
+//! Eltor is a Tor network fork that adds paid relay functionality and Lightning Network integration.
+//! 
+//! ## Key Features
+//! 
+//! - **Paid Circuits**: Pay Lightning Network invoices for premium relay service
+//! - **Client Mode**: Connect as a client to use paid relay circuits
+//! - **Relay Mode**: Run as a paid relay to earn from providing service
+//! - **Both Mode**: Run as both client and relay simultaneously
+//! - **Process Management**: External process control for integration with other applications
+//! 
+//! ## Quick Start
+//! 
+//! ### Simple Usage
+//! 
+//! ```rust
+//! use eltor::init_and_run;
+//! 
+//! #[tokio::main]
+//! async fn main() {
+//!     // Initialize logging and run with environment/CLI args
+//!     init_and_run().await;
+//! }
+//! ```
+//! 
+//! ### Manual Control
+//! 
+//! ```rust
+//! use eltor::{initialize_eltord, start_client, start_relay};
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let args = vec!["eltor", "client", "-f", "torrc.client.dev"];
+//!     let (rpc_config, mode) = initialize_eltord(args.into_iter()).await?;
+//!     
+//!     // Start client flow
+//!     let client_task = start_client(&rpc_config).await;
+//!     
+//!     // Wait for completion
+//!     client_task.await?;
+//!     Ok(())
+//! }
+//! ```
+//! 
+//! ### Process Management
+//! 
+//! For external applications that need to control the eltord process:
+//! 
+//! ```rust
+//! use eltor::{EltordProcessManager, ProcessCommand};
+//! use std::time::Duration;
+//! 
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Create process manager
+//!     let (mut manager, command_sender, mut status_receiver) = EltordProcessManager::new();
+//!     
+//!     // Start manager in background
+//!     let manager_handle = tokio::spawn(async move {
+//!         manager.run().await
+//!     });
+//!     
+//!     // Start eltord process
+//!     command_sender.send(ProcessCommand::Start {
+//!         mode: "client".to_string(),
+//!         torrc_path: "torrc.client.dev".to_string(),
+//!         password: "password123".to_string(),
+//!     }).await?;
+//!     
+//!     // Monitor status updates
+//!     tokio::spawn(async move {
+//!         while let Some(status) = status_receiver.recv().await {
+//!             println!("Status: {:?}", status);
+//!         }
+//!     });
+//!     
+//!     // Stop after some time
+//!     tokio::time::sleep(Duration::from_secs(30)).await;
+//!     command_sender.send(ProcessCommand::Stop).await?;
+//!     
+//!     // Clean shutdown
+//!     drop(command_sender);
+//!     let _ = manager_handle.await;
+//!     
+//!     Ok(())
+//! }
+//! ```
+//! 
+//! ## Configuration
+//! 
+//! Eltor uses Tor configuration files (torrc) with additional Lightning Network settings.
+//! See the examples in the repository for sample configurations.
+
 use dotenv::dotenv;
 use libtor::{Tor, TorFlag};
 use std::env;
@@ -7,6 +101,7 @@ use tokio::task::JoinHandle;
 pub mod client;
 pub mod database;
 pub mod lightning;
+pub mod manager;
 pub mod relay;
 pub mod rpc;
 pub mod types;
@@ -15,6 +110,9 @@ pub mod utils;
 // Re-export commonly used functions for library consumers
 pub use rpc::get_rpc_config_from_torrc;
 pub use types::RpcConfig;
+
+// Re-export process manager for external applications
+pub use manager::{EltordProcessManager, ProcessCommand, ProcessStatus};
 
 // Logging macros with prefixes for easy identification
 #[macro_export]

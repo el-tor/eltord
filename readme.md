@@ -4,12 +4,14 @@ eltor
 `eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. 
 
 **⚡ New: Library Support**
-Eltord can now be used both as a standalone binary and as a library in other Rust projects! See [LIBRARY_USAGE.md](./LIBRARY_USAGE.md) for details.
+Eltord can now be used both as a standalone binary and as a library in other Rust projects! See [LIBRARY_USAGE.md](./docs/LIBRARY_USAGE.md) for details.
+
+**🎛️ Process Management**
+Eltord now includes a process manager for external applications. See the [manager example](./examples/manager.rs) for controlling eltord from external applications.
 
 ## Usage
 
 ### As a Binary
-
 
 ```bash
 # Run as client (default)
