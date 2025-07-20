@@ -37,6 +37,7 @@ chrono = "0.4"
 tokio-test = "0.4"
 env_logger = "0.10"
 log = "0.4"
+libc = "0.2"
 
 [features]
 vendored-openssl = ["libtor-sys/vendored-openssl"]

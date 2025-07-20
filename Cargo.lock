@@ -618,6 +618,7 @@ dependencies = [
  "futures-util",
  "hex",
  "lazy_static",
+ "libc",
  "libtor",
  "libtor-sys",
  "lni",

@@ -97,6 +97,68 @@ use libtor::{Tor, TorFlag};
 use std::env;
 use log::{info, warn, error};
 use tokio::task::JoinHandle;
+extern crate libc;
+
+/// Start Tor in a child process to isolate C library crashes
+/// This protects the main application from SIGSEGV and other C-level crashes
+fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    
+    // Global static to prevent multiple simultaneous Tor starts across all functions
+    static TOR_STARTING_GLOBAL: AtomicBool = AtomicBool::new(false);
+    
+    // Prevent multiple simultaneous Tor starts (mobile-safe)
+    if TOR_STARTING_GLOBAL.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        info!("{} startup already in progress, waiting...", process_name);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        return;
+    }
+    
+    // Fork a child process to isolate C library crashes
+    unsafe {
+        let pid = libc::fork();
+        
+        if pid == -1 {
+            error!("Failed to fork child process for {}", process_name);
+            TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+            return;
+        } else if pid == 0 {
+            // Child process - attempt to start Tor
+            // If this crashes, only the child process dies
+            match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+                Ok(_tor) => {
+                    info!("Tor started successfully in child process ({})", process_name);
+                    // Keep the child process alive to maintain Tor
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                },
+                Err(e) => {
+                    error!("Failed to start Tor in child process ({}): {:?}", process_name, e);
+                    libc::exit(1);
+                }
+            }
+        } else {
+            // Parent process - wait for child to start Tor
+            info!("{} starting in child process with PID: {}", process_name, pid);
+            
+            // Wait a moment for Tor to initialize
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            
+            // Check if child process is still alive
+            let mut status: libc::c_int = 0;
+            let wait_result = libc::waitpid(pid, &mut status as *mut libc::c_int, libc::WNOHANG);
+            
+            if wait_result == 0 {
+                info!("Child {} process is running successfully", process_name);
+            } else {
+                error!("Child {} process exited with status: {}", process_name, status);
+            }
+            
+            TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+        }
+    }
+}
 
 pub mod client;
 pub mod database;
@@ -213,7 +275,7 @@ where
     info!("Starting Tor...");
     let torrc_path_clone = torrc_path.clone();
     let _tor = tokio::task::spawn_blocking(move || {
-        Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone)).start()
+        start_tor_in_child_process(torrc_path_clone, "Tor");
     });
     
     // Give Tor a moment to start up before trying to connect
@@ -509,7 +571,7 @@ pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) ->
     info!("Starting new Tor instance...");
     let torrc_path_clone = torrc_path.clone();
     let tor_handle = tokio::task::spawn_blocking(move || {
-        Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone)).start()
+        start_tor_in_child_process(torrc_path_clone, "Tor initialization");
     });
     
     // Store the handle so we can manage the Tor instance lifecycle

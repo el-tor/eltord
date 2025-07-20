@@ -27,6 +27,31 @@ pub enum ProcessStatus {
     Error { message: String },
 }
 
+impl ProcessStatus {
+    /// Get the PID if the process is running
+    pub fn pid(&self) -> Option<u32> {
+        if let ProcessStatus::Running { pid, .. } = self {
+            Some(*pid)
+        } else {
+            None
+        }
+    }
+
+    /// Get the mode if the process is running
+    pub fn mode(&self) -> Option<&str> {
+        if let ProcessStatus::Running { mode, .. } = self {
+            Some(mode)
+        } else {
+            None
+        }
+    }
+
+    /// Check if the process is currently running
+    pub fn is_running(&self) -> bool {
+        matches!(self, ProcessStatus::Running { .. })
+    }
+}
+
 /// External process manager for eltord
 /// 
 /// This allows an external application to control the eltord process
@@ -310,5 +335,72 @@ impl EltordProcessManager {
     /// Check if process is currently running
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Relaxed)
+    }
+
+    /// Get the current process PID if running
+    pub async fn get_pid(&self) -> Option<u32> {
+        let status = self.status.read().await;
+        if let ProcessStatus::Running { pid, .. } = &*status {
+            Some(*pid)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_manager_public_api() {
+        // Test that we can create a manager and access its public API
+        let (manager, _cmd_tx, _status_rx) = EltordProcessManager::new();
+        
+        // Test that we can check if it's running
+        assert!(!manager.is_running());
+        
+        // Test that we can create commands
+        let start_cmd = ProcessCommand::Start {
+            mode: "client".to_string(),
+            torrc_path: "test.torrc".to_string(),
+            password: "test123".to_string(),
+        };
+        
+        let stop_cmd = ProcessCommand::Stop;
+        let status_cmd = ProcessCommand::Status;
+        let restart_cmd = ProcessCommand::Restart {
+            mode: "relay".to_string(),
+            torrc_path: "test.torrc".to_string(),
+            password: "test123".to_string(),
+        };
+        
+        // Verify commands can be created and are Debug-able
+        println!("Start command: {:?}", start_cmd);
+        println!("Stop command: {:?}", stop_cmd);
+        println!("Status command: {:?}", status_cmd);
+        println!("Restart command: {:?}", restart_cmd);
+        
+        // Test ProcessStatus variants
+        let statuses = [
+            ProcessStatus::Stopped,
+            ProcessStatus::Starting,
+            ProcessStatus::Running { pid: 123, mode: "client".to_string() },
+            ProcessStatus::Stopping,
+            ProcessStatus::Error { message: "Test error".to_string() },
+        ];
+        
+        for status in statuses {
+            println!("Status: {:?}", status);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_manager_status_method() {
+        let (manager, _cmd_tx, _status_rx) = EltordProcessManager::new();
+        
+        // Test that we can get the current status
+        let status = manager.get_status().await;
+        matches!(status, ProcessStatus::Stopped);
     }
 }

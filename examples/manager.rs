@@ -18,6 +18,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the process manager
     let (mut manager, command_sender, mut status_receiver) = EltordProcessManager::new();
 
+    // We'll track the PID from status updates
+    let current_pid = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
+    let pid_clone = current_pid.clone();
+
     // Start the manager in a background task
     let manager_handle = tokio::spawn(async move {
         if let Err(e) = manager.run().await {
@@ -29,6 +33,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let status_handle = tokio::spawn(async move {
         while let Some(status) = status_receiver.recv().await {
             println!("📊 Status Update: {:?}", status);
+            
+            // Demonstrate PID access and update tracked PID
+            if let Some(pid) = status.pid() {
+                println!("   └── Process PID: {}", pid);
+                *pid_clone.lock().unwrap() = Some(pid);
+            } else {
+                *pid_clone.lock().unwrap() = None;
+            }
+            if let Some(mode) = status.mode() {
+                println!("   └── Running mode: {}", mode);
+            }
         }
     });
 
@@ -46,6 +61,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check status
     println!("📋 Checking status...");
     command_sender.send(ProcessCommand::Status).await?;
+
+    // Check tracked PID from status updates
+    if let Some(pid) = *current_pid.lock().unwrap() {
+        println!("🔍 Current PID from status tracking: {}", pid);
+    } else {
+        println!("❌ No process currently running");
+    }
 
     // Wait a bit more
     tokio::time::sleep(Duration::from_secs(5)).await;
