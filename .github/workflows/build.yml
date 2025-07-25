@@ -11,6 +11,7 @@ on:
           - all
           - linux
           - windows
+          - mac
   push:
     tags:
       - 'v*' # Trigger on version tags like v1.0.0
@@ -232,6 +233,142 @@ jobs:
         run: |
           mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
           mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
+          path: |
+            artifacts
+          if-no-files-found: error
+
+      - name: Release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-mac-x86_64:
+    name: Build eltord - macOS-x86_64
+    runs-on: macos-13  # Intel x86_64 runner
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'mac' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: macos-13
+      PLATFORM_TARGET: x86_64-apple-darwin
+      PLATFORM_BIN: eltord
+      PLATFORM_OS_NAME: macOS-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Xcode Command Line Tools
+        run: |
+          # Check if Xcode CLI tools are already installed
+          if ! xcode-select -p &> /dev/null; then
+            echo "Installing Xcode Command Line Tools..."
+            xcode-select --install
+            # Wait for installation to complete
+            until xcode-select -p &> /dev/null; do
+              sleep 5
+            done
+          fi
+          echo "Xcode Command Line Tools are installed at: $(xcode-select -p)"
+          
+          # Verify installation
+          gcc --version
+          make --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ env.PLATFORM_TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install macOS dependencies with Homebrew
+        run: |
+          # Update Homebrew
+          brew update
+          
+          # Install build dependencies
+          brew install \
+            pkg-config \
+            openssl \
+            sqlite \
+            autoconf \
+            automake \
+            libtool \
+            make \
+            wget \
+            git \
+            flex \
+            bison \
+            unzip
+          
+          # Set environment variables for OpenSSL
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl)/include" >> $GITHUB_ENV
+          
+          # Set SQLite paths
+          echo "SQLITE3_LIB_DIR=$(brew --prefix sqlite)/lib" >> $GITHUB_ENV
+          echo "SQLITE3_INCLUDE_DIR=$(brew --prefix sqlite)/include" >> $GITHUB_ENV
+          
+          # Verify installations
+          echo "=== Dependency versions ==="
+          pkg-config --version
+          openssl version
+          autoconf --version
+          automake --version
+          libtool --version
+          make --version
+          
+          # Show OpenSSL paths for debugging
+          echo "=== OpenSSL paths ==="
+          echo "OPENSSL_DIR: $(brew --prefix openssl)"
+          echo "OPENSSL_LIB_DIR: $(brew --prefix openssl)/lib"
+          echo "OPENSSL_INCLUDE_DIR: $(brew --prefix openssl)/include"
+          ls -la $(brew --prefix openssl)/ || echo "OpenSSL not found at expected location"
+
+      - name: Clone git dependencies
+        run: |
+          mkdir -p /Users/runner/code
+          git clone https://github.com/el-tor/eltor.git /Users/runner/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git /Users/runner/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git /Users/runner/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git /Users/runner/code/libeltor
+          git clone https://github.com/el-tor/eltord.git /Users/runner/code/eltord
+
+      - name: Checkout specific branches
+        run: |
+          cd /Users/runner/code/eltord && git checkout lib
+          cd /Users/runner/code/lni && git checkout search
+
+      - name: Build libeltor-sys for macOS
+        run: |
+          cd /Users/runner/code/libeltor-sys
+          ls -la && ls -la scripts
+          chmod +x scripts/copy.sh scripts/build.sh
+          ./scripts/copy.sh
+          mkdir -p patches libtor-src/patches
+          touch patches/.keep libtor-src/patches/.keep
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Build eltord for macOS
+        run: |
+          cd /Users/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /Users/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
