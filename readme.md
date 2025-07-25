@@ -135,10 +135,11 @@ ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
 ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
 ```
 
-Release
--------
+Release (ci)
+=============
 To create a new release:
 
+**For Linux and Windows x86:**
 ```sh
 # Create and push a release tag (triggers GitHub Actions build)
 ./scripts/release.sh 1.0.0
@@ -153,6 +154,14 @@ The release script will:
 3. Push the tag to GitHub
 4. Trigger GitHub Actions to build binaries and create a release
 
+**For Arm:**
+
+Github actions is alow for arm build, so its recommended to build locally on a arm computer like a Macbook M-Series. You can run this script to kick off the build locally
+```
+./scripts/release-arm.sh 1.0.0
+```
+
+
 .env
 ```sh
 PHOENIXD_URL=http://localhost:9740
@@ -164,6 +173,7 @@ dev
 ```sh
 ARGS="eltord client -f torrc.client.dev -pw password1234_"
 ```
+
 
 torrc
 ======
