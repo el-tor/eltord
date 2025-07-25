@@ -97,6 +97,7 @@ use libtor::{Tor, TorFlag};
 use std::env;
 use log::{info, warn, error};
 use tokio::task::JoinHandle;
+#[cfg(unix)]
 extern crate libc;
 
 /// Start Tor in a child process to isolate C library crashes
@@ -114,48 +115,135 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
         return;
     }
     
-    // Fork a child process to isolate C library crashes
-    unsafe {
-        let pid = libc::fork();
+    // Use process isolation on Unix platforms, fallback to panic catching on others
+    #[cfg(unix)]
+    {
+        // Fork a child process to isolate C library crashes (Unix/Linux/macOS only)
+        unsafe {
+            let pid = libc::fork();
+            
+            if pid == -1 {
+                error!("Failed to fork child process for {}", process_name);
+                TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+                return;
+            } else if pid == 0 {
+                // Child process - attempt to start Tor
+                // If this crashes, only the child process dies
+                match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+                    Ok(_tor) => {
+                        info!("Tor started successfully in child process ({})", process_name);
+                        // Keep the child process alive to maintain Tor
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to start Tor in child process ({}): {:?}", process_name, e);
+                        libc::exit(1);
+                    }
+                }
+            } else {
+                // Parent process - wait for child to start Tor
+                info!("{} starting in child process with PID: {}", process_name, pid);
+                
+                // Wait a moment for Tor to initialize
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                
+                // Check if child process is still alive
+                let mut status: libc::c_int = 0;
+                let wait_result = libc::waitpid(pid, &mut status as *mut libc::c_int, libc::WNOHANG);
+                
+                if wait_result == 0 {
+                    info!("Child {} process is running successfully", process_name);
+                } else {
+                    error!("Child {} process exited with status: {}", process_name, status);
+                }
+                
+                TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+            }
+        }
+    }
+    
+    #[cfg(windows)]
+    {
+        // Windows - use CreateProcess for process isolation
+        use std::process::{Command, Stdio};
+        use std::env;
         
-        if pid == -1 {
-            error!("Failed to fork child process for {}", process_name);
-            TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
-            return;
-        } else if pid == 0 {
-            // Child process - attempt to start Tor
-            // If this crashes, only the child process dies
+        info!("Starting {} with process isolation (Windows mode)", process_name);
+        
+        // Get current executable path
+        let current_exe = env::current_exe().unwrap_or_else(|_| "eltor.exe".into());
+        
+        // Start Tor in a separate process
+        let mut child = Command::new(&current_exe)
+            .arg("--tor-subprocess") // Special flag to indicate subprocess mode
+            .arg(&torrc_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+            
+        match child {
+            Ok(mut process) => {
+                info!("{} started in child process with PID: {:?}", process_name, process.id());
+                
+                // Wait a moment for Tor to initialize
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                
+                // Check if child process is still alive
+                match process.try_wait() {
+                    Ok(Some(status)) => {
+                        error!("Child {} process exited with status: {:?}", process_name, status);
+                    },
+                    Ok(None) => {
+                        info!("Child {} process is running successfully", process_name);
+                        // Detach the child process so it can continue running
+                        std::mem::forget(process);
+                    },
+                    Err(e) => {
+                        error!("Error checking child {} process status: {:?}", process_name, e);
+                    }
+                }
+            },
+            Err(e) => {
+                error!("Failed to start child process for {}: {:?}", process_name, e);
+            }
+        }
+        
+        TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+    }
+    
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Other platforms - use panic catching instead of process isolation
+        info!("Starting {} with panic protection (fallback mode)", process_name);
+        
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
                 Ok(_tor) => {
-                    info!("Tor started successfully in child process ({})", process_name);
-                    // Keep the child process alive to maintain Tor
+                    info!("Tor started successfully ({})", process_name);
+                    // Keep Tor running
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(1));
                     }
                 },
                 Err(e) => {
-                    error!("Failed to start Tor in child process ({}): {:?}", process_name, e);
-                    libc::exit(1);
+                    error!("Failed to start Tor ({}): {:?}", process_name, e);
                 }
             }
-        } else {
-            // Parent process - wait for child to start Tor
-            info!("{} starting in child process with PID: {}", process_name, pid);
-            
-            // Wait a moment for Tor to initialize
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            
-            // Check if child process is still alive
-            let mut status: libc::c_int = 0;
-            let wait_result = libc::waitpid(pid, &mut status as *mut libc::c_int, libc::WNOHANG);
-            
-            if wait_result == 0 {
-                info!("Child {} process is running successfully", process_name);
-            } else {
-                error!("Child {} process exited with status: {}", process_name, status);
+        }));
+        
+        TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
+        
+        match result {
+            Ok(_) => {
+                info!("Tor startup completed successfully ({})", process_name);
+            },
+            Err(panic_info) => {
+                error!("Tor startup panicked ({}): {:?}", process_name, panic_info);
+                // Continue execution despite panic
             }
-            
-            TOR_STARTING_GLOBAL.store(false, Ordering::SeqCst);
         }
     }
 }
