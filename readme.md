@@ -160,6 +160,8 @@ Github actions is slow for arm builds, so its recommended to build locally on a 
 You can run this script to kick off the build locally using Github "act". See for install instructions: https://nektosact.com/
 1. Install Prereqs
   ```
+  #nix
+  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
   docker buildx create --name mybuilder --driver docker-container --use 
   docker buildx inspect --bootstrap 
   docker run --privileged --rm tonistiigi/binfmt --install all
@@ -180,10 +182,10 @@ You can run this script to kick off the build locally using Github "act". See fo
 # or
 
 # for mac arm
-act push --secret-file .secrets --matrix platform:linux/arm64 -j build-arm -P macos-latest=catthehacker/ubuntu:act-latest # <--- need to figure out these params
+ACT=true act workflow_dispatch --secret-file .secrets -j build-mac-arm -P self-hosted=-self-hosted
 
 # for linux arm
-act push --secret-file .secrets --matrix platform:linux/arm64 -j build-arm -P macos-latest=catthehacker/ubuntu:act-latest
+ACT=true act workflow_dispatch --secret-file .secrets -j build-linux-arm -P self-hosted=-self-hosted
 ```
 
 

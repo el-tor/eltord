@@ -39,3 +39,5 @@ payments_sent.json
 **torrc.client.dev
 **torrc.client.prod
 **torrc.relay.prod
+
+.secrets
