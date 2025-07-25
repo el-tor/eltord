@@ -326,7 +326,8 @@ jobs:
           openssl version
           autoconf --version
           automake --version
-          libtool --version
+          # Use GNU libtool (glibtool) on macOS instead of Apple's libtool
+          glibtool --version || echo "GNU libtool not available, using system libtool"
           make --version
           
           # Show OpenSSL paths for debugging
