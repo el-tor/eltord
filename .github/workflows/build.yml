@@ -103,7 +103,7 @@ jobs:
       - name: Rename binaries
         run: |
           mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
-          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltord artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}  
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}  
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -231,7 +231,7 @@ jobs:
       - name: Rename binaries
         run: |
           mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
-          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltord.exe artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
