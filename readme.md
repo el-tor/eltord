@@ -156,9 +156,34 @@ The release script will:
 
 **For Arm:**
 
-Github actions is alow for arm build, so its recommended to build locally on a arm computer like a Macbook M-Series. You can run this script to kick off the build locally
+Github actions is slow for arm builds, so its recommended to build locally on a arm computer like a Macbook M-Series. 
+You can run this script to kick off the build locally using Github "act". See for install instructions: https://nektosact.com/
+1. Install Prereqs
+  ```
+  docker buildx create --name mybuilder --driver docker-container --use 
+  docker buildx inspect --bootstrap 
+  docker run --privileged --rm tonistiigi/binfmt --install all
+  # if you use orbstack and get errors you might need to turn off (or on?) rosetta 
+  orb config set rosetta false
+
+  brew install act
+  docker info | grep Architecture
+  ```
+
+2. Create ./secrets
+  ```
+  GITHUB_TOKEN=ghp_yourtokenhere
+  ```
+3. Run a actions build locally
 ```
-./scripts/release-arm.sh 1.0.0
+./scripts/build-arm.sh
+# or
+
+# for mac arm
+act push --secret-file .secrets --matrix platform:linux/arm64 -j build-arm -P macos-latest=catthehacker/ubuntu:act-latest # <--- need to figure out these params
+
+# for linux arm
+act push --secret-file .secrets --matrix platform:linux/arm64 -j build-arm -P macos-latest=catthehacker/ubuntu:act-latest
 ```
 
 
