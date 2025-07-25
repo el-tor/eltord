@@ -467,9 +467,9 @@ where
     let mut args = args.into_iter().skip(1); // Skip program name such as eltord
     let mut mode = "client".to_string(); // default to client mode
     let mut torrc_path = "torrc".to_string(); // Default torrc path is in same folder as eltord binary named torrc
-    let mut control_port_password: Option<String> = None;
+    let mut control_port_password: Option<String> = Some("password1234_".to_string()); // Default password for control port
 
-    // Check if first argument is "client" or "relay"
+    // Check if first argument is "client" or "relay" or "both"
     if let Some(arg1) = args.next() {
         info!("First argument: {:?}", arg1);
         if arg1 == "client" || arg1 == "relay" || arg1 == "both" {
