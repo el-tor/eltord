@@ -1,1 +1,0 @@
-ACT=true act workflow_dispatch --secret-file .secrets -j build-mac-arm -P self-hosted=-self-hosted

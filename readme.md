@@ -176,16 +176,12 @@ You can run this script to kick off the build locally using Github "act". See fo
   ```
   GITHUB_TOKEN=ghp_yourtokenhere
   ```
-3. Run a actions build locally
+3. Run local build script
 ```
-./scripts/build-arm.sh
-# or
-
-# for mac arm
-ACT=true act workflow_dispatch --secret-file .secrets -j build-mac-arm -P self-hosted=-self-hosted
-
-# for linux arm
-ACT=true act workflow_dispatch --secret-file .secrets -j build-linux-arm -P self-hosted=-self-hosted
+# linux arm
+./scripts/build-linux-arm.sh
+# mac arm
+./scripts/build-mac-arm.sh
 ```
 
 

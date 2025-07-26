@@ -41,3 +41,7 @@ payments_sent.json
 **torrc.relay.prod
 
 .secrets
+
+/cache/
+
+/artifacts/
