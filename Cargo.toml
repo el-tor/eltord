@@ -18,12 +18,13 @@ name = "eltor"
 path = "src/main.rs"
 
 [dependencies]
-libtor = { path = "../libeltor/libtor" }
-libtor-sys = { path = "../libeltor-sys"  }
+libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
+# libtor = { path = "../libeltor/libtor" }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
-lni = { path = "../lni/crates/lni" }
+lni = { git = "https://github.com/lightning-node-interface/lni.git", branch = "search" }
+# lni = { path = "../lni/crates/lni" }
 lazy_static = "1.4.0"
 dotenv = "0.15.0"
 thiserror = "1.0"
@@ -41,7 +42,3 @@ ctrlc = "3.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-[features]
-vendored-openssl = ["libtor-sys/vendored-openssl"]
-default = ["vendored-openssl"]

@@ -231,6 +231,23 @@ torrc
 - ExitRelay
 ```
 
+Dep Tree
+--------
+To develop locally you need to change the deps in the following cargo files, to your local copy:
+
+*In this project:*
+./Cargo.toml
+```
+libtor = { path = "../libeltor/libtor" }
+lni = { path = "../lni/crates/lni" }
+```
+
+
+In the ~/code/libtor/ 
+```
+libtor = { path = "../libeltor/libtor" }
+```
+
 
 TODO
 ----
