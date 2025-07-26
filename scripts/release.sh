@@ -161,18 +161,16 @@ for platform in macOS-arm64 macos-x86_64 linux-arm64 linux-x86_64 windows-x86_64
         echo "⚠️  eltord-$platform artifact not found"
     fi
 done
-cd ..
 
 ########################################
 # 6. Create checksums
 ########################################
-cd "$RELEASE_DIR"
 shasum -a 256 eltord-*.zip > checksums.txt
-cd ..
 
 ########################################
 # 6. Ship GitHub release
 ########################################
+cd ../..
 if [ "$NO_RELEASE" = false ]; then
     echo "🏷️  Creating GitHub release..."
     
