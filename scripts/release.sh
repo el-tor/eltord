@@ -15,12 +15,17 @@ echo "✅ Running in nix-shell"
 
 # Parse command line arguments
 NO_BUILD=false
+NO_RELEASE=false
 VERSION=""
 
 while [ $# -gt 0 ]; do
     case $1 in
         --no-build)
             NO_BUILD=true
+            shift
+            ;;
+        --no-release)
+            NO_RELEASE=true
             shift
             ;;
         *)
@@ -161,22 +166,43 @@ cd ..
 ########################################
 # 6. Create checksums
 ########################################
-# cd "$RELEASE_DIR"
-# shasum -a 256 eltord-*.zip > checksums.txt
-# cd ..
+cd "$RELEASE_DIR"
+shasum -a 256 eltord-*.zip > checksums.txt
+cd ..
 
 ########################################
 # 6. Ship GitHub release
 ########################################
-# echo "🏷️  Creating GitHub release..."
-# gh release create "$VERSION" \
-#   --title "Release $VERSION" \
-#   --notes "Release $VERSION" \
-#   --draft \
-#   "$RELEASE_DIR"/*.zip \
-#   "$RELEASE_DIR"/checksums.txt
+if [ "$NO_RELEASE" = false ]; then
+    echo "🏷️  Creating GitHub release..."
+    
+    # Read release notes from CHANGELOG.md or use default
+    RELEASE_NOTES="eltord release $VERSION"
+    if [ -f "CHANGELOG.md" ]; then
+        # Extract section for this version from CHANGELOG.md
+        RELEASE_NOTES=$(awk "/^## \[?$VERSION\]?|^## \[?${VERSION#v}\]?/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md)
+        if [ -n "$RELEASE_NOTES" ]; then
+            echo "📝 Using release notes from CHANGELOG.md"
+        else
+            echo "⚠️  No section found for $VERSION in CHANGELOG.md, using default notes"
+            RELEASE_NOTES="eltord release $VERSION"
+        fi
+    else
+        echo "📝 No CHANGELOG.md found, using default release notes"
+    fi
+    
+    gh release create "$VERSION" \
+      --title "eltord release $VERSION" \
+      --notes "$RELEASE_NOTES" \
+      --draft \
+      "$RELEASE_DIR"/*.zip \
+      "$RELEASE_DIR"/checksums.txt
+    
+    echo "✅ Release $VERSION created successfully!"
+    echo "🌐 GitHub release: https://github.com/$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')/releases"
+else
+    echo "⏭️  Skipping GitHub release creation (--no-release specified)"
+fi
 
-echo "✅ Release $VERSION created successfully!"
 echo "📁 Artifacts in: $RELEASE_DIR"
 echo "📦 Zip bundles created with torrc files included"
-echo "🌐 GitHub release: https://github.com/$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')/releases"
