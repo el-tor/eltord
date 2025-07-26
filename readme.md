@@ -233,7 +233,7 @@ torrc
 
 Dep Tree
 --------
-To develop locally you need to change the deps in the following cargo files, to your local copy:
+To develop locally you need to change the deps *FROM* the following files *TO* your local copy:
 
 *In this project:*
 ./Cargo.toml
@@ -242,10 +242,15 @@ libtor = { path = "../libeltor/libtor" }
 lni = { path = "../lni/crates/lni" }
 ```
 
-
-In the ~/code/libtor/ 
+In  ~/code/libtor/libtor/Cargo.toml
 ```
-libtor = { path = "../libeltor/libtor" }
+libtor-sys = { path = "../../libeltor-sys"  }
+```
+
+In  ~/code/libtor-sys/scripts/copy.sh
+```patch
+- git clone https://github.com/el-tor/eltor libtor-src/tor-src
++ git clone ../eltor libtor-src/tor-src
 ```
 
 
