@@ -3,13 +3,38 @@ eltor
 
 `eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. 
 
+Quick Start
+-----------
+**1. Create a torrc config file and make sure to modify the following settings:**
+
+*torrc*
+```
+Nickname YOUR_RELAY_NAME
+PaymentBolt12Offer lno***
+PaymentLightningNodeConfig type=phoenixd url=https://YOUR_URL:PORT password=YOUR_PASSWORD default=true
+# or 
+# PaymentLightningNodeConfig type=cln url=https://YOUR_URL:PORT rune=YOUR_RUNE
+```
+*see the torrc template for the other important settings
+
+
+**2. Next start the daemon**
+```
+./eltor -f torrc
+# or more advanced uses
+./eltor client -f torrc.client -pw password1234_
+./eltor relay -f torrc.relay -pw password1234_
+# -pw is the ControlPassword i.e the unhashed password to the HashedControlPassword in torrc
+```
+
+## Usage
+
 **⚡ New: Library Support**
 Eltord can now be used both as a standalone binary and as a library in other Rust projects! See [LIBRARY_USAGE.md](./docs/LIBRARY_USAGE.md) for details.
 
 **🎛️ Process Management**
 Eltord now includes a process manager for external applications. See the [manager example](./examples/manager.rs) for controlling eltord from external applications.
 
-## Usage
 
 ### As a Binary
 
@@ -135,31 +160,27 @@ ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
 ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
 ```
 
-Release (ci)
+Release (CI)
 =============
-To create a new release:
+Creating a new release is a multi-step process involving a local build (for arm on a mac) and Github actions build (for x86_64). Follow these steps:
 
-**For Linux and Windows x86:**
+1. See [Release Prereq Install](#release-prereq-install) below for required tools and setup
+2. Locally, update the version in the Cargo.toml file. example `0.0.1`
+3. On Github, run this action https://github.com/el-tor/eltord/actions/workflows/build.yml to build for x86_64 linux, mac and windows
+4. Locally, to ship a new Github Release, run the build and release script. This builds linux and mac for arm64, merges remote artifacts with local artifacts and cuts a new release using gh cli `./scripts/release.sh` 
+ 
+Advanced Commands:
 ```sh
-# Create and push a release tag (triggers GitHub Actions build)
-./scripts/release.sh 1.0.0
-
-# Or for pre-release versions
-./scripts/release.sh 1.0.0-beta
+# to just package zips locally in the release folder
+./scripts/release.sh --no-build --no--release
 ```
 
-The release script will:
-1. Update the version in `Cargo.toml`
-2. Create a git tag (e.g., `v1.0.0`)
-3. Push the tag to GitHub
-4. Trigger GitHub Actions to build binaries and create a release
-
-**For Arm:**
-
+### Release Prereq Install
 Github actions is slow for arm builds, so its recommended to build locally on a arm computer like a Macbook M-Series. 
 You can run this script to kick off the build locally using Github "act". See for install instructions: https://nektosact.com/
-1. Install Prereqs
-  ```
+
+1. Release Prereq Install
+  ```sh
   #nix
   curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
   docker buildx create --name mybuilder --driver docker-container --use 
@@ -173,19 +194,15 @@ You can run this script to kick off the build locally using Github "act". See fo
   ```
 
 2. Create ./secrets
-  ```
+  ```sh
   GITHUB_TOKEN=ghp_yourtokenhere
+  GH_TOKEN=ghp_yourtokenhere
   ```
-3. Run local build script
-```
-# linux arm
-./scripts/build-linux-arm.sh
-# mac arm
-./scripts/build-mac-arm.sh
-```
 
 
-.env
+dev .env
+========
+See [dev.md](./dev.md) for development environment setup.
 ```sh
 PHOENIXD_URL=http://localhost:9740
 PHOENIXD_PASSWORD={{YOUR_PW}}
@@ -215,10 +232,10 @@ torrc
 
 
 TODO
-====
+----
 1. simply read the payments-sent.json in as the same dir as the TOR DataDirectory
 2. simplify the default command:
-```
+```sh
 # from
 ./eltor client -f torrc -pw password1234_
 # to 

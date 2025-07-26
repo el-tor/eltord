@@ -1,11 +1,10 @@
-### TESTNET CONFIG
 DirAuthority test000a orport=5055 no-v2 v3ident=324BC790BF07167CF95F95887C12306BF1DE0D2E 170.75.160.21:7055 8CCE450098C37D6EFCD0B8DA97202086C2F24D5B
 DirAuthority test001a orport=5056 no-v2 v3ident=15CF6EFF32A822A2B70BDFC28D42D85920BE9795 170.75.160.21:7056 9B4A26E9E4D90CAC20BE1108123BFFEFDE77FA5C
 DirAuthority test002a orport=5057 no-v2 v3ident=BD8130B2020371D876EAF56DDBC3F612B9C4E1FE 170.75.160.21:7057 67A23C16EE151A0F4DBE6C0DCC464AC508E569F1
 DirAuthority test003a orport=5058 no-v2 v3ident=6D55B4C3984B7B341DB5D0B0A980FD7C4B9ADA1C 170.75.160.21:7058 3F6BCD7DA1505ECD15F1957C1C3F81EF3FD12D15
 
 ### RELAY CONFIG
-Nickname eltordrelay
+# Nickname eltordrelay
 Address 127.0.0.1
 OrPort 9996
 ControlPort 7781
@@ -21,9 +20,12 @@ RelayBandwidthRate 0
 RelayBandwidthBurst 0
 AccountingMax 0
 SocksPort 18057
+## For public access if using as a socks proxy
+# SocksPort 0.0.0.0:18057
+# DNSPort 0.0.0.0:8853
 
 ### PAYMENTS and LIGHTNING CONFIG
-PaymentBolt12Offer lno***
+# PaymentBolt12Offer lno***
 # PaymentBip353 me@example.com
 # PaymentBolt11Lnurl LNURL1234
 # PaymentBolt11LightningAddress me@example.com
@@ -46,18 +48,15 @@ TestingMinExitFlagThreshold 0
 UseDefaultFallbackDirs 0
 AssumeReachable 1
 
-## For public access
-# SocksPort 0.0.0.0:18057
-# DNSPort 0.0.0.0:8853
 
-# HiddenServiceDir /Users/home/eltord/tmp/relay/hs-dir
+# HiddenServiceDir /home/user/hs-dir
 # HiddenServiceVersion 3
 # HiddenServicePort 80 127.0.0.1:4747
 
-Log notice file /Users/home/eltord/tmp/relay/notice.log
-Log info file /Users/home/eltord/tmp/relay/info.log
-Log debug file /Users/home/eltord/tmp/relay/debug.log
-DataDirectory /Users/home/eltord/tmp/relay
+# Log notice file /home/user/.tor/notice.log
+# Log info file /home/user/.tor/info.log
+# Log debug file /home/user/.tor/debug.log
+# DataDirectory /home/user/.tor
 
 ## TODO REMOVE
 ElTorPayHashHop1 16ea179e9332918b90124b60ecd9b1fe3e08b9e997a058f188ed20cea34a5e0e

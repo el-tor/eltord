@@ -21,6 +21,7 @@ pkgs.mkShell {
     flex
     bison
     unzip
+    gh
     
     # macOS specific
     darwin.apple_sdk.frameworks.Security
@@ -37,4 +38,12 @@ pkgs.mkShell {
   
   # Rust target
   CARGO_BUILD_TARGET = "aarch64-apple-darwin";
+
+  shellHook = ''
+    if [ -f .secrets ]; then
+      set -a
+      source .secrets
+      set +a
+    fi
+  '';
 }

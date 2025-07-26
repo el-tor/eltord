@@ -43,5 +43,5 @@ payments_sent.json
 .secrets
 
 /cache/
-
 /artifacts/
+/release/

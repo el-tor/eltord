@@ -1,198 +1,182 @@
 #!/bin/bash
 
-# Release script for eltord
-# This script creates a git tag and pushes it to trigger the GitHub Actions build and release workflow
+set -e
 
-set -e  # Exit on any error
+echo "📦 Releasing..."
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Check if we're in nix-shell, if not, enter it
+if [ -z "$IN_NIX_SHELL" ]; then
+    echo "🔧 Entering nix-shell..."
+    nix-shell --run "$0 $*"
+    exit $?
+fi
 
-# Function to print colored output
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
+echo "✅ Running in nix-shell"
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
+# Parse command line arguments
+NO_BUILD=false
+VERSION=""
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-}
+while [ $# -gt 0 ]; do
+    case $1 in
+        --no-build)
+            NO_BUILD=true
+            shift
+            ;;
+        *)
+            if [ -z "$VERSION" ]; then
+                VERSION="$1"
+            fi
+            shift
+            ;;
+    esac
+done
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-# Function to show usage
-show_usage() {
-    echo "Usage: $0 <version>"
-    echo ""
-    echo "Examples:"
-    echo "  $0 1.0.0      # Create release v1.0.0"
-    echo "  $0 1.2.3-beta # Create release v1.2.3-beta"
-    echo ""
-    echo "This script will:"
-    echo "  1. Validate the version format"
-    echo "  2. Check for uncommitted changes"
-    echo "  3. Update Cargo.toml version"
-    echo "  4. Create a git tag"
-    echo "  5. Push the tag to trigger GitHub Actions build & release"
-}
-
-# Function to validate version format
-validate_version() {
-    local version=$1
-    if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-        print_error "Invalid version format: $version"
-        print_error "Expected format: X.Y.Z or X.Y.Z-suffix (e.g., 1.0.0 or 1.0.0-beta)"
-        exit 1
+# Read version from VERSION file, fallback to Cargo.toml, then command line arg, then git tag, then default
+if [ -z "$VERSION" ]; then
+    if [ -f "VERSION" ]; then
+        VERSION=$(cat VERSION | tr -d '\n\r')
+    elif [ -f "Cargo.toml" ]; then
+        VERSION=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/v\1/')
+    else
+        VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.X")
     fi
-}
+fi
 
-# Function to check for uncommitted changes
-check_git_status() {
-    if [[ -n $(git status --porcelain) ]]; then
-        print_error "There are uncommitted changes in your repository."
-        print_error "Please commit or stash them before creating a release."
-        git status --short
-        exit 1
-    fi
-}
+RELEASE_DIR="release/eltord-${VERSION}"
 
-# Function to check if tag already exists
-check_tag_exists() {
-    local tag=$1
-    if git rev-parse "$tag" >/dev/null 2>&1; then
-        print_error "Tag $tag already exists!"
-        print_error "Use a different version or delete the existing tag with:"
-        print_error "  git tag -d $tag"
-        print_error "  git push origin --delete $tag"
-        exit 1
-    fi
-}
+echo "🚀 Creating release ${VERSION}"
 
-# Function to update Cargo.toml version
-update_cargo_version() {
-    local version=$1
-    local cargo_file="Cargo.toml"
+# Clean and create release directory
+rm -rf "$RELEASE_DIR"
+mkdir -p "$RELEASE_DIR"
+
+echo "📦 Collecting artifacts..."
+
+if [ "$NO_BUILD" = false ]; then
+    ########################################
+    ### 1. Build macOS ARM64 locally
+    ########################################
+    echo "🍎 Building macOS ARM64 locally..."
+    ./scripts/build-mac-arm.sh
+    cp cache/eltord-build-artifacts/macOS-arm64/eltord "$RELEASE_DIR/eltord-macos-arm64"
+
+    ########################################
+    ### 2. Build Linux ARM64 locally via act
+    ########################################
+    echo "🐧 Building Linux ARM64 locally..."
+    ./scripts/build-linux-arm.sh  
+    cp cache/eltord-build-artifacts/linux-arm64/eltord "$RELEASE_DIR/eltord-linux-arm64"
+else
+    echo "⏭️  Skipping local builds (--no-build specified)"
     
-    if [[ ! -f "$cargo_file" ]]; then
-        print_error "Cargo.toml not found in current directory"
-        exit 1
+    # Copy existing artifacts if they exist
+    if [ -f "cache/eltord-build-artifacts/macOS-arm64/eltord" ]; then
+        echo "🍎 Using existing macOS ARM64 artifact..."
+        cp cache/eltord-build-artifacts/macOS-arm64/eltord "$RELEASE_DIR/eltord-macos-arm64"
+    else
+        echo "⚠️  No existing macOS ARM64 artifact found in cache"
     fi
     
-    print_status "Updating version in $cargo_file to $version"
-    
-    # Update version in Cargo.toml
-    if command -v sed >/dev/null 2>&1; then
-        # Use sed to update the version
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            # macOS sed
-            sed -i '' "s/^version = \".*\"/version = \"$version\"/" "$cargo_file"
+    if [ -f "cache/eltord-build-artifacts/linux-arm64/eltord" ]; then
+        echo "🐧 Using existing Linux ARM64 artifact..."
+        cp cache/eltord-build-artifacts/linux-arm64/eltord "$RELEASE_DIR/eltord-linux-arm64"
+    else
+        echo "⚠️  No existing Linux ARM64 artifact found in cache"
+    fi
+fi
+
+#########################################################
+### 3. Download artifacts from latest GitHub Actions run
+#########################################################
+echo "☁️  Downloading GitHub Actions artifacts..."
+gh run list --workflow=build.yml --limit=1 --json databaseId --jq '.[0].databaseId' > /tmp/run_id
+RUN_ID=$(cat /tmp/run_id)
+
+# Download each platform
+gh run download $RUN_ID --name "eltord-Linux-x86_64" --dir "$RELEASE_DIR/temp-linux"
+gh run download $RUN_ID --name "eltord-Windows-x86_64" --dir "$RELEASE_DIR/temp-windows"
+gh run download $RUN_ID --name "eltord-macOS-x86_64" --dir "$RELEASE_DIR/temp-macos"
+
+# Move to final locations
+if [ -f "$RELEASE_DIR/temp-linux/Linux-x86_64/eltord" ]; then
+    mv "$RELEASE_DIR/temp-linux/Linux-x86_64/eltord" "$RELEASE_DIR/eltord-linux-x86_64"
+else
+    echo "⚠️  Linux x86_64 artifact not found"
+fi
+
+if [ -f "$RELEASE_DIR/temp-windows/Windows-x86_64/eltord.exe" ]; then
+    mv "$RELEASE_DIR/temp-windows/Windows-x86_64/eltord.exe" "$RELEASE_DIR/eltord-windows-x86_64"
+else
+    echo "⚠️  Windows x86_64 artifact not found"
+fi
+
+if [ -f "$RELEASE_DIR/temp-macos/macOS-x86_64/eltord" ]; then
+    mv "$RELEASE_DIR/temp-macos/macOS-x86_64/eltord" "$RELEASE_DIR/eltord-macos-x86_64"
+else
+    echo "⚠️  macOS x86_64 artifact not found"
+fi
+# Cleanup temp directories
+rm -rf "$RELEASE_DIR/temp-"*
+
+########################################
+### 4. Copy torrc files and README
+########################################
+# Copy torrc file to each platform folder
+cp torrc "$RELEASE_DIR/"
+cp "readme.md" "$RELEASE_DIR/"
+
+
+########################################
+# 5. Create zip bundles with torrc files
+########################################
+cd "$RELEASE_DIR"
+for platform in macOS-arm64 macos-x86_64 linux-arm64 linux-x86_64 windows-x86_64; do
+    if [ -f "eltord-$platform" ]; then
+        if [[ "$platform" == *"windows"* ]]; then
+            # For Windows platforms, rename to eltord.exe
+            mkdir -p "temp-$platform"
+            cp "eltord-$platform" "temp-$platform/eltord.exe"
+            cp "torrc" "readme.md" "temp-$platform/"
+            cd "temp-$platform"
+            zip -r "../eltord-$platform.zip" .
+            cd ..
+            rm -rf "temp-$platform"
         else
-            # Linux sed
-            sed -i "s/^version = \".*\"/version = \"$version\"/" "$cargo_file"
+            # For non-Windows platforms, rename to just eltord
+            mkdir -p "temp-$platform"
+            cp "eltord-$platform" "temp-$platform/eltord"
+            cp "torrc" "readme.md" "temp-$platform/"
+            cd "temp-$platform"
+            zip -r "../eltord-$platform.zip" .
+            cd ..
+            rm -rf "temp-$platform"
         fi
     else
-        print_error "sed command not found. Please install sed or update Cargo.toml manually."
-        exit 1
+        echo "⚠️  eltord-$platform artifact not found"
     fi
-    
-    # Verify the change
-    if grep -q "version = \"$version\"" "$cargo_file"; then
-        print_success "Updated Cargo.toml version to $version"
-    else
-        print_error "Failed to update Cargo.toml version"
-        exit 1
-    fi
-}
+done
+cd ..
 
-# Function to create and push tag
-create_and_push_tag() {
-    local version=$1
-    local tag="v$version"
-    
-    print_status "Creating git tag: $tag"
-    
-    # Add updated Cargo.toml to git
-    git add Cargo.toml
-    git commit -m "Bump version to $version"
-    
-    # Create annotated tag
-    git tag -a "$tag" -m "Release $tag"
-    
-    print_status "Pushing tag to origin..."
-    git push origin main  # Push the commit first
-    git push origin "$tag"  # Then push the tag
-    
-    print_success "Tag $tag created and pushed successfully!"
-    print_success "GitHub Actions should now be building and releasing $tag"
-    print_status "Check the progress at: https://github.com/el-tor/eltord/actions"
-}
+########################################
+# 6. Create checksums
+########################################
+# cd "$RELEASE_DIR"
+# shasum -a 256 eltord-*.zip > checksums.txt
+# cd ..
 
-# Main script
-main() {
-    # Check if version argument is provided
-    if [[ $# -eq 0 ]]; then
-        show_usage
-        exit 1
-    fi
-    
-    # Handle help flags
-    if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-        show_usage
-        exit 0
-    fi
-    
-    local version=$1
-    local tag="v$version"
-    
-    print_status "Starting release process for version $version"
-    
-    # Validate inputs
-    validate_version "$version"
-    
-    # Check git status
-    check_git_status
-    
-    # Check if tag already exists
-    check_tag_exists "$tag"
-    
-    # Confirm with user
-    echo ""
-    print_warning "This will create and push tag: $tag"
-    print_warning "This will trigger a GitHub Actions build and release."
-    echo ""
-    read -p "Do you want to continue? (y/N): " -n 1 -r
-    echo ""
-    
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_status "Release cancelled."
-        exit 0
-    fi
-    
-    # Update Cargo.toml version
-    update_cargo_version "$version"
-    
-    # Create and push tag
-    create_and_push_tag "$version"
-    
-    echo ""
-    print_success "Release $tag initiated successfully!"
-    print_status "The GitHub Actions workflow will now:"
-    print_status "  1. Build binaries for Linux x86_64"
-    print_status "  2. Create a GitHub release"
-    print_status "  3. Upload the built binaries as release assets"
-    echo ""
-    print_status "You can monitor the progress at:"
-    print_status "https://github.com/el-tor/eltord/actions"
-}
+########################################
+# 6. Ship GitHub release
+########################################
+# echo "🏷️  Creating GitHub release..."
+# gh release create "$VERSION" \
+#   --title "Release $VERSION" \
+#   --notes "Release $VERSION" \
+#   --draft \
+#   "$RELEASE_DIR"/*.zip \
+#   "$RELEASE_DIR"/checksums.txt
 
-# Run main function with all arguments
-main "$@"
+echo "✅ Release $VERSION created successfully!"
+echo "📁 Artifacts in: $RELEASE_DIR"
+echo "📦 Zip bundles created with torrc files included"
+echo "🌐 GitHub release: https://github.com/$(gh repo view --json owner,name --jq '.owner.login + "/" + .name')/releases"
