@@ -37,6 +37,7 @@ chrono = "0.4"
 tokio-test = "0.4"
 env_logger = "0.10"
 log = "0.4"
+ctrlc = "3.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

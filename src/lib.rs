@@ -97,8 +97,118 @@ use libtor::{Tor, TorFlag};
 use std::env;
 use log::{info, warn, error};
 use tokio::task::JoinHandle;
+use std::sync::atomic::{AtomicI32, Ordering};
+#[cfg(windows)]
+use std::sync::atomic::AtomicU32;
 #[cfg(unix)]
 extern crate libc;
+
+// Global variables to track the Tor child process for cleanup
+static TOR_CHILD_PID: AtomicI32 = AtomicI32::new(0);  // Unix PID
+#[cfg(windows)]
+static TOR_CHILD_PROCESS_ID: AtomicU32 = AtomicU32::new(0);  // Windows Process ID
+
+/// Clean up any spawned Tor processes
+#[cfg(unix)]
+fn cleanup_tor_processes() {
+    let child_pid = TOR_CHILD_PID.load(Ordering::SeqCst);
+    if child_pid > 0 {
+        info!("Cleaning up Tor child process with PID: {}", child_pid);
+        unsafe {
+            // Send SIGTERM first (graceful shutdown)
+            if libc::kill(child_pid, libc::SIGTERM) == 0 {
+                info!("Sent SIGTERM to Tor process {}", child_pid);
+                // Wait a bit for graceful shutdown
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                
+                // Check if process still exists
+                if libc::kill(child_pid, 0) == 0 {
+                    // Still running, force kill
+                    info!("Tor process {} still running, sending SIGKILL", child_pid);
+                    libc::kill(child_pid, libc::SIGKILL);
+                }
+            } else {
+                warn!("Failed to send signal to Tor process {} (may already be dead)", child_pid);
+            }
+        }
+        TOR_CHILD_PID.store(0, Ordering::SeqCst);
+    }
+}
+
+#[cfg(not(unix))]
+fn cleanup_tor_processes() {
+    #[cfg(windows)]
+    {
+        let child_process_id = TOR_CHILD_PROCESS_ID.load(Ordering::SeqCst);
+        if child_process_id > 0 {
+            info!("Cleaning up Tor child process with Process ID: {}", child_process_id);
+            
+            // Use Windows API to terminate the process
+            use std::process::Command;
+            
+            // Try taskkill first (graceful)
+            let result = Command::new("taskkill")
+                .args(&["/PID", &child_process_id.to_string(), "/T"])
+                .output();
+                
+            match result {
+                Ok(output) => {
+                    if output.status.success() {
+                        info!("Successfully terminated Tor process {} with taskkill", child_process_id);
+                    } else {
+                        warn!("taskkill failed, trying force termination...");
+                        // Force kill if graceful termination failed
+                        let force_result = Command::new("taskkill")
+                            .args(&["/PID", &child_process_id.to_string(), "/T", "/F"])
+                            .output();
+                        
+                        match force_result {
+                            Ok(force_output) => {
+                                if force_output.status.success() {
+                                    info!("Force terminated Tor process {}", child_process_id);
+                                } else {
+                                    error!("Failed to force terminate Tor process {}", child_process_id);
+                                }
+                            },
+                            Err(e) => {
+                                error!("Error executing taskkill /F: {:?}", e);
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error executing taskkill: {:?}", e);
+                }
+            }
+            
+            TOR_CHILD_PROCESS_ID.store(0, Ordering::SeqCst);
+        }
+    }
+    
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Other platforms - no process control available
+        warn!("Process cleanup not implemented for this platform");
+    }
+}
+
+/// Setup signal handlers to cleanup processes on exit
+fn setup_signal_handlers() {
+    use std::sync::atomic::AtomicBool;
+    
+    // Global flag to ensure handler is only set once
+    static HANDLER_SET: AtomicBool = AtomicBool::new(false);
+    
+    // Only set handler if it hasn't been set already
+    if HANDLER_SET.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        ctrlc::set_handler(move || {
+            info!("Received interrupt signal, cleaning up...");
+            cleanup_tor_processes();
+            std::process::exit(0);
+        }).expect("Error setting Ctrl-C handler");
+        info!("Signal handlers set up successfully");
+    }
+}
 
 /// Start Tor in a child process to isolate C library crashes
 /// This protects the main application from SIGSEGV and other C-level crashes
@@ -146,6 +256,9 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
                 // Parent process - wait for child to start Tor
                 info!("{} starting in child process with PID: {}", process_name, pid);
                 
+                // Store the child PID for cleanup
+                TOR_CHILD_PID.store(pid, Ordering::SeqCst);
+                
                 // Wait a moment for Tor to initialize
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 
@@ -186,7 +299,11 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
             
         match child {
             Ok(mut process) => {
-                info!("{} started in child process with PID: {:?}", process_name, process.id());
+                let process_id = process.id();
+                info!("{} started in child process with PID: {:?}", process_name, process_id);
+                
+                // Store the child process ID for cleanup
+                TOR_CHILD_PROCESS_ID.store(process_id, Ordering::SeqCst);
                 
                 // Wait a moment for Tor to initialize
                 std::thread::sleep(std::time::Duration::from_secs(2));
@@ -401,6 +518,9 @@ where
             info!("Task completed with error: {:?}", e);
         }
     }
+    
+    // Clean up any spawned processes before exit
+    cleanup_tor_processes();
 }
 
 /// Initialize eltord with environment variables and arguments
@@ -423,6 +543,10 @@ where
 /// ```
 pub async fn init_and_run() {    
     dotenv().ok();
+    
+    // Set up signal handlers for cleanup
+    setup_signal_handlers();
+    
     // Check if ARGS are set in .env, and use it if present such as:
     // ARGS="eltord client -f torrc.client.dev -pw password1234_"
     // ARGS="eltord relay -f torrc.relay.dev -pw password1234_"
@@ -590,7 +714,7 @@ impl EltordTasks {
         Ok(())
     }
 
-    /// Abort all spawned tasks
+    /// Abort all spawned tasks and cleanup processes
     pub fn abort_all(&self) {
         if let Some(ref client) = self.client_task {
             client.abort();
@@ -598,6 +722,8 @@ impl EltordTasks {
         if let Some(ref relay) = self.relay_task {
             relay.abort();
         }
+        // Also cleanup any Tor processes
+        cleanup_tor_processes();
     }
 }
 
