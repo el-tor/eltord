@@ -28,11 +28,11 @@ permissions:
 jobs:
   build-linux:
     name: Build eltord - Linux-x86_64
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == '' }}
     env:
-      PLATFORM_OS: ubuntu-20.04
-      PLATFORM_TARGET: x86_64-unknown-linux-gnu
+      PLATFORM_OS: ubuntu-latest
+      PLATFORM_TARGET: x86_64-unknown-linux-musl
       PLATFORM_BIN: eltord
       PLATFORM_OS_NAME: Linux-x86_64
 
@@ -71,7 +71,9 @@ jobs:
             flex \
             bison \
             unzip \
-            clang
+            clang \
+            musl-tools \
+            musl-dev
 
       - name: Clone git dependencies
         run: |
