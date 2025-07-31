@@ -63,6 +63,14 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
         "Build circuit EXTENDPAIDCIRCUIT with these selected relays"
     );
     client_info!("Selected relays: {:?}", &selected_relays);
+
+    // Handle empty selected_relays set - skip to step 7 and wait
+    if selected_relays.is_empty() {
+        client_warn!("No relays found within fee range. Waiting before retrying...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        return; // This will exit the current flow and allow it to be restarted
+    }
+
     // TODO backup circuit
     // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
