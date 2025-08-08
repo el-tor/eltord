@@ -117,7 +117,7 @@ echo ""
 echo "🔨 Building eltord..."
 cd "$WORKSPACE_DIR"
 nix-shell --run "
-  cd '$BUILD_DIR/eltord'
+  cd '$WORKSPACE_DIR'
   cargo build --release --verbose --target aarch64-apple-darwin --features vendored-openssl
 "
 
@@ -129,12 +129,12 @@ cd "$WORKSPACE_DIR"
 
 # Create artifacts directory
 mkdir -p "artifacts/$PLATFORM_OS_NAME"
-cp "$BUILD_DIR/eltord/target/$PLATFORM_TARGET/release/eltor" "artifacts/$PLATFORM_OS_NAME/$PLATFORM_BIN"
+cp "$WORKSPACE_DIR/target/$PLATFORM_TARGET/release/eltor" "artifacts/$PLATFORM_OS_NAME/$PLATFORM_BIN"
 
 # Copy to persistent cache (same logic as GitHub Actions)
 CACHE_DIR="cache/eltord-build-artifacts"
 mkdir -p "$CACHE_DIR/$PLATFORM_OS_NAME"
-cp "$BUILD_DIR/eltord/target/$PLATFORM_TARGET/release/eltor" "$CACHE_DIR/$PLATFORM_OS_NAME/$PLATFORM_BIN"
+cp "$WORKSPACE_DIR/target/$PLATFORM_TARGET/release/eltor" "$CACHE_DIR/$PLATFORM_OS_NAME/$PLATFORM_BIN"
 echo "Cached artifact to: $(pwd)/$CACHE_DIR/$PLATFORM_OS_NAME/$PLATFORM_BIN"
 
 # Make binaries executable

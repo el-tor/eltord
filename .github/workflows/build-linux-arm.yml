@@ -72,11 +72,10 @@ jobs:
           mkdir -p $BUILD_DIR
           echo "BUILD_DIR=$BUILD_DIR" >> $GITHUB_ENV
           
-          git clone https://github.com/el-tor/eltor.git $BUILD_DIR/eltor
           git clone https://github.com/lightning-node-interface/lni.git $BUILD_DIR/lni
           git clone https://github.com/el-tor/libeltor-sys.git $BUILD_DIR/libeltor-sys
           git clone https://github.com/el-tor/libeltor.git $BUILD_DIR/libeltor
-          git clone https://github.com/el-tor/eltord.git $BUILD_DIR/eltord
+          # Root project is already checked out by actions/checkout; we'll build from $GITHUB_WORKSPACE
 
       - name: Checkout specific branches
         run: |
@@ -96,20 +95,20 @@ jobs:
       - name: Build eltord (Linux cross-compilation)
         if: matrix.setup-script == 'setup-linux'
         run: |
-          cd $BUILD_DIR/eltord
+          cd "$GITHUB_WORKSPACE"
           cargo build --release --verbose --target ${{ matrix.target }} --features vendored-openssl
 
       - name: Copy artifacts
         run: |
           # Create artifacts directory in workspace (persists locally with act)
           mkdir -p artifacts/${{ matrix.os-name }}
-          cp $BUILD_DIR/eltord/target/${{ matrix.target }}/release/eltor artifacts/${{ matrix.os-name }}/${{ env.PLATFORM_BIN }}
+          cp "$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/eltor" artifacts/${{ matrix.os-name }}/${{ env.PLATFORM_BIN }}
           
           # For local runs (act or self-hosted), also copy to a persistent cache directory in the workspace
           if [ "$ACT" = "true" ]; then
             CACHE_DIR="cache/eltord-build-artifacts"
             mkdir -p "$CACHE_DIR/${{ matrix.os-name }}"
-            cp $BUILD_DIR/eltord/target/${{ matrix.target }}/release/eltor "$CACHE_DIR/${{ matrix.os-name }}/${{ env.PLATFORM_BIN }}"
+            cp "$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/eltor" "$CACHE_DIR/${{ matrix.os-name }}/${{ env.PLATFORM_BIN }}"
             echo "Cached artifact to: $(pwd)/$CACHE_DIR/${{ matrix.os-name }}/${{ env.PLATFORM_BIN }}"
             
             # Also ensure the binary is executable

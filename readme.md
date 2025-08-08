@@ -173,7 +173,7 @@ Creating a new release is a multi-step process involving a local build (for arm 
 Advanced Commands:
 ```sh
 # to just package zips locally in the release folder
-./scripts/release.sh --no-build --no--release
+./scripts/release.sh --no-build --no-release
 ```
 
 ### Release Prereq Install

@@ -42,3 +42,14 @@ ctrlc = "3.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+# Forward the vendored OpenSSL feature to the libtor crate, which in turn
+# enables vendored OpenSSL in libtor-sys. This allows building with
+# `--features vendored-openssl` from this root crate.
+vendored-openssl = ["libtor/vendored-openssl"]
+# Optional: you can add other forward features similarly if needed in the future
+# vendored-lzma = ["libtor/vendored-lzma"]
+# vendored-zstd = ["libtor/vendored-zstd"]
+# with-lzma = ["libtor/with-lzma"]
+# with-zstd = ["libtor/with-zstd"]
