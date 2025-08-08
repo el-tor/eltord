@@ -85,7 +85,6 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd /home/runner/code/eltord && git checkout lib
           cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys

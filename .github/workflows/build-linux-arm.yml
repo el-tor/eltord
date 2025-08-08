@@ -80,7 +80,6 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd $BUILD_DIR/eltord && git checkout lib
           cd $BUILD_DIR/lni && git checkout search
 
       - name: Build libeltor-sys (Linux cross-compilation)
