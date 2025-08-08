@@ -1,6 +1,7 @@
 use crate::rpc;
 use crate::types::{Relay, RpcConfig};
 use crate::utils::get_random_payhash_and_preimage;
+use log::{debug, info};
 
 struct ExtendPaidCircuitRow {
     relay_fingerprint: String,
@@ -54,7 +55,7 @@ pub async fn build_circuit(
         ));
     }
     command.push_str(".");
-    println!("EXTENDPAIDCIRCUIT Command: {}", command);
+    info!("EXTENDPAIDCIRCUIT Command: {}", command);
     let circuit_id = rpc::extend_paid_circuit(&rpc_config, command)
         .await
         .unwrap();
@@ -63,7 +64,7 @@ pub async fn build_circuit(
         "circuit_id": circuit_id,
         "relays": relays
     });
-    println!("EVENT:{}:ENDEVENT", event_data.to_string());
+    info!("EVENT:{}:ENDEVENT", event_data.to_string());
     Ok(circuit_id)
 }
 
@@ -78,8 +79,8 @@ pub fn pregen_extend_paid_circuit_hashes(
     for relay in selected_relays.iter_mut() {
         // Generate payhash and preimage for handshake fee
         let (handshake_payhash, handshake_preimage) = get_random_payhash_and_preimage();
-        println!("Handshake Payment Hash: {}\n", handshake_payhash);
-        println!("Handshake Payment Preimage: {}\n", handshake_preimage);
+        info!("Handshake Payment Hash: {}\n", handshake_payhash);
+        info!("Handshake Payment Preimage: {}\n", handshake_preimage);
         relay.payment_handshake_fee_payhash = Some(handshake_payhash);
         relay.payment_handshake_fee_preimage = Some(handshake_preimage);
 

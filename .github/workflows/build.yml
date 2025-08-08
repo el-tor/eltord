@@ -1,6 +1,20 @@
 name: Build eltord Binary
 on:
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Choose which platform to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - linux
+          - windows
+          - mac
+  push:
+    tags:
+      - 'v*' # Trigger on version tags like v1.0.0
   # push:
   #   branches: [main]
   # pull_request:
@@ -12,39 +26,15 @@ permissions:
   contents: write # Needed for uploading release assets
 
 jobs:
-  build:
-    name: Build eltord - ${{ matrix.platform.os_name }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - os_name: Linux-x86_64
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            bin: eltord
-            use_cross: true
-          # - os_name: Linux-x86_64
-          #   os: ubuntu:20.04
-          #   target: x86_64-unknown-linux-gnu
-          #   bin: eltord
-          # - os_name: Linux-aarch64
-          #   os: ubuntu:20.04
-          #   target: aarch64-unknown-linux-gnu
-          #   bin: eltord
-          #   use_cross: true # Use cross-rs for ARM Linux
-          # - os_name: macOS-x86_64
-          #   os: macos-latest
-          #   target: x86_64-apple-darwin
-          #   bin: eltord
-          # - os_name: macOS-aarch64
-          #   os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   bin: eltord
-          # - os_name: Windows-x86_64
-          #   os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   bin: eltord.exe
+  build-linux:
+    name: Build eltord - Linux-x86_64
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: ubuntu-latest
+      PLATFORM_TARGET: x86_64-unknown-linux-musl
+      PLATFORM_BIN: eltord
+      PLATFORM_OS_NAME: Linux-x86_64
 
     steps:
       - name: Checkout repository
@@ -54,13 +44,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          targets: ${{ matrix.platform.target }}
+          targets: ${{ env.PLATFORM_TARGET }}
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
       - name: Install Linux dependencies
-        if: matrix.platform.os == 'ubuntu:20.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -82,29 +71,9 @@ jobs:
             flex \
             bison \
             unzip \
-            clang
-
-      - name: Install musl-tools for Linux builds
-        if: matrix.platform.use_cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
-
-      - name: Install macOS dependencies
-        if: matrix.platform.os == 'macos-latest'
-        run: |
-          brew install openssl@3 sqlite libevent tor
-
-      - name: Install Windows dependencies
-        if: matrix.platform.os == 'windows-latest'
-        run: |
-          choco install -y openssl sqlite git make mingw
-
-      - name: Install cross-rs for Linux ARM
-        if: matrix.platform.use_cross
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall --no-confirm cross
+            clang \
+            musl-tools \
+            musl-dev
 
       - name: Clone git dependencies
         run: |
@@ -116,50 +85,306 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd /home/runner/code/eltord && git checkout master
+          cd /home/runner/code/eltord && git checkout lib
           cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys
-        working-directory: /home/runner/code/libeltor-sys
         run: |
+          cd /home/runner/code/libeltor-sys
           ls -la && ls -la scripts
           chmod +x scripts/copy.sh scripts/build.sh
           ./scripts/copy.sh
           mkdir -p patches libtor-src/patches
           touch patches/.keep libtor-src/patches/.keep
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
-          else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
-          fi
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Build eltord
-        working-directory: /home/runner/code/eltord
         run: |
-          if [ "${{ matrix.platform.use_cross }}" = "true" ]; then
-            cross build --release --verbose --target ${{ matrix.platform.target }}
-          else
-            cargo build --release --verbose --target ${{ matrix.platform.target }}
-          fi
+          cd /home/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Rename binaries
         run: |
-          mkdir -p artifacts/${{ matrix.platform.os_name }}
-          mv /home/runner/code/eltord/target/${{ matrix.platform.target }}/release/eltor artifacts/${{ matrix.platform.os_name }}/eltord
-        shell: bash
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}  
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: eltord-${{ matrix.platform.os_name }}
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
           path: |
             artifacts
           if-no-files-found: error
 
       - name: Release binary
-        # if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ matrix.platform.os_name }}/eltord
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build eltord - Windows-x86_64 (Cross-compiled from Linux)
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: ubuntu-latest
+      PLATFORM_TARGET: x86_64-pc-windows-gnu
+      PLATFORM_BIN: eltord.exe
+      PLATFORM_OS_NAME: Windows-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ env.PLATFORM_TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install MinGW cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libsqlite3-dev \
+            build-essential \
+            curl \
+            wget \
+            git \
+            autoconf \
+            automake \
+            libtool \
+            zlib1g-dev \
+            libevent-dev \
+            libscrypt-dev \
+            make \
+            patch \
+            flex \
+            bison \
+            unzip \
+            clang \
+            mingw-w64 \
+            gcc-mingw-w64-x86-64 \
+            g++-mingw-w64-x86-64
+
+      - name: Set cross-compilation environment
+        run: |
+          # Set environment variables for MinGW cross-compilation
+          echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+          echo "CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
+          echo "AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar" >> $GITHUB_ENV
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+          
+          # Set Rust build flags for static linking
+          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+
+      - name: Verify cross-compilation tools
+        run: |
+          echo "=== Checking MinGW cross-compilation tools ==="
+          which x86_64-w64-mingw32-gcc || echo "x86_64-w64-mingw32-gcc not found"
+          which x86_64-w64-mingw32-g++ || echo "x86_64-w64-mingw32-g++ not found"
+          which x86_64-w64-mingw32-ar || echo "x86_64-w64-mingw32-ar not found"
+          which x86_64-w64-mingw32-ranlib || echo "x86_64-w64-mingw32-ranlib not found"
+          
+          echo "=== Testing MinGW compiler ==="
+          x86_64-w64-mingw32-gcc --version || echo "MinGW GCC test failed"
+          
+          echo "=== Environment variables ==="
+          echo "CC_x86_64_pc_windows_gnu: $CC_x86_64_pc_windows_gnu"
+          echo "CXX_x86_64_pc_windows_gnu: $CXX_x86_64_pc_windows_gnu"
+          echo "AR_x86_64_pc_windows_gnu: $AR_x86_64_pc_windows_gnu"
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: $CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER"
+          echo "RUSTFLAGS: $RUSTFLAGS"
+
+      - name: Clone git dependencies
+        run: |
+          git clone https://github.com/el-tor/eltor.git /home/runner/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git /home/runner/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git /home/runner/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
+          git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
+
+      - name: Checkout specific branches
+        run: |
+          cd /home/runner/code/eltord && git checkout lib
+          cd /home/runner/code/lni && git checkout search
+
+      - name: Build libeltor-sys for Windows
+        run: |
+          cd /home/runner/code/libeltor-sys
+          ls -la && ls -la scripts
+          chmod +x scripts/copy.sh scripts/build.sh
+          ./scripts/copy.sh
+          mkdir -p patches libtor-src/patches
+          touch patches/.keep libtor-src/patches/.keep
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Build eltord for Windows
+        run: |
+          cd /home/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
+          path: |
+            artifacts
+          if-no-files-found: error
+
+      - name: Release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-mac-x86_64:
+    name: Build eltord - macOS-x86_64
+    runs-on: macos-13  # Intel x86_64 runner
+    if: ${{ github.event.inputs.build_target == 'all' || github.event.inputs.build_target == 'mac' || github.event.inputs.build_target == '' }}
+    env:
+      PLATFORM_OS: macos-13
+      PLATFORM_TARGET: x86_64-apple-darwin
+      PLATFORM_BIN: eltord
+      PLATFORM_OS_NAME: macOS-x86_64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Xcode Command Line Tools
+        run: |
+          # Check if Xcode CLI tools are already installed
+          if ! xcode-select -p &> /dev/null; then
+            echo "Installing Xcode Command Line Tools..."
+            xcode-select --install
+            # Wait for installation to complete
+            until xcode-select -p &> /dev/null; do
+              sleep 5
+            done
+          fi
+          echo "Xcode Command Line Tools are installed at: $(xcode-select -p)"
+          
+          # Verify installation
+          gcc --version
+          make --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ env.PLATFORM_TARGET }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install macOS dependencies with Homebrew
+        run: |
+          # Update Homebrew
+          brew update
+          
+          # Install build dependencies
+          brew install \
+            pkg-config \
+            openssl \
+            sqlite \
+            autoconf \
+            automake \
+            libtool \
+            make \
+            wget \
+            git \
+            flex \
+            bison \
+            unzip
+          
+          # Set environment variables for OpenSSL
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl)/include" >> $GITHUB_ENV
+          
+          # Set SQLite paths
+          echo "SQLITE3_LIB_DIR=$(brew --prefix sqlite)/lib" >> $GITHUB_ENV
+          echo "SQLITE3_INCLUDE_DIR=$(brew --prefix sqlite)/include" >> $GITHUB_ENV
+          
+          # Verify installations
+          echo "=== Dependency versions ==="
+          pkg-config --version
+          openssl version
+          autoconf --version
+          automake --version
+          # Use GNU libtool (glibtool) on macOS instead of Apple's libtool
+          glibtool --version || echo "GNU libtool not available, using system libtool"
+          make --version
+          
+          # Show OpenSSL paths for debugging
+          echo "=== OpenSSL paths ==="
+          echo "OPENSSL_DIR: $(brew --prefix openssl)"
+          echo "OPENSSL_LIB_DIR: $(brew --prefix openssl)/lib"
+          echo "OPENSSL_INCLUDE_DIR: $(brew --prefix openssl)/include"
+          ls -la $(brew --prefix openssl)/ || echo "OpenSSL not found at expected location"
+
+      - name: Clone git dependencies
+        run: |
+          mkdir -p /Users/runner/code
+          git clone https://github.com/el-tor/eltor.git /Users/runner/code/eltor
+          git clone https://github.com/lightning-node-interface/lni.git /Users/runner/code/lni
+          git clone https://github.com/el-tor/libeltor-sys.git /Users/runner/code/libeltor-sys
+          git clone https://github.com/el-tor/libeltor.git /Users/runner/code/libeltor
+          git clone https://github.com/el-tor/eltord.git /Users/runner/code/eltord
+
+      - name: Checkout specific branches
+        run: |
+          cd /Users/runner/code/eltord && git checkout lib
+          cd /Users/runner/code/lni && git checkout search
+
+      - name: Build libeltor-sys for macOS
+        run: |
+          cd /Users/runner/code/libeltor-sys
+          ls -la && ls -la scripts
+          chmod +x scripts/copy.sh scripts/build.sh
+          ./scripts/copy.sh
+          mkdir -p patches libtor-src/patches
+          touch patches/.keep libtor-src/patches/.keep
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Build eltord for macOS
+        run: |
+          cd /Users/runner/code/eltord
+          cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
+
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
+          mv /Users/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eltord-${{ env.PLATFORM_OS_NAME }}
+          path: |
+            artifacts
+          if-no-files-found: error
+
+      - name: Release binary
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/${{ env.PLATFORM_OS_NAME }}/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

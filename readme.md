@@ -3,6 +3,84 @@ eltor
 
 `eltor` boots up the tor network fork. It also manages paid relays and communicates with your configured lightning node. 
 
+Quick Start
+-----------
+**1. Create a torrc config file and make sure to modify the following settings:**
+
+*torrc*
+```
+Nickname YOUR_RELAY_NAME
+PaymentBolt12Offer lno***
+PaymentLightningNodeConfig type=phoenixd url=https://YOUR_URL:PORT password=YOUR_PASSWORD default=true
+# or 
+# PaymentLightningNodeConfig type=cln url=https://YOUR_URL:PORT rune=YOUR_RUNE
+```
+*see the torrc template for the other important settings
+
+
+**2. Next start the daemon**
+```
+./eltor -f torrc
+# or more advanced uses
+./eltor client -f torrc.client -pw password1234_
+./eltor relay -f torrc.relay -pw password1234_
+# -pw is the ControlPassword i.e the unhashed password to the HashedControlPassword in torrc
+```
+
+## Usage
+
+**⚡ New: Library Support**
+Eltord can now be used both as a standalone binary and as a library in other Rust projects! See [LIBRARY_USAGE.md](./docs/LIBRARY_USAGE.md) for details.
+
+**🎛️ Process Management**
+Eltord now includes a process manager for external applications. See the [manager example](./examples/manager.rs) for controlling eltord from external applications.
+
+
+### As a Binary
+
+```bash
+# Run as client (default)
+cargo run client
+
+# Run as relay 
+cargo run
+
+# Run with custom torrc file
+cargo run client -f torrc.client.dev -pw password1234_
+```
+
+### As a Library
+```rust
+use eltor::{init_and_run, start_client, start_relay};
+
+#[tokio::main]
+async fn main() {
+   // 1. Setup global logger configuration
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Stdout)
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_secs()
+        .write_style(env_logger::WriteStyle::Always)
+        .init();
+
+    // Set args for relay, like where to find the torrc file
+    println!("\n--- Running both Client+Relay flow ---");
+    let both_args = vec![
+        "eltord".to_string(),
+        "both".to_string(),
+        "-f".to_string(),
+        "torrc.relay.prod".to_string(),
+        "-pw".to_string(),
+        "password1234_".to_string(),
+    ];
+
+    // Start eltord as both client and relay
+    run_with_args(both_args).await;
+}
+```
+
+See the [examples/](./examples/) directory for complete usage examples.
+
 Spec
 ----
 - [(00) - El Tor Spec](./spec/00_spec.md)
@@ -82,7 +160,50 @@ ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
 ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
 ```
 
-.env
+Release (CI)
+=============
+Creating a new release is a multi-step process involving a local build (for arm on a mac) and Github actions build (for x86_64). Follow these steps:
+
+1. See [Release Prereq Install](#release-prereq-install) below for required tools and setup
+2. Locally, update the version in the Cargo.toml file. example `0.0.1` and update the CHANGELOG.md
+3. On Github, run this action https://github.com/el-tor/eltord/actions/workflows/build.yml to build for x86_64 linux, mac and windows
+4. Locally, to ship a new Github Release, run the build and release script. This builds linux and mac for arm64, merges remote artifacts with local artifacts and cuts a new release using gh cli `./scripts/release.sh` 
+5. After the release finishes it will upload a draft to Github. You can login and push the release.
+ 
+Advanced Commands:
+```sh
+# to just package zips locally in the release folder
+./scripts/release.sh --no-build --no--release
+```
+
+### Release Prereq Install
+Github actions is slow for arm builds, so its recommended to build locally on a arm computer like a Macbook M-Series. 
+You can run this script to kick off the build locally using Github "act". See for install instructions: https://nektosact.com/
+
+1. Release Prereq Install
+  ```sh
+  #nix
+  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+  docker buildx create --name mybuilder --driver docker-container --use 
+  docker buildx inspect --bootstrap 
+  docker run --privileged --rm tonistiigi/binfmt --install all
+  # if you use orbstack and get errors you might need to turn off (or on?) rosetta 
+  orb config set rosetta false
+
+  brew install act
+  docker info | grep Architecture
+  ```
+
+2. Create ./secrets
+  ```sh
+  GITHUB_TOKEN=ghp_yourtokenhere
+  GH_TOKEN=ghp_yourtokenhere
+  ```
+
+
+dev .env
+========
+See [dev.md](./dev.md) for development environment setup.
 ```sh
 PHOENIXD_URL=http://localhost:9740
 PHOENIXD_PASSWORD={{YOUR_PW}}
@@ -93,6 +214,7 @@ dev
 ```sh
 ARGS="eltord client -f torrc.client.dev -pw password1234_"
 ```
+
 
 torrc
 ======
@@ -109,12 +231,34 @@ torrc
 - ExitRelay
 ```
 
+Dep Tree
+--------
+To develop locally you need to change the deps *FROM* the following files *TO* your local copy:
+
+*In this project:*
+./Cargo.toml
+```
+libtor = { path = "../libeltor/libtor" }
+lni = { path = "../lni/crates/lni" }
+```
+
+In  ~/code/libtor/libtor/Cargo.toml
+```
+libtor-sys = { path = "../../libeltor-sys"  }
+```
+
+In  ~/code/libtor-sys/scripts/copy.sh
+```patch
+- git clone https://github.com/el-tor/eltor libtor-src/tor-src
++ git clone ../eltor libtor-src/tor-src
+```
+
 
 TODO
-====
+----
 1. simply read the payments-sent.json in as the same dir as the TOR DataDirectory
 2. simplify the default command:
-```
+```sh
 # from
 ./eltor client -f torrc -pw password1234_
 # to 

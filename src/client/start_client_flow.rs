@@ -3,6 +3,7 @@ use super::payments_sent_ledger;
 use super::select_relay_algo;
 use crate::client::payments_loop;
 use crate::types::RpcConfig;
+use crate::{client_info, client_warn};
 use std::env;
 
 /// Starts the client flow for building and managing circuits.
@@ -28,11 +29,26 @@ use std::env;
 /// - A backup circuit is planned but not yet implemented.
 /// - Bandwidth testing and client bandwidth watcher are placeholders for future implementation.
 /// - The function is designed to loop for building and managing multiple circuits, but the loop is currently commented out.
-pub async fn start_client_flow(rpc_config: &RpcConfig) {
+pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandle<()> {
+    let rpc_config = rpc_config.clone();
+    
+    tokio::spawn(async move {
+        client_flow_impl(&rpc_config).await;
+    })
+}
+
+async fn client_flow_impl(rpc_config: &RpcConfig) {
     // loop {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
-    let lightning_wallet = crate::lightning::load_wallet(&rpc_config).await;
+    let lightning_wallet = match crate::lightning::load_wallet(&rpc_config).await {
+        Ok(wallet) => wallet,
+        Err(e) => {
+            client_warn!("Failed to load Lightning wallet: {}. Client will continue without Lightning functionality.", e);
+            client_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
+            return;
+        }
+    };
 
     let payment_rounds: u16 = env::var("PAYMENT_INTERVAL_ROUNDS")
         .unwrap_or(10.to_string())
@@ -43,10 +59,18 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     let mut selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config)
         .await
         .unwrap();
-    println!(
-        "Build circuit EXTENDPAIDCIRCUIT with these selected relays",
+    client_info!(
+        "Build circuit EXTENDPAIDCIRCUIT with these selected relays"
     );
-    dbg!(&selected_relays);
+    client_info!("Selected relays: {:?}", &selected_relays);
+
+    // Handle empty selected_relays set - skip to step 7 and wait
+    if selected_relays.is_empty() {
+        client_warn!("No relays found within fee range. Waiting before retrying...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        return; // This will exit the current flow and allow it to be restarted
+    }
+
     // TODO backup circuit
     // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
 
@@ -61,8 +85,8 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) {
     let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays)
         .await
         .unwrap();
-    println!("Created paid Circuit with ID: {}", circuit_id);
-    println!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
+    client_info!("Created paid Circuit with ID: {}", circuit_id);
+    client_info!("Connect your browser via sock5 on (lookup your port from the torrc file) default port: {}", 18057); // TODO remove hardcodded socks5 port
 
     // 5. Test Bandwidth
     // TODO: Implement bandwidth test

@@ -1,6 +1,7 @@
 use crate::rpc;
 use crate::types::{ConsensusRelay, RelayTag};
 use crate::types::{Relay, RpcConfig};
+use log::{debug, info};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -20,8 +21,8 @@ pub async fn simple_relay_selection_algo(
     // Assuming PaymentCircuitMaxFee is defined somewhere
     let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config)
         .await
-        .unwrap();
-    println!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
+        .unwrap_or(11000);
+    info!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
     let filtered_relays: Vec<&Relay> = relays
@@ -81,70 +82,132 @@ pub async fn simple_relay_selection_algo(
                 }
             }
         }
-        println!("{:?}", r);
+        info!("{:?}", r);
     }
 
-    // Shuffle the filtered relays
+    // Retry up to 10 times to find a circuit within max fee range
+    const MAX_RETRIES: u32 = 10;
     let rng = Arc::new(Mutex::new(SmallRng::from_entropy()));
-    {
-        let mut rng = rng.lock().unwrap();
-        guard_relays.shuffle(&mut *rng);
-        middle_relays.shuffle(&mut *rng);
-        exit_relays.shuffle(&mut *rng);
+
+    for attempt in 1..=MAX_RETRIES {
+        debug!("Relay selection attempt {}/{}", attempt, MAX_RETRIES);
+
+        // Shuffle the filtered relays for this attempt
+        {
+            let mut rng = rng.lock().unwrap();
+            guard_relays.shuffle(&mut *rng);
+            middle_relays.shuffle(&mut *rng);
+            exit_relays.shuffle(&mut *rng);
+        }
+
+        // Pick 1 entry, 1 middle, 1 exit relay
+        let mut selected_relays = Vec::new();
+
+        // Entry
+        if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+            selected_relays.push((*guard).clone());
+        }
+        // Middle
+        if let Some(middle) = middle_relays
+            .iter()
+            .find(|&&r| !selected_relays.contains(r))
+        {
+            selected_relays.push((*middle).clone());
+        }
+        // Exit
+        if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
+            selected_relays.push((*exit).clone());
+        }
+
+        if selected_relays.len() != 3 {
+            debug!("Could not find 3 suitable relays on attempt {}", attempt);
+            continue;
+        }
+
+        let mut matched_relays: Vec<Relay> = selected_relays
+            .iter()
+            .filter_map(|consensus_relay| {
+                filtered_relays
+                    .iter()
+                    .find(|relay| relay.fingerprint == consensus_relay.fingerprint)
+                    .map(|relay| (*relay).clone())
+            })
+            .collect();
+
+        // Check if the circuit is under the maximum fee for 10 rounds
+        if !is_circuit_under_max_fee(payment_circuit_max_fee as u32, &matched_relays) {
+            debug!(
+                "Circuit exceeds maximum fee on attempt {}, retrying...",
+                attempt
+            );
+            continue;
+        }
+
+        // Success! Add tags and hop numbers
+        let mut i = 1;
+        for relay in matched_relays.iter_mut() {
+            relay.relay_tag = Some(match i {
+                1 => RelayTag::Guard,
+                2 => RelayTag::Middle,
+                3 => RelayTag::Exit,
+                _ => unreachable!(),
+            });
+            relay.hop = Some(i);
+            i += 1;
+        }
+
+        info!(
+            "Successfully found circuit within fee limit on attempt {}/{}",
+            attempt, MAX_RETRIES
+        );
+        return Ok(matched_relays);
     }
 
-    // Pick 1 entry, 1 middle, 1 exit relay
-    let mut selected_relays = Vec::new();
-    let mut total_fee = 0;
+    // If we get here, all attempts failed
+    // Return empty vector instead of error to keep daemon running
+    info!(
+        "Warning: Failed to find a circuit within maximum fee of {} msats after {} attempts. Returning empty circuit.", 
+        payment_circuit_max_fee, MAX_RETRIES
+    );
+    Ok(Vec::new())
+}
 
-    // Entry
-    if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-        selected_relays.push((*guard).clone());
-    }
-    // Middle
-    if let Some(middle) = middle_relays
-        .iter()
-        .find(|&&r| !selected_relays.contains(r))
-    {
-        selected_relays.push((*middle).clone());
-    }
-    // Exit
-    if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-        selected_relays.push((*exit).clone());
-    }
+/// Checks if 10 rounds of payments for the selected relays do not exceed the max_fee
+///
+/// # Arguments
+/// * `max_fee` - Maximum fee allowed for the circuit in millisatoshis
+/// * `selected_relays` - Vector of relays in the circuit
+///
+/// # Returns
+/// * `true` if the total cost for 10 rounds is under or equal to max_fee
+/// * `false` if the total cost exceeds max_fee
+fn is_circuit_under_max_fee(max_fee: u32, selected_relays: &[Relay]) -> bool {
+    let rounds = 10;
+    let mut total_cost = 0u32;
 
-    let mut total_fee = 0;
+    for relay in selected_relays {
+        // Get the payment rate per round for this relay
+        let payment_rate = relay.payment_rate_msats.unwrap_or(0);
 
-    // TODO calculate within max fee range here
+        // Add the cost for 10 rounds of this relay
+        total_cost = total_cost.saturating_add(payment_rate.saturating_mul(rounds));
 
-    if selected_relays.len() != 3 {
-        return Err("Could not find suitable relays".into());
-    }
-
-    let mut matched_relays: Vec<Relay> = selected_relays
-        .iter()
-        .filter_map(|consensus_relay| {
-            filtered_relays
-                .iter()
-                .find(|relay| relay.fingerprint == consensus_relay.fingerprint)
-                .map(|relay| (*relay).clone())
-        })
-        .collect();
-
-    // add tags and hop numbers
-    let mut i = 1;
-    for relay in matched_relays.iter_mut() {
-        relay.relay_tag = Some(match i {
-            1 => RelayTag::Guard,
-            2 => RelayTag::Middle,
-            3 => RelayTag::Exit,
-            _ => unreachable!(),
-        });
-        relay.hop = Some(i);
-        i += 1;
+        // Early exit if we've already exceeded the max fee
+        if total_cost >= max_fee {
+            debug!(
+                "Circuit exceeds max fee: {} msats > {} msats (relay: {})",
+                total_cost, max_fee, relay.nickname
+            );
+            return false;
+        }
     }
 
-    Ok(matched_relays)
+    debug!(
+        "Circuit total cost for {} rounds: {} msats (max: {} msats)",
+        rounds, total_cost, max_fee
+    );
+
+    total_cost <= max_fee
 }
 
 // TODO: implement more complicated relay selection algos

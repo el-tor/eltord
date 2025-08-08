@@ -1,6 +1,9 @@
 # Ignore the target directory
 /target/
 
+# Ignore FireDBG debug output
+/firedbg/
+
 # Ignore the Cargo.lock file if you're building a library
 # Cargo.lock
 
@@ -36,3 +39,9 @@ payments_sent.json
 **torrc.client.dev
 **torrc.client.prod
 **torrc.relay.prod
+
+.secrets
+
+/cache/
+/artifacts/
+/release/
