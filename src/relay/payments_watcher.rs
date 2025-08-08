@@ -82,7 +82,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
         }
     }
     fn failure(&self, error: Option<String>) {
-        warn!("epic fail {}", error.unwrap());
+        warn!("epic fail {}", error.unwrap_or_default());
     }
 }
 
