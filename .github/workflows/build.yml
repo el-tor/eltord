@@ -212,7 +212,6 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd /home/runner/code/eltord && git checkout lib
           cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys for Windows
@@ -227,13 +226,13 @@ jobs:
 
       - name: Build eltord for Windows
         run: |
-          cd /home/runner/code/eltord
+          cd "$GITHUB_WORKSPACE"
           cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Rename binaries
         run: |
           mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
-          mv /home/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+          mv "$GITHUB_WORKSPACE/target/${{ env.PLATFORM_TARGET }}/release/eltor.exe" artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -349,7 +348,6 @@ jobs:
 
       - name: Checkout specific branches
         run: |
-          cd /Users/runner/code/eltord && git checkout lib
           cd /Users/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys for macOS
@@ -364,13 +362,13 @@ jobs:
 
       - name: Build eltord for macOS
         run: |
-          cd /Users/runner/code/eltord
+          cd "$GITHUB_WORKSPACE"
           cargo build --release --verbose --target ${{ env.PLATFORM_TARGET }} --features vendored-openssl
 
       - name: Rename binaries
         run: |
           mkdir -p artifacts/${{ env.PLATFORM_OS_NAME }}
-          mv /Users/runner/code/eltord/target/${{ env.PLATFORM_TARGET }}/release/eltor artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
+          mv "$GITHUB_WORKSPACE/target/${{ env.PLATFORM_TARGET }}/release/eltor" artifacts/${{ env.PLATFORM_OS_NAME }}/${{ env.PLATFORM_BIN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
