@@ -21,6 +21,7 @@ pkgs.mkShell {
     flex
     bison
     unzip
+    gh
     
     # macOS specific
     darwin.apple_sdk.frameworks.Security
