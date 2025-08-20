@@ -92,9 +92,9 @@ git clone https://github.com/el-tor/libeltor.git "$BUILD_DIR/libeltor"
 git clone https://github.com/el-tor/eltord.git "$BUILD_DIR/eltord"
 
 # Checkout specific branches
-echo "🌿 Checking out specific branches..."
-cd "$BUILD_DIR/eltord" && git checkout lib
-cd "$BUILD_DIR/lni" && git checkout search
+# echo "🌿 Checking out specific branches..."
+# cd "$BUILD_DIR/eltord" && git checkout lib
+# cd "$BUILD_DIR/lni" && git checkout search
 
 # Copy shell.nix to build directories for nix-shell context
 echo "📄 Copying shell.nix to build directories..."

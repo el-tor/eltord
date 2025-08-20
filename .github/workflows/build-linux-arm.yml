@@ -77,9 +77,9 @@ jobs:
           git clone https://github.com/el-tor/libeltor.git $BUILD_DIR/libeltor
           # Root project is already checked out by actions/checkout; we'll build from $GITHUB_WORKSPACE
 
-      - name: Checkout specific branches
-        run: |
-          cd $BUILD_DIR/lni && git checkout search
+      # - name: Checkout specific branches
+      #   run: |
+      #     cd $BUILD_DIR/lni && git checkout search
 
       - name: Build libeltor-sys (Linux cross-compilation)
         if: matrix.setup-script == 'setup-linux'

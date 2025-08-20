@@ -83,9 +83,9 @@ jobs:
           git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
           git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
 
-      - name: Checkout specific branches
-        run: |
-          cd /home/runner/code/lni && git checkout search
+      # - name: Checkout specific branches
+      #   run: |
+      #     cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys
         run: |
@@ -210,9 +210,9 @@ jobs:
           git clone https://github.com/el-tor/libeltor.git /home/runner/code/libeltor
           git clone https://github.com/el-tor/eltord.git /home/runner/code/eltord
 
-      - name: Checkout specific branches
-        run: |
-          cd /home/runner/code/lni && git checkout search
+      # - name: Checkout specific branches
+      #   run: |
+      #     cd /home/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys for Windows
         run: |
@@ -346,9 +346,9 @@ jobs:
           git clone https://github.com/el-tor/libeltor.git /Users/runner/code/libeltor
           git clone https://github.com/el-tor/eltord.git /Users/runner/code/eltord
 
-      - name: Checkout specific branches
-        run: |
-          cd /Users/runner/code/lni && git checkout search
+      # - name: Checkout specific branches
+      #   run: |
+      #     cd /Users/runner/code/lni && git checkout search
 
       - name: Build libeltor-sys for macOS
         run: |
