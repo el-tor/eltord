@@ -1,24 +1,32 @@
+use log::{debug, info};
 use std::{env, string};
-use log::{info, debug};
 
 use lni::cln::{ClnConfig, ClnNode};
 use lni::lnd::{LndConfig, LndNode};
-use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
 use lni::nwc::{NwcConfig, NwcNode};
+use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
+use lni::strike::{StrikeConfig, StrikeNode};
 use lni::LightningNode;
 
 use crate::rpc::get_conf;
 use crate::types::RpcConfig;
 
-pub async fn load_wallet(rpc_config: &RpcConfig) -> Result<Box<dyn LightningNode + Send + Sync>, Box<dyn std::error::Error>> {
+pub async fn load_wallet(
+    rpc_config: &RpcConfig,
+) -> Result<Box<dyn LightningNode + Send + Sync>, Box<dyn std::error::Error>> {
     info!("Loading wallet...");
     let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await?;
     let lightning_node = tokio::task::block_in_place(|| get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
     Ok(lightning_node)
 }
 
-pub async fn lookup_default_lightning_node_from_torrc(rpc_config: &RpcConfig) -> Result<(String, String), Box<dyn std::error::Error>> {
-    info!("Looking up default lightning node from torrc with config: {:?}", rpc_config);
+pub async fn lookup_default_lightning_node_from_torrc(
+    rpc_config: &RpcConfig,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    info!(
+        "Looking up default lightning node from torrc with config: {:?}",
+        rpc_config
+    );
     let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
         .await
         .map_err(|e| format!("Failed to get PaymentLightningNodeConfig from torrc: {}", e))?;
@@ -94,6 +102,22 @@ pub fn get_lightning_node(
             info!("NWC Node info: {:?}", info);
             node
         }
+        "strike" => {
+            // PaymentLightningNodeConfig type=strike apiKey=1234abc
+            let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
+                .unwrap_or_else(|| "https://api.strike.me/v1".to_string());
+            let api_key = get_default_value(lightning_conf_str.clone(), "apiKey".to_string())
+                .expect("apiKey not found in torrc config");
+            let config = StrikeConfig {
+                base_url: url.clone(),
+                api_key: api_key.clone(),
+                 ..Default::default()
+            };
+            let node: Box<dyn LightningNode + Send + Sync> = Box::new(StrikeNode::new(config));
+            let info = node.get_info().unwrap();
+            info!("Strike Node info: {:?}", info);
+            node
+        }
         _ => panic!("Unsupported node type: {}", node_type),
     }
 }
@@ -111,7 +135,7 @@ fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> 
             for part in parts {
                 let formatted_key = format!("{}=", key);
                 if part.contains(&formatted_key) {
-                    // For URI values, we need to get everything after the first '=' 
+                    // For URI values, we need to get everything after the first '='
                     // not just split on '=' and take [1]
                     if let Some(eq_idx) = part.find('=') {
                         val = Some(&part[eq_idx + 1..]);
