@@ -4,6 +4,7 @@ use log::{info, debug};
 use lni::cln::{ClnConfig, ClnNode};
 use lni::lnd::{LndConfig, LndNode};
 use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
+use lni::nwc::{NwcConfig, NwcNode};
 use lni::LightningNode;
 
 use crate::rpc::get_conf;
@@ -80,6 +81,19 @@ pub fn get_lightning_node(
             info!("CLN Node info: {:?}", info);
             node
         }
+        "nwc" => {
+            // PaymentLightningNodeConfig type=nwc uri=nostr+walletconnect://pubkey?relay=...&secret=... default=true
+            let uri = get_default_value(lightning_conf_str.clone(), "uri".to_string())
+                .expect("uri not found in torrc config");
+            let config = NwcConfig {
+                nwc_uri: uri.clone(),
+                ..Default::default()
+            };
+            let node: Box<dyn LightningNode + Send + Sync> = Box::new(NwcNode::new(config));
+            let info = node.get_info().unwrap();
+            info!("NWC Node info: {:?}", info);
+            node
+        }
         _ => panic!("Unsupported node type: {}", node_type),
     }
 }
@@ -97,8 +111,12 @@ fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> 
             for part in parts {
                 let formatted_key = format!("{}=", key);
                 if part.contains(&formatted_key) {
-                    val = Some(part.split("=").collect::<Vec<&str>>()[1]);
-                    break;
+                    // For URI values, we need to get everything after the first '=' 
+                    // not just split on '=' and take [1]
+                    if let Some(eq_idx) = part.find('=') {
+                        val = Some(&part[eq_idx + 1..]);
+                        break;
+                    }
                 }
             }
             info!("Extracted value: {:?}", val);

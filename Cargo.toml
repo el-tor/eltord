@@ -23,7 +23,7 @@ libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
-lni = { git = "https://github.com/lightning-node-interface/lni.git" }
+lni = { git = "https://github.com/lightning-node-interface/lni.git", branch = "master" }
 # lni = { path = "../lni/crates/lni" }
 lazy_static = "1.4.0"
 dotenv = "0.15.0"
