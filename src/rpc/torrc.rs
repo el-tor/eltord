@@ -95,11 +95,11 @@ fn parse_kv_data(val: &str) -> Vec<KV> {
     let mut data = Vec::new();
     for part in val.split_whitespace() {
         if let Some(idx) = part.find('=') {
-            let (k, v) = part.split_at(idx);
-            let v = &v[1..];
+            let key = &part[..idx];
+            let value = &part[idx + 1..];
             data.push(KV {
-                key: k.to_string(),
-                value: v.to_string(),
+                key: key.to_string(),
+                value: value.to_string(),
             });
         } else {
             data.push(KV {
@@ -376,6 +376,35 @@ PaymentLightningNodeConfig type=lnd url=http://lnd.com macaroon=mac1234
                 },
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_parse_kv_data_nwc_uri_directly() {
+        // Test the parse_kv_data function directly with the full NWC configuration
+        let test_value = "type=nwc uri=nostr+walletconnect://abc123def456789012345678901234567890123456789012345678901234567890?relay=wss://relay.example.com/v1&secret=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef&lud16=testuser@example.com default=true";
+        
+        let parsed_data = parse_kv_data(test_value);
+        
+        // Verify we have the expected number of key-value pairs
+        assert_eq!(parsed_data.len(), 3);
+        
+        // Find and verify each key-value pair
+        let type_kv = parsed_data.iter().find(|kv| kv.key == "type").unwrap();
+        assert_eq!(type_kv.value, "nwc");
+        
+        let uri_kv = parsed_data.iter().find(|kv| kv.key == "uri").unwrap();
+        let expected_uri = "nostr+walletconnect://abc123def456789012345678901234567890123456789012345678901234567890?relay=wss://relay.example.com/v1&secret=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef&lud16=testuser@example.com";
+        assert_eq!(uri_kv.value, expected_uri);
+        
+        let default_kv = parsed_data.iter().find(|kv| kv.key == "default").unwrap();
+        assert_eq!(default_kv.value, "true");
+        
+        // Verify the URI contains all the expected parameters
+        assert!(uri_kv.value.contains("relay=wss://relay.example.com/v1"));
+        assert!(uri_kv.value.contains("secret=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"));
+        assert!(uri_kv.value.contains("lud16=testuser@example.com"));
+        
+        info!("Direct KV parsing test result: {:?}", parsed_data);
     }
 }
 
