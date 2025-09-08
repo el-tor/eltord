@@ -43,7 +43,7 @@ pub async fn start_payments_loop(
                     payment.payment_id
                 );
             } else if !is_round_expired(&payment) && bandwidth_test::is_bandwidth_good() {
-                let pay_resp = tokio::task::block_in_place(|| pay_relay(&wallet, &payment));
+                let pay_resp = pay_relay(&wallet, &payment).await;
                 match pay_resp {
                     Ok(pay_resp) => {
                         payment.payment_hash = Some(pay_resp.payment_hash);
@@ -89,7 +89,7 @@ async fn wait_for_next_round(interval_seconds: i64) {
     tokio::time::sleep(tokio::time::Duration::from_secs(interval_seconds as u64)).await;
 }
 
-fn pay_relay(
+async fn pay_relay(
     wallet: &Box<dyn LightningNode + Send + Sync>,
     payment: &Payment,
 ) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
@@ -110,7 +110,7 @@ fn pay_relay(
         payment.bolt12_offer.clone().unwrap(),
         amount_msats,
         Some(payment.payment_id.clone()),
-    );
+    ).await;
     match pay_resp {
         Ok(result) => {
             info!(

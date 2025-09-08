@@ -23,8 +23,8 @@ libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
-lni = { git = "https://github.com/lightning-node-interface/lni.git", branch = "master" }
-# lni = { path = "../lni/crates/lni" }
+# lni = { git = "https://github.com/lightning-node-interface/lni.git", branch = "master" }
+lni = { path = "../lni/crates/lni" }
 lazy_static = "1.4.0"
 dotenv = "0.15.0"
 thiserror = "1.0"
@@ -39,6 +39,7 @@ tokio-test = "0.4"
 env_logger = "0.10"
 log = "0.4"
 ctrlc = "3.4"
+async-trait = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -1,12 +1,11 @@
-use log::{debug, info};
-use std::{env, string};
+use log::info;
 
 use lni::cln::{ClnConfig, ClnNode};
 use lni::lnd::{LndConfig, LndNode};
 use lni::nwc::{NwcConfig, NwcNode};
 use lni::phoenixd::{PhoenixdConfig, PhoenixdNode};
 use lni::strike::{StrikeConfig, StrikeNode};
-use lni::LightningNode;
+use lni::{LightningNode};
 
 use crate::rpc::get_conf;
 use crate::types::RpcConfig;
@@ -16,7 +15,7 @@ pub async fn load_wallet(
 ) -> Result<Box<dyn LightningNode + Send + Sync>, Box<dyn std::error::Error>> {
     info!("Loading wallet...");
     let node_torrc_config = lookup_default_lightning_node_from_torrc(&rpc_config).await?;
-    let lightning_node = tokio::task::block_in_place(|| get_lightning_node(node_torrc_config)); // TODO research more into tokio block in place
+    let lightning_node = get_lightning_node(node_torrc_config).await?;
     Ok(lightning_node)
 }
 
@@ -38,85 +37,84 @@ pub async fn lookup_default_lightning_node_from_torrc(
     Ok((node_type.to_string(), lightning_conf_str))
 }
 
-pub fn get_lightning_node(
+pub async fn get_lightning_node(
     (node_type, lightning_conf_str): (String, String),
-) -> Box<dyn LightningNode + Send + Sync> {
+) -> Result<Box<dyn LightningNode + Send + Sync>, Box<dyn std::error::Error>> {
     let node_type_str = node_type.as_str();
     match node_type_str {
         "phoenixd" => {
             let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
-                .expect("url not found in torrc config");
+                .ok_or("url not found in torrc config")?;
             let password = get_default_value(lightning_conf_str.clone(), "password".to_string())
-                .expect("password not found in torrc config");
+                .ok_or("password not found in torrc config")?;
             let config = PhoenixdConfig {
                 url: url.clone(),
                 password: password.clone(),
                 ..Default::default()
             };
-            let u = url.clone().as_str();
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(PhoenixdNode::new(config));
-            let info = node.get_info().unwrap();
+            let info = node.get_info().await?;
             info!("Phoenixd Node info: {:?}", info);
-            node
+            Ok(node)
         }
         "lnd" => {
             let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
-                .expect("url not found in torrc config");
+                .ok_or("url not found in torrc config")?;
             let macaroon = get_default_value(lightning_conf_str.clone(), "macaroon".to_string())
-                .expect("macaroon not found in torrc config");
+                .ok_or("macaroon not found in torrc config")?;
             let config = LndConfig {
                 url: url.clone(),
                 macaroon: macaroon.clone(),
                 ..Default::default()
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(LndNode::new(config));
-            let info = node.get_info().unwrap();
+            let info = node.get_info().await?;
             info!("LND Node info: {:?}", info);
-            node
+            Ok(node)
         }
         "cln" => {
             let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
-                .expect("url not found in torrc config");
+                .ok_or("url not found in torrc config")?;
             let rune = get_default_value(lightning_conf_str.clone(), "rune".to_string())
-                .expect("rune not found in torrc config");
+                .ok_or("rune not found in torrc config")?;
             let config = ClnConfig {
                 url: url.clone(),
                 rune: rune.clone(),
                 ..Default::default()
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(ClnNode::new(config));
-            let info = node.get_info().unwrap();
+            let info = node.get_info().await?;
             info!("CLN Node info: {:?}", info);
-            node
+            Ok(node)
         }
         "nwc" => {
             // PaymentLightningNodeConfig type=nwc uri=nostr+walletconnect://pubkey?relay=...&secret=... default=true
             let uri = get_default_value(lightning_conf_str.clone(), "uri".to_string())
-                .expect("uri not found in torrc config");
+                .ok_or("uri not found in torrc config")?;
             let config = NwcConfig {
                 nwc_uri: uri.clone(),
                 ..Default::default()
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(NwcNode::new(config));
-            let info = node.get_info().unwrap();
+            let info = node.get_info().await?;
             info!("NWC Node info: {:?}", info);
-            node
+            Ok(node)
         }
         "strike" => {
             // PaymentLightningNodeConfig type=strike apiKey=1234abc
             let url = get_default_value(lightning_conf_str.clone(), "url".to_string())
                 .unwrap_or_else(|| "https://api.strike.me/v1".to_string());
             let api_key = get_default_value(lightning_conf_str.clone(), "apiKey".to_string())
-                .expect("apiKey not found in torrc config");
+                .ok_or("apiKey not found in torrc config")?;
             let config = StrikeConfig {
-                base_url: url.clone(),
+                base_url: Some(url.clone()),
                 api_key: api_key.clone(),
                  ..Default::default()
             };
             let node: Box<dyn LightningNode + Send + Sync> = Box::new(StrikeNode::new(config));
-            let info = node.get_info().unwrap();
+            let info = node.get_info().await?;
             info!("Strike Node info: {:?}", info);
-            node
+            Ok(node)
         }
         _ => panic!("Unsupported node type: {}", node_type),
     }

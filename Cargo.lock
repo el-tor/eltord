@@ -811,6 +811,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 name = "eltor"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "base64 0.13.1",
  "chrono",
  "ctrlc",
@@ -1625,7 +1626,6 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "lni"
 version = "0.1.0"
-source = "git+https://github.com/lightning-node-interface/lni.git?branch=master#453a12ee02609d18a42ed9629d76aacb7e78c7b0"
 dependencies = [
  "async-std",
  "async-trait",
