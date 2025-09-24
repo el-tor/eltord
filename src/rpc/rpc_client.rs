@@ -1,9 +1,9 @@
 use crate::types::{EventCallback, RpcConfig};
 use lni::LightningNode;
+use log::{debug, error, info, warn};
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use log::{info, debug, warn, error};
 
 // TOR RPC Commands
 // https://spec.torproject.org/control-spec/commands.html?highlight=Setevent#extended_events
@@ -52,7 +52,10 @@ pub async fn rpc_event_listener(
     event_callback: Box<dyn EventCallback + Send + Sync>,
     wallet: &(dyn LightningNode + Send + Sync),
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Connecting to Tor control port for event listening at {}...", config.addr);
+    info!(
+        "Connecting to Tor control port for event listening at {}...",
+        config.addr
+    );
     let stream = TcpStream::connect(config.addr.clone()).await?;
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);

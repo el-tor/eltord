@@ -18,8 +18,8 @@ name = "eltor"
 path = "src/main.rs"
 
 [dependencies]
-libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
-# libtor = { path = "../libeltor/libtor" }
+# libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
+libtor = { path = "../libeltor/libtor" }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"

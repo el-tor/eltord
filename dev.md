@@ -74,3 +74,9 @@ cd backend
 cd ../frontend
 pnpm run dev:web
 ```
+
+Troubleshooting
+---------------
+* If you add a feature to `eltor`, and need to test it all the way down in this `eltord` project, you will need to update the code from `libeltor-sys=>libeltor=>eltord`.
+You will probably also need to goto the `cargo.toml` in eltord and set to use local copy of dep `libtor = { path = "../libeltor/libtor" }`.
+You might need to go up to libeltor and libeltor-sys project too and change to local dep. 
