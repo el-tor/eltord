@@ -1,11 +1,50 @@
 use crate::{
     relay::{init_payments_received_ledger, RelayPayments},
-    rpc::rpc_event_listener,
+    rpc::{rpc_event_listener, teardown_circuit},
     types::{EventCallback, RpcConfig},
 };
 use lni::{LightningNode, types::Transaction};
 use log::{info, warn};
 use tokio::time::{sleep, Duration, Instant};
+use tokio::sync::broadcast;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+// Payment window padding - grace period in seconds added to each round's payment window
+const GRACE_PERIOD_SEC: u64 = 15;
+
+// Global registry to track circuit cancellation tokens
+type CircuitCancellationRegistry = Arc<Mutex<HashMap<String, broadcast::Sender<()>>>>;
+
+lazy_static::lazy_static! {
+    static ref CIRCUIT_CANCELLATION_REGISTRY: CircuitCancellationRegistry = 
+        Arc::new(Mutex::new(HashMap::new()));
+}
+
+// Helper function to get or create a cancellation channel for a circuit
+fn get_circuit_cancellation_channel(circuit_id: &str) -> (broadcast::Sender<()>, broadcast::Receiver<()>) {
+    let mut registry = CIRCUIT_CANCELLATION_REGISTRY.lock().unwrap();
+    
+    if let Some(sender) = registry.get(circuit_id) {
+        let receiver = sender.subscribe();
+        (sender.clone(), receiver)
+    } else {
+        let (sender, receiver) = broadcast::channel(1);
+        registry.insert(circuit_id.to_string(), sender.clone());
+        (sender, receiver)
+    }
+}
+
+// Helper function to signal circuit teardown and cleanup
+fn signal_circuit_teardown(circuit_id: &str) {
+    let mut registry = CIRCUIT_CANCELLATION_REGISTRY.lock().unwrap();
+    
+    if let Some(sender) = registry.remove(circuit_id) {
+        // Send teardown signal (ignore if no receivers)
+        let _ = sender.send(());
+        info!("📢 Signaled teardown for all payment monitors on circuit {}", circuit_id);
+    }
+}
 
 // 2. Start payment watcher
 pub async fn start_payments_watcher(
@@ -17,6 +56,7 @@ pub async fn start_payments_watcher(
     let on_event_payment_id_hash_received_callback =
         Box::new(OnTorEventPaymentIdHashReceivedCallback {
             wallet: wallet.clone(),
+            rpc_config: config.clone(),
         });
     rpc_event_listener(
         config.clone(),
@@ -35,6 +75,7 @@ pub async fn start_payments_watcher(
 
 struct OnTorEventPaymentIdHashReceivedCallback {
     wallet: std::sync::Arc<dyn LightningNode + Send + Sync>,
+    rpc_config: RpcConfig,
 }
 impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
     fn success(&self, response: Option<String>, _wallet: &(dyn LightningNode + Send + Sync)) {
@@ -112,11 +153,16 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
                     ..Default::default()
                 };
                 
+                // Get cancellation receiver for this circuit
+                let (_sender, cancellation_receiver) = get_circuit_cancellation_channel(&circ_id);
+                
                 let callback = OnLnInvoiceEventCallback {
                     payment_hash: payment_hash.clone(),
                     circuit_id: circ_id.clone(),
                     round: i,
                     circuit_start_time,
+                    rpc_config: self.rpc_config.clone(),
+                    cancellation_receiver,
                 };
                 
                 // Log that we're scheduling the task (this will appear in main thread logs)
@@ -128,25 +174,44 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
                 // Spawn async task to handle invoice event watching with delay
                 let wallet_clone = self.wallet.clone();
                 let payment_hash_clone = payment_hash.clone();
+                let circuit_id_clone = circ_id.clone();
+                let mut cancellation_receiver_clone = callback.cancellation_receiver.resubscribe();
+                
                 let _task_handle = tokio::spawn(async move {
-                    // Wait for the round's start time
+                    // Wait for the round's start time or cancellation
                     if round_start_time > 0 {
                         info!(
-                            "⏳ Waiting {}s before starting Round {} monitoring for payment hash: {}",
-                            round_start_time, i, payment_hash_clone
+                            "⏳ Waiting {}s before starting Round {} monitoring for payment hash: {} on circuit {}",
+                            round_start_time, i, payment_hash_clone, circuit_id_clone
                         );
-                        sleep(Duration::from_secs(round_start_time)).await;
+                        
+                        tokio::select! {
+                            _ = sleep(Duration::from_secs(round_start_time)) => {},
+                            _ = cancellation_receiver_clone.recv() => {
+                                info!("🛑 Round {} monitoring cancelled during wait phase for payment hash: {} on circuit {}", 
+                                      i, payment_hash_clone, circuit_id_clone);
+                                return;
+                            }
+                        }
+                    }
+                    
+                    // Check for cancellation before starting monitoring
+                    if cancellation_receiver_clone.try_recv().is_ok() {
+                        info!("🛑 Round {} monitoring cancelled before start for payment hash: {} on circuit {}", 
+                              i, payment_hash_clone, circuit_id_clone);
+                        return;
                     }
                     
                     info!(
-                        "🚀 Starting Round {} invoice monitoring for payment hash: {} (polling every {}s for max {}s)",
-                        i, params.search.as_ref().unwrap(), params.polling_delay_sec, params.max_polling_sec
+                        "🚀 Starting Round {} invoice monitoring for payment hash: {} (polling every {}s for max {}s) on circuit {}",
+                        i, params.search.as_ref().unwrap(), params.polling_delay_sec, params.max_polling_sec, circuit_id_clone
                     );
                     
                     // Start the invoice event watcher
                     wallet_clone.on_invoice_events(params, Box::new(callback)).await;
 
-                    info!("✅ Finished Round {} invoice monitoring for payment hash: {}", i, payment_hash_clone);
+                    info!("✅ Finished Round {} invoice monitoring for payment hash: {} on circuit {}", 
+                          i, payment_hash_clone, circuit_id_clone);
                 });
             }
         }
@@ -162,38 +227,61 @@ struct OnLnInvoiceEventCallback {
     circuit_id: String,
     round: usize,
     circuit_start_time: Instant,
+    rpc_config: RpcConfig,
+    cancellation_receiver: broadcast::Receiver<()>,
 }
 
 impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
     fn success(&self, transaction: Option<Transaction>) {
         let elapsed_secs = self.circuit_start_time.elapsed().as_secs();
         let expected_window_start = self.round as u64 * 60;
-        let expected_window_end = expected_window_start + 60;
+        let expected_window_end = expected_window_start + 60 + GRACE_PERIOD_SEC;
         
         info!(
             "🎉 INVOICE PAID! Payment hash: {} for circuit: {} (round {}) after {}s",
             self.payment_hash, self.circuit_id, self.round, elapsed_secs
         );
         
-        // Check if payment was made within the acceptable time window
-        // Each round can be paid from circuit start (0s) up to the end of its designated window
+        // Check if payment was made within the acceptable time window (including padding)
+        // Each round can be paid from circuit start (0s) up to the end of its designated window + padding
+        let base_window_end = expected_window_start + 60;
         if elapsed_secs <= expected_window_end {
             if elapsed_secs >= expected_window_start {
                 info!(
-                    "✅ Payment made ON TIME! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s) - KEEP circuit {} ALIVE",
-                    self.round, elapsed_secs, expected_window_end, expected_window_start, expected_window_end, self.circuit_id
+                    "✅ Payment made ON TIME! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s, grace: {}s) - KEEP circuit {} ALIVE",
+                    self.round, elapsed_secs, expected_window_end, expected_window_start, base_window_end, GRACE_PERIOD_SEC, self.circuit_id
                 );
             } else {
                 info!(
-                    "⚡ Payment made EARLY! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s) - KEEP circuit {} ALIVE",
-                    self.round, elapsed_secs, expected_window_end, expected_window_start, expected_window_end, self.circuit_id
+                    "⚡ Payment made EARLY! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s, grace: {}s) - KEEP circuit {} ALIVE",
+                    self.round, elapsed_secs, expected_window_end, expected_window_start, base_window_end, GRACE_PERIOD_SEC, self.circuit_id
                 );
             }
         } else {
             warn!(
-                "⚠️ Payment made LATE! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s) - TEARDOWN circuit {}",
-                self.round, elapsed_secs, expected_window_end, expected_window_start, expected_window_end, self.circuit_id
+                "⚠️ Payment made LATE! Round {} payment received at {}s (window: 0s-{}s, ideal: {}s-{}s, grace: {}s) - TEARDOWN circuit {}",
+                self.round, elapsed_secs, expected_window_end, expected_window_start, base_window_end, GRACE_PERIOD_SEC, self.circuit_id
             );
+            
+            // Call teardown RPC logic for late payment
+            let circuit_id = self.circuit_id.clone();
+            let rpc_config = self.rpc_config.clone();
+            tokio::spawn(async move {
+                match teardown_circuit(&rpc_config, &circuit_id).await {
+                    Ok(success) => {
+                        if success {
+                            warn!("🔥 Successfully tore down circuit {} due to late payment", circuit_id);
+                            // Signal all payment monitoring tasks for this circuit to stop
+                            signal_circuit_teardown(&circuit_id);
+                        } else {
+                            warn!("⚠️ Failed to teardown circuit {} - unexpected response", circuit_id);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("❌ Error tearing down circuit {}: {}", circuit_id, e);
+                    }
+                }
+            });
         }
         
         if let Some(txn) = transaction {
@@ -217,25 +305,46 @@ impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
     fn failure(&self, transaction: Option<Transaction>) {
         let elapsed_secs = self.circuit_start_time.elapsed().as_secs();
         let expected_window_start = self.round as u64 * 60;
-        let expected_window_end = expected_window_start + 60;
+        let expected_window_end = expected_window_start + 60 + GRACE_PERIOD_SEC;
         
         warn!(
             "❌ Invoice payment failed for payment hash: {} on circuit: {} (round {}) after {}s",
             self.payment_hash, self.circuit_id, self.round, elapsed_secs
         );
         
-        // Check if failure happened within or after the acceptable time window
+        // Check if failure happened within or after the acceptable time window (including padding)
+        let base_window_end = expected_window_start + 60;
         if elapsed_secs <= expected_window_end {
             warn!(
-                "⏰ Payment failed within acceptable window (0s-{}s, ideal: {}s-{}s) at {}s - TEARDOWN circuit {}",
-                expected_window_end, expected_window_start, expected_window_end, elapsed_secs, self.circuit_id
+                "⏰ Payment failed within acceptable window (0s-{}s, ideal: {}s-{}s, grace: {}s) at {}s - TEARDOWN circuit {}",
+                expected_window_end, expected_window_start, base_window_end, GRACE_PERIOD_SEC, elapsed_secs, self.circuit_id
             );
         } else {
             warn!(
-                "🕑 Payment failed after acceptable window (0s-{}s, ideal: {}s-{}s) at {}s - TEARDOWN circuit {}",
-                expected_window_end, expected_window_start, expected_window_end, elapsed_secs, self.circuit_id
+                "🕑 Payment failed after acceptable window (0s-{}s, ideal: {}s-{}s, grace: {}s) at {}s - TEARDOWN circuit {}",
+                expected_window_end, expected_window_start, base_window_end, GRACE_PERIOD_SEC, elapsed_secs, self.circuit_id
             );
         }
+        
+        // Call teardown RPC logic for payment failure (regardless of timing)
+        let circuit_id = self.circuit_id.clone();
+        let rpc_config = self.rpc_config.clone();
+        tokio::spawn(async move {
+            match teardown_circuit(&rpc_config, &circuit_id).await {
+                Ok(success) => {
+                    if success {
+                        warn!("🔥 Successfully tore down circuit {} due to payment failure", circuit_id);
+                        // Signal all payment monitoring tasks for this circuit to stop
+                        signal_circuit_teardown(&circuit_id);
+                    } else {
+                        warn!("⚠️ Failed to teardown circuit {} - unexpected response", circuit_id);
+                    }
+                }
+                Err(e) => {
+                    warn!("❌ Error tearing down circuit {}: {}", circuit_id, e);
+                }
+            }
+        });
         
         if let Some(txn) = transaction {
             warn!("❌ Failed transaction: {:?}", txn);
@@ -339,11 +448,18 @@ mod tests {
         }
     }    // Helper function to create a test callback with a specific start time
     fn create_test_callback(round: usize, circuit_start_time: Instant) -> OnLnInvoiceEventCallback {
+        let (_, cancellation_receiver) = broadcast::channel(1);
         OnLnInvoiceEventCallback {
             payment_hash: format!("test_hash_{}", round),
             circuit_id: "test_circuit_123".to_string(),
             round,
             circuit_start_time,
+            rpc_config: RpcConfig {
+                addr: "127.0.0.1:9051".to_string(),
+                rpc_password: Some("test_password".to_string()),
+                command: "".to_string(),
+            },
+            cancellation_receiver,
         }
     }
     
@@ -391,8 +507,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_round_0_late_payment() {
-        // Round 0: expected window 0-60s, payment at 75s should be LATE
-        let start_time = Instant::now() - Duration::from_secs(75);
+        // Round 0: expected window 0-75s (60s + 15s padding), payment at 80s should be LATE
+        let start_time = Instant::now() - Duration::from_secs(80);
         let callback = create_test_callback(0, start_time);
         let transaction = Some(create_test_transaction("test_hash_0"));
         
@@ -421,8 +537,8 @@ mod tests {
     
     #[tokio::test]
     async fn test_round_1_late_payment() {
-        // Round 1: acceptable window 0-120s, payment at 150s should be LATE
-        let start_time = Instant::now() - Duration::from_secs(150);
+        // Round 1: acceptable window 0-135s (120s + 15s padding), payment at 140s should be LATE
+        let start_time = Instant::now() - Duration::from_secs(140);
         let callback = create_test_callback(1, start_time);
         let transaction = Some(create_test_transaction("test_hash_1"));
         
@@ -529,10 +645,16 @@ mod tests {
     
     #[tokio::test]
     async fn test_window_boundary_conditions() {
-        // Test exact boundary conditions
+        // Test exact boundary conditions with padding
         
-        // Round 1: Payment exactly at window end (120s) should be ON TIME
+        // Round 1: Payment exactly at base window end (120s) should be ON TIME
         let start_time = Instant::now() - Duration::from_secs(120);
+        let callback = create_test_callback(1, start_time);
+        let transaction = Some(create_test_transaction("boundary_test"));
+        callback.success(transaction);
+        
+        // Round 1: Payment exactly at padded window end (135s) should be ON TIME  
+        let start_time = Instant::now() - Duration::from_secs(135);
         let callback = create_test_callback(1, start_time);
         let transaction = Some(create_test_transaction("boundary_test"));
         callback.success(transaction);
@@ -543,8 +665,8 @@ mod tests {
         let transaction = Some(create_test_transaction("boundary_test"));
         callback.success(transaction);
         
-        // Round 1: Payment one second after window (121s) should be LATE
-        let start_time = Instant::now() - Duration::from_secs(121);
+        // Round 1: Payment one second after padded window (136s) should be LATE
+        let start_time = Instant::now() - Duration::from_secs(136);
         let callback = create_test_callback(1, start_time);
         let transaction = Some(create_test_transaction("boundary_test"));
         callback.success(transaction);
@@ -553,14 +675,102 @@ mod tests {
     // Test the timing calculations directly
     #[test]
     fn test_timing_calculations() {
-        // Verify our timing math is correct
+        // Verify our timing math is correct with grace period
         for round in 0..10 {
             let expected_window_start = round as u64 * 60;
-            let expected_window_end = expected_window_start + 60;
+            let expected_window_end = expected_window_start + 60 + GRACE_PERIOD_SEC;
             
-            // Round 0: 0-60, Round 1: 60-120, Round 2: 120-180, etc.
+            // Round 0: 0-75, Round 1: 60-135, Round 2: 120-195, etc. (with 15s grace period)
             assert_eq!(expected_window_start, round as u64 * 60);
-            assert_eq!(expected_window_end, (round as u64 + 1) * 60);
+            assert_eq!(expected_window_end, (round as u64 + 1) * 60 + GRACE_PERIOD_SEC);
         }
+    }
+    
+    #[tokio::test]
+    async fn test_circuit_cancellation_mechanism() {
+        // Test that we can create, signal, and cleanup a circuit cancellation channel
+        let test_circuit_id = "test_circuit_cancellation_123";
+        
+        // Get cancellation channel for circuit
+        let (_sender, mut receiver) = get_circuit_cancellation_channel(test_circuit_id);
+        
+        // Verify receiver doesn't have any messages initially
+        assert!(receiver.try_recv().is_err());
+        
+        // Signal teardown
+        signal_circuit_teardown(test_circuit_id);
+        
+        // Verify receiver got the teardown signal
+        assert!(receiver.recv().await.is_ok());
+        
+        // After teardown, the circuit should be removed from registry
+        // A new call should create a fresh channel
+        let (_sender2, mut receiver2) = get_circuit_cancellation_channel(test_circuit_id);
+        assert!(receiver2.try_recv().is_err());
+    }
+    
+    #[tokio::test]
+    async fn test_multiple_subscribers_get_teardown_signal() {
+        let test_circuit_id = "test_circuit_multi_123";
+        
+        // Create multiple subscribers (simulating multiple payment rounds)
+        let (_sender, mut receiver1) = get_circuit_cancellation_channel(test_circuit_id);
+        let (_sender, mut receiver2) = get_circuit_cancellation_channel(test_circuit_id);
+        let (_sender, mut receiver3) = get_circuit_cancellation_channel(test_circuit_id);
+        
+        // All should be empty initially
+        assert!(receiver1.try_recv().is_err());
+        assert!(receiver2.try_recv().is_err()); 
+        assert!(receiver3.try_recv().is_err());
+        
+        // Signal teardown
+        signal_circuit_teardown(test_circuit_id);
+        
+        // All subscribers should receive the signal
+        assert!(receiver1.recv().await.is_ok());
+        assert!(receiver2.recv().await.is_ok());
+        assert!(receiver3.recv().await.is_ok());
+    }
+    
+    #[tokio::test]
+    async fn test_grace_period() {
+        // Test that payments within the padding window are accepted
+        
+        // Round 0: base window 0-60s, with padding 0-75s
+        // Payment at 65s should be accepted (within padding)
+        let start_time = Instant::now() - Duration::from_secs(65);
+        let callback = create_test_callback(0, start_time);
+        let transaction = Some(create_test_transaction("padding_test"));
+        
+        callback.success(transaction); // Should log as ON TIME, not LATE
+        
+        // Round 1: base window 60-120s, with padding 60-135s
+        // Payment at 125s should be accepted (within padding)
+        let start_time = Instant::now() - Duration::from_secs(125);
+        let callback = create_test_callback(1, start_time);
+        let transaction = Some(create_test_transaction("padding_test"));
+        
+        callback.success(transaction); // Should log as ON TIME, not LATE
+    }
+    
+    #[tokio::test]
+    async fn test_payment_beyond_padding_window() {
+        // Test that payments beyond the padding window are rejected
+        
+        // Round 0: base window 0-60s, with padding 0-75s
+        // Payment at 80s should be LATE (beyond padding)
+        let start_time = Instant::now() - Duration::from_secs(80);
+        let callback = create_test_callback(0, start_time);
+        let transaction = Some(create_test_transaction("late_test"));
+        
+        callback.success(transaction); // Should log as LATE and trigger teardown
+        
+        // Round 1: base window 60-120s, with padding 60-135s  
+        // Payment at 140s should be LATE (beyond padding)
+        let start_time = Instant::now() - Duration::from_secs(140);
+        let callback = create_test_callback(1, start_time);
+        let transaction = Some(create_test_transaction("late_test"));
+        
+        callback.success(transaction); // Should log as LATE and trigger teardown
     }
 }
