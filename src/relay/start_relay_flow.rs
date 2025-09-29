@@ -1,6 +1,7 @@
 use super::payments_watcher::start_payments_watcher;
 use crate::{rpc::get_torrc_value, types::RpcConfig, relay_info, relay_warn, relay_error};
 use log::debug;
+use std::sync::Arc;
 
 // 1. Torrc Config
 // 2. Start payment watcher
@@ -23,8 +24,8 @@ pub async fn start_relay_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandle
 async fn relay_flow_impl(rpc_config: &RpcConfig) {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
-    let wallet = match crate::lightning::load_wallet(&rpc_config).await {
-        Ok(wallet) => wallet,
+    let wallet: Arc<dyn lni::LightningNode + Send + Sync> = match crate::lightning::load_wallet(&rpc_config).await {
+        Ok(wallet) => Arc::from(wallet),
         Err(e) => {
             relay_warn!("Failed to load Lightning wallet: {}. Relay will continue without Lightning functionality.", e);
             relay_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
@@ -50,7 +51,7 @@ async fn relay_flow_impl(rpc_config: &RpcConfig) {
     relay_info!("Starting payment watcher...");
     let rpc_config_clone = rpc_config.clone();
     let payment_watcher_handle = tokio::spawn(async move {
-        if let Err(e) = start_payments_watcher(&rpc_config_clone, &*wallet).await {
+        if let Err(e) = start_payments_watcher(&rpc_config_clone, wallet.clone()).await {
             relay_error!("Payment watcher failed: {:?}", e);
         }
     });
