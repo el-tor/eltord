@@ -66,7 +66,6 @@ pub async fn start_payments_loop(
             }
         }
         round += 1;
-        // TODO figure out how to do for relays with different interval_seconds, hardcode 45 second intervals for now
         wait_for_next_round(45).await;
     }
     Ok(())

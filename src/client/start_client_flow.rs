@@ -33,11 +33,20 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandl
     let rpc_config = rpc_config.clone();
     
     tokio::spawn(async move {
-        client_flow_impl(&rpc_config).await;
+        loop {
+            let next = client_flow_impl(&rpc_config).await;
+            if next {
+                client_info!("Next Circuit...");
+            } else {
+                // Retry after a short delay
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await; // 10 seconds
+                client_info!("Retrying due to payment loop error...");
+            }
+        }
     })
 }
 
-async fn client_flow_impl(rpc_config: &RpcConfig) {
+async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
     // loop {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
@@ -46,7 +55,7 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
         Err(e) => {
             client_warn!("Failed to load Lightning wallet: {}. Client will continue without Lightning functionality.", e);
             client_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
-            return;
+            return false; // Retry immediately
         }
     };
 
@@ -64,11 +73,10 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
     );
     client_info!("Selected relays: {:?}", &selected_relays);
 
-    // Handle empty selected_relays set - skip to step 7 and wait
+    // Handle empty selected_relays set - retry immediately
     if selected_relays.is_empty() {
-        client_warn!("No relays found within fee range. Waiting before retrying...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-        return; // This will exit the current flow and allow it to be restarted
+        client_warn!("No relays found within fee range. Retrying immediately...");
+        return false; // Retry immediately without waiting
     }
 
     // TODO backup circuit
@@ -102,6 +110,17 @@ async fn client_flow_impl(rpc_config: &RpcConfig) {
         lightning_wallet,
     )
     .await;
+    
+    match payment_loop_result {
+        Ok(_) => {
+            client_info!("Payments loop completed successfully for circuit: {}", circuit_id);
+            true // Wait before next iteration on success
+        }
+        Err(e) => {
+            client_warn!("Payments loop encountered an error for circuit {}: {}", circuit_id, e);
+            false // Retry immediately on error
+        }
+    }
 
     // => => loop logic above for the desired number of circuits (Tor typically has backup circuits in case one fails)
     // Tor typically builds 3 circuits: one primary and two backups, but for our use case since it a paid circuit let just have 1 backup
