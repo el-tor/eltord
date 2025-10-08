@@ -18,13 +18,13 @@ name = "eltor"
 path = "src/main.rs"
 
 [dependencies]
-# libtor = { git = "https://github.com/el-tor/libeltor.git", branch = "master" }
-libtor = { path = "../libeltor/libtor" }
+libtor = { git = "https://github.com/el-tor/libeltor.git", rev = "d5eb363404082632e186b246bce6cefedcf47c0f" }
+# libtor = { path = "../libeltor/libtor" }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.15"
 futures-util = "0.3.31"
-# lni = { git = "https://github.com/lightning-node-interface/lni.git", branch = "master" }
-lni = { path = "../lni/crates/lni" }
+lni = { git = "https://github.com/lightning-node-interface/lni.git", rev = "c6b6e46d8b4231f7c1cd57ac64aa218d211eee8b" }
+# lni = { path = "../lni/crates/lni" }
 lazy_static = "1.4.0"
 dotenv = "0.15.0"
 thiserror = "1.0"

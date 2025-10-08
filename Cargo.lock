@@ -1536,6 +1536,7 @@ dependencies = [
 [[package]]
 name = "libtor"
 version = "47.13.0+0.4.7.x"
+source = "git+https://github.com/el-tor/libeltor.git?rev=d5eb363404082632e186b246bce6cefedcf47c0f#d5eb363404082632e186b246bce6cefedcf47c0f"
 dependencies = [
  "futures-util",
  "libtor-derive",
@@ -1561,6 +1562,7 @@ dependencies = [
 [[package]]
 name = "libtor-src"
 version = "47.13.0+0.4.7.13"
+source = "git+https://github.com/el-tor/libeltor-sys?branch=master#1605973b05f40a6ce9985fb3f6f1309b8a0540f3"
 dependencies = [
  "fs_extra",
 ]
@@ -1568,6 +1570,7 @@ dependencies = [
 [[package]]
 name = "libtor-sys"
 version = "47.13.0+0.4.7.x"
+source = "git+https://github.com/el-tor/libeltor-sys?branch=master#1605973b05f40a6ce9985fb3f6f1309b8a0540f3"
 dependencies = [
  "autotools",
  "cc",
@@ -1623,6 +1626,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "lni"
 version = "0.1.0"
+source = "git+https://github.com/lightning-node-interface/lni.git?rev=c6b6e46d8b4231f7c1cd57ac64aa218d211eee8b#c6b6e46d8b4231f7c1cd57ac64aa218d211eee8b"
 dependencies = [
  "async-std",
  "async-trait",
