@@ -45,3 +45,5 @@ payments_sent.json
 /cache/
 /artifacts/
 /release/
+
+/docs/ignore

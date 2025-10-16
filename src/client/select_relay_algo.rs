@@ -39,18 +39,39 @@ pub async fn simple_relay_selection_algo(
     let mut guard_relays = Vec::new();
     let mut middle_relays = Vec::new();
     let mut exit_relays = Vec::new();
+    
+    // Get preferred entry and exit nodes from torrc
+    let preferred_entry_relays = rpc::get_conf_entry_nodes(&rpc_config).await;
     let preferred_exit_relays = rpc::get_conf_exit_nodes(&rpc_config).await;
+    
     // TODO preferred_exit_fingerprints might contain a relay name, need to handle if its a nickname and then lookup the fingerprint
     for r in &consensus_relays {
         let preferred_exit_fingerprint = &Some(preferred_exit_relays.clone().unwrap().value);
 
         if r.tags.contains(&RelayTag::Guard) {
-            if filtered_relays
-                .iter()
-                .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
-                .any(|relay| relay.fingerprint == r.fingerprint)
-            {
-                guard_relays.push(r);
+            // If EntryNodes is configured, only add guards that match
+            if let Some(ref entry_config) = preferred_entry_relays {
+                if entry_config.value.as_str() == r.fingerprint
+                    && filtered_relays
+                        .iter()
+                        .filter(|relay| {
+                            preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint)
+                        })
+                        .any(|relay| relay.fingerprint == r.fingerprint)
+                {
+                    guard_relays.push(r);
+                }
+            } else {
+                // No EntryNodes configured, use all guard relays
+                if filtered_relays
+                    .iter()
+                    .filter(|relay| {
+                        preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint)
+                    })
+                    .any(|relay| relay.fingerprint == r.fingerprint)
+                {
+                    guard_relays.push(r);
+                }
             }
         }
         if r.tags.contains(&RelayTag::Running) {
