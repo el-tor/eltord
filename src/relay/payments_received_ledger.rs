@@ -1,6 +1,6 @@
 use crate::types::Relay;
 use crate::{database, relay};
-use log::info;
+use log::{error, info, warn};
 
 use super::{relay_payments, RelayPayments};
 
@@ -29,15 +29,51 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
 
         // Create data folder if it doesn't exist
         // TODO read from config file
-        std::fs::create_dir_all("data").unwrap();
+        if let Err(e) = std::fs::create_dir_all("data") {
+            error!("Failed to create data directory: {}", e);
+            continue;
+        }
         // Create payments_received.json file if it doesn't exist
         let payments_received_path = "data/payments_received.json";
         if !std::path::Path::new(payments_received_path).exists() {
-            std::fs::File::create(payments_received_path).unwrap();
+            if let Err(e) = std::fs::File::create(payments_received_path) {
+                error!("Failed to create payments_received.json: {}", e);
+                continue;
+            }
         }
 
-        let db = database::Db::new(payments_received_path.to_string()).unwrap();
-        db.write_payment(row).unwrap();
+        let db = match database::Db::new(payments_received_path.to_string()) {
+            Ok(db) => db,
+            Err(e) => {
+                error!("Failed to load payments_received ledger: {}. Creating backup and starting fresh...", e);
+                // Backup the corrupted file
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let backup_path = format!("data/payments_received.json.backup_{}", timestamp);
+                if let Err(backup_err) = std::fs::copy(payments_received_path, &backup_path) {
+                    warn!("Could not create backup: {}", backup_err);
+                } else {
+                    info!("Corrupted database backed up to: {}", backup_path);
+                }
+                // Start with empty database
+                if let Err(write_err) = std::fs::write(payments_received_path, "[]") {
+                    error!("Failed to reset database file: {}", write_err);
+                    continue;
+                }
+                match database::Db::new(payments_received_path.to_string()) {
+                    Ok(db) => db,
+                    Err(e2) => {
+                        error!("Failed to create fresh database: {}", e2);
+                        continue;
+                    }
+                }
+            }
+        };
+        if let Err(e) = db.write_payment(row) {
+            error!("Failed to write payment to database: {}", e);
+        }
         i += 1;
     }
 

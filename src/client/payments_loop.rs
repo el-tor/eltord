@@ -2,7 +2,7 @@ use super::bandwidth_test;
 use crate::database::{Db, Payment};
 use crate::types::Relay;
 use lni::{LightningNode, PayInvoiceResponse};
-use log::{info, warn};
+use log::{error, info, warn};
 use std::env;
 
 // is round expired
@@ -16,7 +16,26 @@ pub async fn start_payments_loop(
     wallet: Box<dyn LightningNode + Send + Sync>,
     socks_port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let db = Db::new("data/payments_sent.json".to_string()).unwrap();
+    let db = match Db::new("data/payments_sent.json".to_string()) {
+        Ok(db) => db,
+        Err(e) => {
+            error!("Failed to load payments database: {}. Creating backup and starting fresh...", e);
+            // Backup the corrupted file
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let backup_path = format!("data/payments_sent.json.backup_{}", timestamp);
+            if let Err(backup_err) = std::fs::copy("data/payments_sent.json", &backup_path) {
+                warn!("Could not create backup: {}", backup_err);
+            } else {
+                info!("Corrupted database backed up to: {}", backup_path);
+            }
+            // Start with empty database
+            std::fs::write("data/payments_sent.json", "[]")?;
+            Db::new("data/payments_sent.json".to_string())?
+        }
+    };
     let mut round = 1;
     let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
         .unwrap_or("0".to_string())

@@ -28,9 +28,9 @@
 # Ignore the .log files
 *.log
 
-payments.json
-payments_received.json
-payments_sent.json
+payments.json**
+payments_received.json**
+payments_sent.json**
 
 *tmp
 
