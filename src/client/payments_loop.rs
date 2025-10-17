@@ -23,17 +23,17 @@ pub async fn start_payments_loop(
         .parse()
         .unwrap();
     
-    // Run initial bandwidth test before starting payment rounds
-    info!("🔍 Running initial bandwidth test before payments...");
-    match bandwidth_test::bandwidth_test(socks_port).await {
-        Ok((latency_ms, speed_kbps)) => {
-            info!("📊 Initial bandwidth test: {:.1} KB/s ({}ms for 100KB)", speed_kbps, latency_ms);
-            // TODO set a configurable minimum speed threshold and abort if below
-        }
-        Err(e) => {
-            warn!("❌ Initial bandwidth test failed: {}. Circuit may not be ready.", e);
-        }
-    }
+    // TODO Run initial bandwidth test before starting payment rounds
+    // info!("🔍 Running initial bandwidth test before payments...");
+    // match bandwidth_test::bandwidth_test(socks_port).await {
+    //     Ok((latency_ms, speed_kbps)) => {
+    //         info!("📊 Initial bandwidth test: {:.1} KB/s ({}ms for 100KB)", speed_kbps, latency_ms);
+    //         // TODO set a configurable minimum speed threshold and abort if below
+    //     }
+    //     Err(e) => {
+    //         warn!("❌ Initial bandwidth test failed: {}. Circuit may not be ready.", e);
+    //     }
+    // }
     
     while round <= 10 {
         info!(

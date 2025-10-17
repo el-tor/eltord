@@ -173,6 +173,10 @@ pub async fn get_conf_exit_nodes(config: &RpcConfig) -> Option<TorrcEntry> {
     if conf.is_empty() {
         return None;
     }
+    // Check if value is empty string
+    if conf[0].value.is_empty() {
+        return None;
+    }
     // return first entry
     return Some(conf[0].clone());
 }
@@ -183,6 +187,10 @@ pub async fn get_conf_entry_nodes(config: &RpcConfig) -> Option<TorrcEntry> {
     let conf = get_torrc_value(config, &["EntryNodes".to_string()]).await;
     info!("EntryNodes conf: {:?}", conf);
     if conf.is_empty() {
+        return None;
+    }
+    // Check if value is empty string
+    if conf[0].value.is_empty() {
         return None;
     }
     // return first entry
