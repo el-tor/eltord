@@ -83,7 +83,7 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
     client_info!("Tor ready to build circuits.");
 
     let lightning_wallet = match crate::lightning::load_wallet(&rpc_config).await {
-        Ok(wallet) => wallet,
+        Ok(wallet) => std::sync::Arc::new(wallet),
         Err(e) => {
             client_warn!("Failed to load Lightning wallet: {}. Client will continue without Lightning functionality.", e);
             client_warn!("To fix this, update the PaymentLightningNodeConfig in your torrc file with valid Lightning node credentials");
@@ -111,14 +111,28 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
         return false; // Retry immediately without waiting
     }
 
-    // TODO backup circuit
-    // let backup_selected_relays = simple_relay_selection_algo(&rpc_config).await.unwrap();
+    // 2b. Build backup circuit with different relays
+    client_info!("Selecting relays for backup circuit...");
+    let mut backup_selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config)
+        .await
+        .unwrap();
+    
+    if backup_selected_relays.is_empty() {
+        client_warn!("No relays found for backup circuit. Continuing with primary circuit only.");
+    } else {
+        client_info!("Backup circuit relays: {:?}", &backup_selected_relays);
+    }
 
     // 3. Handshake Fee (simple algo is 0, so skip for now)
 
     // 4. Pregenerate payment id hashes for the circuit
     // TODO for bolt11 get a real payment hash from the invoice via the lightning node, like LND
     circuit::pregen_extend_paid_circuit_hashes(&mut selected_relays, payment_rounds);
+    
+    // 4b. Pregenerate payment id hashes for backup circuit
+    if !backup_selected_relays.is_empty() {
+        circuit::pregen_extend_paid_circuit_hashes(&mut backup_selected_relays, payment_rounds);
+    }
 
     // 5. Circuit build
     // EXTENDPAIDCIRCUIT
@@ -136,32 +150,116 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
         .await
         .unwrap();
 
-    // 6. Init Payments Ledger
-    payments_sent_ledger::init_payments_sent_ledger(&selected_relays, &circuit_id);
+    // 5b. Build backup circuit if we have backup relays selected
+    let backup_circuit_id = if !backup_selected_relays.is_empty() {
+        client_info!("Building backup circuit...");
+        match circuit::build_circuit(&rpc_config, &backup_selected_relays).await {
+            Ok(backup_id) => {
+                client_info!("Created backup Circuit with ID: {}", backup_id);
+                client_info!("Waiting for backup circuit {} to be fully built...", backup_id);
+                match wait_for_circuit_ready(&rpc_config, &backup_id, 30).await {
+                    Ok(_) => {
+                        client_info!("✅ Backup circuit {} is BUILT and ready!", backup_id);
+                        Some(backup_id)
+                    }
+                    Err(e) => {
+                        client_warn!("Backup circuit {} failed to build: {}. Continuing with primary only.", backup_id, e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                client_warn!("Failed to build backup circuit: {}. Continuing with primary only.", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    // 7. Start Payments Loop and client bandwidth watcher, Circuit Kill. Repeat
+    // 6. Init Payments Ledger for both circuits
+    payments_sent_ledger::init_payments_sent_ledger(&selected_relays, &circuit_id);
+    if let Some(ref backup_id) = backup_circuit_id {
+        payments_sent_ledger::init_payments_sent_ledger(&backup_selected_relays, backup_id);
+    }
+
+    // 7. Start Payments Loop with Round-Robin Load Balancing
     let socks_port = crate::rpc::get_socks_port(rpc_config).await;
     client_info!("Using SOCKS port {} for bandwidth testing", socks_port);
-    client_info!("✅ Circuit is BUILT and ready for traffic!");
+    client_info!("✅ Primary circuit {} is BUILT and ready for traffic!", circuit_id);
+    if backup_circuit_id.is_some() {
+        client_info!("✅ Backup circuit is also BUILT - using ROUND-ROBIN load balancing!");
+    }
     client_info!("Connect your browser via socks5 on (lookup your port from the torrc file) default port {}", socks_port);
     
-    let payment_loop_result = payments_loop::start_payments_loop(
-        rpc_config,
-        &selected_relays,
-        &circuit_id,
-        lightning_wallet,
-        socks_port,
-    )
-    .await;
-    
-    match payment_loop_result {
-        Ok(_) => {
-            client_info!("Payments loop completed successfully for circuit: {}", circuit_id);
-            true // Wait before next iteration on success
+    // Run circuits in round-robin fashion
+    if let Some(backup_id) = backup_circuit_id {
+        // Both circuits available - use round-robin for both STREAMS and PAYMENTS
+        client_info!("🔄 Starting round-robin load balancing between circuits {} and {}", circuit_id, backup_id);
+        
+        // Start stream attachment monitor for true load balancing
+        client_info!("🌊 Starting stream attachment monitor for round-robin stream distribution...");
+        let _stream_monitor_handle = match crate::rpc::start_stream_attachment_monitor(
+            rpc_config.clone(),
+            circuit_id.clone(),
+            backup_id.clone(),
+        )
+        .await
+        {
+            Ok(handle) => {
+                client_info!("✅ Stream attachment monitor started - streams will be distributed 50/50 across both circuits");
+                Some(handle)
+            }
+            Err(e) => {
+                client_warn!("⚠️  Failed to start stream attachment monitor: {}", e);
+                client_warn!("⚠️  Falling back to Tor's automatic stream assignment");
+                None
+            }
+        };
+        
+        let result = payments_loop::start_payments_loop_round_robin(
+            rpc_config,
+            &selected_relays,
+            &circuit_id,
+            &backup_selected_relays,
+            &backup_id,
+            lightning_wallet,
+            socks_port,
+        )
+        .await;
+        
+        match result {
+            Ok(_) => {
+                client_info!("✅ Round-robin payment loops completed successfully!");
+                true
+            }
+            Err(e) => {
+                client_warn!("❌ Round-robin payment loops failed: {}", e);
+                false
+            }
         }
-        Err(e) => {
-            client_warn!("Payments loop encountered an error for circuit {}: {}", circuit_id, e);
-            false // Retry immediately on error
+    } else {
+        // Only primary circuit available
+        client_info!("Running primary circuit only (no backup available)");
+        
+        let payment_loop_result = payments_loop::start_payments_loop(
+            rpc_config,
+            &selected_relays,
+            &circuit_id,
+            lightning_wallet,
+            socks_port,
+        )
+        .await;
+        
+        match payment_loop_result {
+            Ok(_) => {
+                client_info!("Payments loop completed successfully for circuit: {}", circuit_id);
+                true
+            }
+            Err(e) => {
+                client_warn!("Primary circuit {} failed: {}", circuit_id, e);
+                false
+            }
         }
     }
 

@@ -5,6 +5,197 @@ use lni::{LightningNode, PayInvoiceResponse};
 use log::{error, info, warn};
 use std::env;
 
+/// Runs payment loops on two circuits in round-robin fashion.
+/// Alternates between primary and backup circuits for each payment round.
+/// This provides load balancing and redundancy.
+pub async fn start_payments_loop_round_robin(
+    rpc_config: &crate::types::RpcConfig,
+    primary_relays: &Vec<Relay>,
+    primary_circuit_id: &String,
+    backup_relays: &Vec<Relay>,
+    backup_circuit_id: &String,
+    wallet: std::sync::Arc<Box<dyn LightningNode + Send + Sync>>,
+    socks_port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db = match Db::new("data/payments_sent.json".to_string()) {
+        Ok(db) => db,
+        Err(e) => {
+            error!("Failed to load payments database: {}. Creating backup and starting fresh...", e);
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let backup_path = format!("data/payments_sent.json.backup_{}", timestamp);
+            if let Err(backup_err) = std::fs::copy("data/payments_sent.json", &backup_path) {
+                warn!("Could not create backup: {}", backup_err);
+            } else {
+                info!("Corrupted database backed up to: {}", backup_path);
+            }
+            std::fs::write("data/payments_sent.json", "[]")?;
+            Db::new("data/payments_sent.json".to_string())?
+        }
+    };
+    
+    let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
+        .unwrap_or("0".to_string())
+        .parse()
+        .unwrap();
+    
+    let mut round = 1;
+    let max_rounds = 10;
+    
+    info!("🔄 Starting round-robin payment loop with {} rounds", max_rounds);
+    info!("   Primary circuit: {}", primary_circuit_id);
+    info!("   Backup circuit: {}", backup_circuit_id);
+    
+    while round <= max_rounds {
+        // Determine which circuit to use for this round (alternate between them)
+        let (current_relays, current_circuit_id, circuit_name) = if round % 2 == 1 {
+            (primary_relays, primary_circuit_id, "PRIMARY")
+        } else {
+            (backup_relays, backup_circuit_id, "BACKUP")
+        };
+        
+        info!(
+            "🥊 Round {}/{} - Using {} circuit {} 🥊",
+            round, max_rounds, circuit_name, current_circuit_id
+        );
+        
+        // Check stream capacity and warn if approaching limit
+        let (total_streams, needs_more_circuits) = bandwidth_test::check_stream_capacity(rpc_config).await;
+        if needs_more_circuits {
+            warn!("⚠️  WARNING: {} total streams detected - approaching 256/circuit limit!", total_streams);
+            warn!("🔄 Consider building additional circuits to distribute load");
+        }
+        
+        // Check bandwidth before paying for this round
+        if !bandwidth_test::has_bandwidth(socks_port).await {
+            warn!("❌ SOCKS bandwidth check failed before payment round {} on {} circuit.", round, circuit_name);
+            warn!("🔄 FAILOVER: Switching to {} circuit for this round", if circuit_name == "PRIMARY" { "BACKUP" } else { "PRIMARY" });
+            
+            // Switch to the other circuit for this round
+            let (failover_relays, failover_name) = if circuit_name == "PRIMARY" {
+                (backup_relays, "BACKUP")
+            } else {
+                (primary_relays, "PRIMARY")
+            };
+            
+            // Try the failover circuit
+            if !bandwidth_test::has_bandwidth(socks_port).await {
+                warn!("❌ FAILOVER FAILED: {} circuit also has no bandwidth. Both circuits down.", failover_name);
+                return Err("Both circuits have lost bandwidth".into());
+            }
+            
+            info!("✅ FAILOVER SUCCESS: {} circuit has bandwidth, continuing with it", failover_name);
+            
+            // Process payments on failover circuit for this round
+            for relay in failover_relays.iter() {
+                let payment_id_hash = match &relay.payment_id_hashes_10 {
+                    Some(hashes) => hashes[round - 1].clone(),
+                    None => return Err("Payment ID hashes not found".into()),
+                };
+                let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
+                    Ok(payment) => payment.unwrap(),
+                    Err(_) => return Err("Payment for the circuit not found".into()),
+                };
+                
+                if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
+                    info!(
+                        "Payment amount is zero, skipping payment id: {:?}",
+                        payment.payment_id
+                    );
+                } else if !is_round_expired(&payment) {
+                    let pay_resp = pay_relay(&**wallet, &payment).await;
+                    match pay_resp {
+                        Ok(pay_resp) => {
+                            payment.payment_hash = Some(pay_resp.payment_hash);
+                            payment.preimage = Some(pay_resp.preimage);
+                            payment.fee = Some(pay_resp.fee_msats);
+                            payment.paid = true;
+                            db.update_payment(payment).unwrap();
+                        }
+                        Err(_) => {
+                            warn!("Payment failed for payment id: {:?} on {} circuit (failover)", payment.payment_id, failover_name);
+                            payment.has_error = true;
+                            db.update_payment(payment).unwrap();
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
+                } else {
+                    warn!("Round expired for {} circuit (failover)", failover_name);
+                    return Err(format!("Round expired on {} circuit during failover", failover_name).into());
+                }
+            }
+            
+            // Move to next round after successful failover
+            round += 1;
+            
+            // Wait for next round with monitoring
+            if round <= max_rounds {
+                if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
+                    warn!("❌ Bandwidth lost during round wait after failover.");
+                    return Err("Bandwidth lost during round wait after failover".into());
+                }
+            }
+            continue;
+        }
+        info!("🛜  SOCKS bandwidth check passed before payment round {} on {} circuit ({} total streams)", round, circuit_name, total_streams);
+        
+        // Process payments for all relays in current circuit
+        for relay in current_relays.iter() {
+            let payment_id_hash = match &relay.payment_id_hashes_10 {
+                Some(hashes) => hashes[round - 1].clone(),
+                None => return Err("Payment ID hashes not found".into()),
+            };
+            let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
+                Ok(payment) => payment.unwrap(),
+                Err(_) => return Err("Payment for the circuit not found".into()),
+            };
+            
+            // Skip if zero amount or no invoice
+            if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
+                info!(
+                    "Payment amount is zero, skipping payment id: {:?}",
+                    payment.payment_id
+                );
+            } else if !is_round_expired(&payment) {
+                let pay_resp = pay_relay(&**wallet, &payment).await;
+                match pay_resp {
+                    Ok(pay_resp) => {
+                        payment.payment_hash = Some(pay_resp.payment_hash);
+                        payment.preimage = Some(pay_resp.preimage);
+                        payment.fee = Some(pay_resp.fee_msats);
+                        payment.paid = true;
+                        db.update_payment(payment).unwrap();
+                    }
+                    Err(_) => {
+                        warn!("Payment failed for payment id: {:?} on {} circuit", payment.payment_id, circuit_name);
+                        payment.has_error = true;
+                        db.update_payment(payment).unwrap();
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
+            } else {
+                warn!("Round expired for {} circuit", circuit_name);
+                return Err(format!("Round expired on {} circuit", circuit_name).into());
+            }
+        }
+        
+        round += 1;
+        
+        // Wait for next round with bandwidth monitoring
+        if round <= max_rounds {
+            if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
+                warn!("❌ Bandwidth lost during round wait on {} circuit.", circuit_name);
+                return Err("Bandwidth lost during round wait".into());
+            }
+        }
+    }
+    
+    info!("✅ Round-robin payment loops completed successfully for both circuits!");
+    Ok(())
+}
+
 // is round expired
 // if no then do bandwidth test
 // if good then pay relay
@@ -13,9 +204,9 @@ pub async fn start_payments_loop(
     rpc_config: &crate::types::RpcConfig,
     relays: &Vec<Relay>,
     circuit_id: &String,
-    wallet: Box<dyn LightningNode + Send + Sync>,
+    wallet: std::sync::Arc<Box<dyn LightningNode + Send + Sync>>,
     socks_port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let db = match Db::new("data/payments_sent.json".to_string()) {
         Ok(db) => db,
         Err(e) => {
@@ -92,7 +283,7 @@ pub async fn start_payments_loop(
                     payment.payment_id
                 );
             } else if !is_round_expired(&payment) {
-                let pay_resp = pay_relay(&wallet, &payment).await;
+                let pay_resp = pay_relay(&**wallet, &payment).await;
                 match pay_resp {
                     Ok(pay_resp) => {
                         payment.payment_hash = Some(pay_resp.payment_hash);
@@ -226,9 +417,9 @@ async fn wait_for_next_round_with_monitoring(
 }
 
 async fn pay_relay(
-    wallet: &Box<dyn LightningNode + Send + Sync>,
+    wallet: &(dyn LightningNode + Send + Sync),
     payment: &Payment,
-) -> Result<PayInvoiceResponse, Box<dyn std::error::Error>> {
+) -> Result<PayInvoiceResponse, Box<dyn std::error::Error + Send + Sync>> {
     let amount_msats = payment.amount_msat;
     info!(
         "Paying {} sats relay: {:?} with payment id: {:?}",

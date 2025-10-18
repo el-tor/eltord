@@ -35,6 +35,9 @@ Eltord can now be used both as a standalone binary and as a library in other Rus
 **🎛️ Process Management**
 Eltord now includes a process manager for external applications. See the [manager example](./examples/manager.rs) for controlling eltord from external applications.
 
+**🔄 Round-Robin Load Balancing**
+The client automatically builds backup circuits and distributes traffic using round-robin load balancing for higher throughput and redundancy. See [BACKUP_CIRCUIT.md](./docs/BACKUP_CIRCUIT.md) for details on how dual-circuit operation works.
+
 
 ### As a Binary
 
