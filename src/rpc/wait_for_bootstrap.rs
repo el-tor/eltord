@@ -47,7 +47,7 @@ pub async fn wait_for_tor_bootstrap(
     let timeout_duration = Duration::from_secs(timeout_secs);
     let poll_interval = Duration::from_millis(500); // Poll every 500ms
     
-    let mut bootstrap_complete = false;
+    let mut last_logged_milestone = 0u32; // Track last logged milestone to avoid duplicates
     
     loop {
         // Check if timeout has been reached
@@ -77,11 +77,20 @@ pub async fn wait_for_tor_bootstrap(
                 // Parse the response to extract PROGRESS value
                 // Expected format: "250-status/bootstrap-phase=NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\""
                 if let Some(progress) = extract_bootstrap_progress(&response) {
-                    if progress < 100 {
-                        info!("Tor bootstrap progress: {}%", progress);
-                    } else if !bootstrap_complete {
-                        info!("Tor bootstrap progress: 100%");
-                        bootstrap_complete = true;
+                    // Log major milestones: 5%, 25%, 50%, 75%, 95%
+                    let milestone = match progress {
+                        0..=4 => 0,
+                        5..=24 => 5,
+                        25..=49 => 25,
+                        50..=74 => 50,
+                        75..=94 => 75,
+                        95.. => 95,
+                    };
+                    
+                    // Only log when we reach a new milestone
+                    if milestone > last_logged_milestone {
+                        info!("🔄 Bootstrapping {}%", milestone);
+                        last_logged_milestone = milestone;
                     }
                     
                     // At 95% (circuit_create), Tor has loaded enough directory info to build circuits.

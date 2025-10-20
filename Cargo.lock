@@ -1746,7 +1746,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "lni"
 version = "0.1.0"
-source = "git+https://github.com/lightning-node-interface/lni.git?rev=c6b6e46d8b4231f7c1cd57ac64aa218d211eee8b#c6b6e46d8b4231f7c1cd57ac64aa218d211eee8b"
+source = "git+https://github.com/lightning-node-interface/lni.git?rev=ebbc09c297628a81b483652b8076856ead8bb448#ebbc09c297628a81b483652b8076856ead8bb448"
 dependencies = [
  "async-std",
  "async-trait",

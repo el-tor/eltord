@@ -197,26 +197,7 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
         // Both circuits available - use round-robin for both STREAMS and PAYMENTS
         client_info!("🔄 Starting round-robin load balancing between circuits {} and {}", circuit_id, backup_id);
         
-        // Start stream attachment monitor for true load balancing
-        client_info!("🌊 Starting stream attachment monitor for round-robin stream distribution...");
-        let _stream_monitor_handle = match crate::rpc::start_stream_attachment_monitor(
-            rpc_config.clone(),
-            circuit_id.clone(),
-            backup_id.clone(),
-        )
-        .await
-        {
-            Ok(handle) => {
-                client_info!("✅ Stream attachment monitor started - streams will be distributed 50/50 across both circuits");
-                Some(handle)
-            }
-            Err(e) => {
-                client_warn!("⚠️  Failed to start stream attachment monitor: {}", e);
-                client_warn!("⚠️  Falling back to Tor's automatic stream assignment");
-                None
-            }
-        };
-        
+        // Pass circuit IDs to payment loop - it will start stream monitor AFTER first bandwidth check
         let result = payments_loop::start_payments_loop_round_robin(
             rpc_config,
             &selected_relays,

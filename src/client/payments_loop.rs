@@ -17,38 +17,18 @@ pub async fn start_payments_loop_round_robin(
     wallet: std::sync::Arc<Box<dyn LightningNode + Send + Sync>>,
     socks_port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let db = match Db::new("data/payments_sent.json".to_string()) {
-        Ok(db) => db,
-        Err(e) => {
-            error!("Failed to load payments database: {}. Creating backup and starting fresh...", e);
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let backup_path = format!("data/payments_sent.json.backup_{}", timestamp);
-            if let Err(backup_err) = std::fs::copy("data/payments_sent.json", &backup_path) {
-                warn!("Could not create backup: {}", backup_err);
-            } else {
-                info!("Corrupted database backed up to: {}", backup_path);
-            }
-            std::fs::write("data/payments_sent.json", "[]")?;
-            Db::new("data/payments_sent.json".to_string())?
-        }
-    };
-    
-    let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
-        .unwrap_or("0".to_string())
-        .parse()
-        .unwrap();
-    
-    let mut round = 1;
+    let db = load_or_create_db()?;
+    let rate_limit_delay = get_rate_limit_delay();
     let max_rounds = 10;
     
     info!("🔄 Starting round-robin payment loop with {} rounds", max_rounds);
     info!("   Primary circuit: {}", primary_circuit_id);
     info!("   Backup circuit: {}", backup_circuit_id);
     
-    while round <= max_rounds {
+    let mut first_bandwidth_check = true; // Track if this is the first successful bandwidth check
+    let mut stream_monitor_started = false; // Track if we've started the stream attachment monitor
+    
+    for round in 1..=max_rounds {
         // Determine which circuit to use for this round (alternate between them)
         let (current_relays, current_circuit_id, circuit_name) = if round % 2 == 1 {
             (primary_relays, primary_circuit_id, "PRIMARY")
@@ -62,11 +42,7 @@ pub async fn start_payments_loop_round_robin(
         );
         
         // Check stream capacity and warn if approaching limit
-        let (total_streams, needs_more_circuits) = bandwidth_test::check_stream_capacity(rpc_config).await;
-        if needs_more_circuits {
-            warn!("⚠️  WARNING: {} total streams detected - approaching 256/circuit limit!", total_streams);
-            warn!("🔄 Consider building additional circuits to distribute load");
-        }
+        check_and_warn_stream_capacity(rpc_config).await;
         
         // Check bandwidth before paying for this round
         if !bandwidth_test::has_bandwidth(socks_port).await {
@@ -88,50 +64,44 @@ pub async fn start_payments_loop_round_robin(
             
             info!("✅ FAILOVER SUCCESS: {} circuit has bandwidth, continuing with it", failover_name);
             
-            // Process payments on failover circuit for this round
-            for relay in failover_relays.iter() {
-                let payment_id_hash = match &relay.payment_id_hashes_10 {
-                    Some(hashes) => hashes[round - 1].clone(),
-                    None => return Err("Payment ID hashes not found".into()),
-                };
-                let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
-                    Ok(payment) => payment.unwrap(),
-                    Err(_) => return Err("Payment for the circuit not found".into()),
-                };
+            // Start stream monitor on first bandwidth check during failover path too
+            if first_bandwidth_check {
+                info!("🔄 Bootstrapping 100%");
+                first_bandwidth_check = false;
                 
-                if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
-                    info!(
-                        "Payment amount is zero, skipping payment id: {:?}",
-                        payment.payment_id
-                    );
-                } else if !is_round_expired(&payment) {
-                    let pay_resp = pay_relay(&**wallet, &payment).await;
-                    match pay_resp {
-                        Ok(pay_resp) => {
-                            payment.payment_hash = Some(pay_resp.payment_hash);
-                            payment.preimage = Some(pay_resp.preimage);
-                            payment.fee = Some(pay_resp.fee_msats);
-                            payment.paid = true;
-                            db.update_payment(payment).unwrap();
+                if !stream_monitor_started {
+                    info!("🌊 Starting stream attachment monitor for round-robin stream distribution...");
+                    match crate::rpc::start_stream_attachment_monitor(
+                        rpc_config.clone(),
+                        primary_circuit_id.clone(),
+                        backup_circuit_id.clone(),
+                    )
+                    .await
+                    {
+                        Ok(_handle) => {
+                            info!("✅ Stream attachment monitor started - streams will be distributed 50/50 across both circuits");
+                            stream_monitor_started = true;
                         }
-                        Err(_) => {
-                            warn!("Payment failed for payment id: {:?} on {} circuit (failover)", payment.payment_id, failover_name);
-                            payment.has_error = true;
-                            db.update_payment(payment).unwrap();
+                        Err(e) => {
+                            warn!("⚠️  Failed to start stream attachment monitor: {}", e);
+                            warn!("⚠️  Falling back to Tor's automatic stream assignment");
                         }
                     }
-                    std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
-                } else {
-                    warn!("Round expired for {} circuit (failover)", failover_name);
-                    return Err(format!("Round expired on {} circuit during failover", failover_name).into());
                 }
             }
             
-            // Move to next round after successful failover
-            round += 1;
+            // Process payments on failover circuit for this round
+            process_payments_for_relays(
+                &db,
+                failover_relays,
+                round,
+                &**wallet,
+                rate_limit_delay,
+                failover_name,
+            ).await?;
             
             // Wait for next round with monitoring
-            if round <= max_rounds {
+            if round < max_rounds {
                 if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
                     warn!("❌ Bandwidth lost during round wait after failover.");
                     return Err("Bandwidth lost during round wait after failover".into());
@@ -139,54 +109,53 @@ pub async fn start_payments_loop_round_robin(
             }
             continue;
         }
-        info!("🛜  SOCKS bandwidth check passed before payment round {} on {} circuit ({} total streams)", round, circuit_name, total_streams);
         
-        // Process payments for all relays in current circuit
-        for relay in current_relays.iter() {
-            let payment_id_hash = match &relay.payment_id_hashes_10 {
-                Some(hashes) => hashes[round - 1].clone(),
-                None => return Err("Payment ID hashes not found".into()),
-            };
-            let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
-                Ok(payment) => payment.unwrap(),
-                Err(_) => return Err("Payment for the circuit not found".into()),
-            };
+        let (total_streams, _) = bandwidth_test::check_stream_capacity(rpc_config).await;
+        
+        // Log "Bootstrapping 100%" on first successful bandwidth check (means SOCKS is fully ready)
+        if first_bandwidth_check {
+            info!("🔄 Bootstrapping 100%");
+            first_bandwidth_check = false;
             
-            // Skip if zero amount or no invoice
-            if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
-                info!(
-                    "Payment amount is zero, skipping payment id: {:?}",
-                    payment.payment_id
-                );
-            } else if !is_round_expired(&payment) {
-                let pay_resp = pay_relay(&**wallet, &payment).await;
-                match pay_resp {
-                    Ok(pay_resp) => {
-                        payment.payment_hash = Some(pay_resp.payment_hash);
-                        payment.preimage = Some(pay_resp.preimage);
-                        payment.fee = Some(pay_resp.fee_msats);
-                        payment.paid = true;
-                        db.update_payment(payment).unwrap();
+            // NOW it's safe to start the stream attachment monitor
+            // This ensures Tor has working circuits BEFORE we set __LeaveStreamsUnattached=1
+            if !stream_monitor_started {
+                info!("🌊 Starting stream attachment monitor for round-robin stream distribution...");
+                match crate::rpc::start_stream_attachment_monitor(
+                    rpc_config.clone(),
+                    primary_circuit_id.clone(),
+                    backup_circuit_id.clone(),
+                )
+                .await
+                {
+                    Ok(_handle) => {
+                        info!("✅ Stream attachment monitor started - streams will be distributed 50/50 across both circuits");
+                        stream_monitor_started = true;
                     }
-                    Err(_) => {
-                        warn!("Payment failed for payment id: {:?} on {} circuit", payment.payment_id, circuit_name);
-                        payment.has_error = true;
-                        db.update_payment(payment).unwrap();
+                    Err(e) => {
+                        warn!("⚠️  Failed to start stream attachment monitor: {}", e);
+                        warn!("⚠️  Falling back to Tor's automatic stream assignment");
                     }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
-            } else {
-                warn!("Round expired for {} circuit", circuit_name);
-                return Err(format!("Round expired on {} circuit", circuit_name).into());
             }
         }
         
-        round += 1;
+        info!("🛜  SOCKS bandwidth check passed before payment round {} on {} circuit ({} total streams)", round, circuit_name, total_streams);
+        
+        // Process payments for all relays in current circuit
+        process_payments_for_relays(
+            &db,
+            current_relays,
+            round,
+            &**wallet,
+            rate_limit_delay,
+            circuit_name,
+        ).await?;
         
         // Wait for next round with bandwidth monitoring
-        if round <= max_rounds {
+        if round < max_rounds {
             if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
-                warn!("❌ Bandwidth lost during round wait on {} circuit.", circuit_name);
+                warn!("❌ Bandwidth lost during round wait.");
                 return Err("Bandwidth lost during round wait".into());
             }
         }
@@ -196,10 +165,6 @@ pub async fn start_payments_loop_round_robin(
     Ok(())
 }
 
-// is round expired
-// if no then do bandwidth test
-// if good then pay relay
-// wait for next round
 pub async fn start_payments_loop(
     rpc_config: &crate::types::RpcConfig,
     relays: &Vec<Relay>,
@@ -207,11 +172,65 @@ pub async fn start_payments_loop(
     wallet: std::sync::Arc<Box<dyn LightningNode + Send + Sync>>,
     socks_port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let db = match Db::new("data/payments_sent.json".to_string()) {
-        Ok(db) => db,
+    let db = load_or_create_db()?;
+    let rate_limit_delay = get_rate_limit_delay();
+    let max_rounds = 10;
+    
+    let mut first_bandwidth_check = true; // Track if this is the first successful bandwidth check
+    
+    for round in 1..=max_rounds {
+        info!(
+            "🥊 Round {:?} - Starting payments loop for circuit: {:?} 🥊",
+            round, circuit_id
+        );
+        
+        // Check stream capacity and warn if approaching limit
+        check_and_warn_stream_capacity(rpc_config).await;
+        
+        // Check bandwidth before paying for this round (using real SOCKS proxy test)
+        if !bandwidth_test::has_bandwidth(socks_port).await {
+            warn!("❌ SOCKS bandwidth check failed before payment round {}. Stopping payments and rebuilding circuit.", round);
+            return Err("Bandwidth lost before payment".into());
+        }
+        
+        let (total_streams, _) = bandwidth_test::check_stream_capacity(rpc_config).await;
+        
+        // Log "Bootstrapping 100%" on first successful bandwidth check (means SOCKS is fully ready)
+        if first_bandwidth_check {
+            info!("🔄 Bootstrapping 100%");
+            first_bandwidth_check = false;
+        }
+        
+        info!("🛜  SOCKS bandwidth check passed before payment round {} ({} total streams)", round, total_streams);
+        
+        // Process payments for all relays
+        process_payments_for_relays(
+            &db,
+            relays,
+            round,
+            &**wallet,
+            rate_limit_delay,
+            "SINGLE",
+        ).await?;
+        
+        // Wait for next round with bandwidth monitoring
+        if round < max_rounds {
+            if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
+                warn!("❌ Bandwidth lost during round wait. Stopping payments and rebuilding circuit.");
+                return Err("Bandwidth lost".into());
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Load the payments database or create a fresh one if corrupted
+fn load_or_create_db() -> Result<Db, Box<dyn std::error::Error + Send + Sync>> {
+    match Db::new("data/payments_sent.json".to_string()) {
+        Ok(db) => Ok(db),
         Err(e) => {
             error!("Failed to load payments database: {}. Creating backup and starting fresh...", e);
-            // Backup the corrupted file
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -222,99 +241,85 @@ pub async fn start_payments_loop(
             } else {
                 info!("Corrupted database backed up to: {}", backup_path);
             }
-            // Start with empty database
             std::fs::write("data/payments_sent.json", "[]")?;
-            Db::new("data/payments_sent.json".to_string())?
-        }
-    };
-    let mut round = 1;
-    let rate_limit_delay: u64 = env::var("RATE_LIMIT_SECONDS")
-        .unwrap_or("0".to_string())
-        .parse()
-        .unwrap();
-    
-    // TODO Run initial bandwidth test before starting payment rounds
-    // info!("🔍 Running initial bandwidth test before payments...");
-    // match bandwidth_test::bandwidth_test(socks_port).await {
-    //     Ok((latency_ms, speed_kbps)) => {
-    //         info!("📊 Initial bandwidth test: {:.1} KB/s ({}ms for 100KB)", speed_kbps, latency_ms);
-    //         // TODO set a configurable minimum speed threshold and abort if below
-    //     }
-    //     Err(e) => {
-    //         warn!("❌ Initial bandwidth test failed: {}. Circuit may not be ready.", e);
-    //     }
-    // }
-    
-    while round <= 10 {
-        info!(
-            "🥊 Round {:?} - Starting payments loop for circuit: {:?} 🥊",
-            round, circuit_id
-        );
-        
-        // Check stream capacity and warn if approaching limit
-        let (total_streams, needs_more_circuits) = bandwidth_test::check_stream_capacity(rpc_config).await;
-        if needs_more_circuits {
-            warn!("⚠️  WARNING: {} total streams detected - approaching 256/circuit limit!", total_streams);
-            warn!("🔄 Consider building additional circuits to distribute load");
-            warn!("💡 TIP: Call EXTENDPAIDCIRCUIT to build more circuits");
-        }
-        
-        // Check bandwidth before paying for this round (using real SOCKS proxy test)
-        if !bandwidth_test::has_bandwidth(socks_port).await {
-            warn!("❌ SOCKS bandwidth check failed before payment round {}. Stopping payments and rebuilding circuit.", round);
-            return Err("Bandwidth lost before payment".into());
-        }
-        info!("🛜  SOCKS bandwidth check passed before payment round {} ({} total streams)", round, total_streams);
-        
-        for relay in relays.iter() {
-            let payment_id_hash = match &relay.payment_id_hashes_10 {
-                Some(hashes) => hashes[round - 1].clone(),
-                None => return Err("Payment ID hashes not found".into()),
-            };
-            let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
-                Ok(payment) => payment.unwrap(),
-                Err(_) => return Err("Payment for the circuit not found".into()),
-            };
-            // dbg!(payment.clone());
-            // if zero amount, skip
-            if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
-                info!(
-                    "Payment amount is zero, skipping payment id: {:?}",
-                    payment.payment_id
-                );
-            } else if !is_round_expired(&payment) {
-                let pay_resp = pay_relay(&**wallet, &payment).await;
-                match pay_resp {
-                    Ok(pay_resp) => {
-                        payment.payment_hash = Some(pay_resp.payment_hash);
-                        payment.preimage = Some(pay_resp.preimage);
-                        payment.fee = Some(pay_resp.fee_msats);
-                        payment.paid = true;
-                        db.update_payment(payment).unwrap();
-                    }
-                    Err(_) => {
-                        warn!("Payment failed for payment id: {:?}", payment.payment_id);
-                        payment.has_error = true;
-                        db.update_payment(payment).unwrap();
-                    }
-                }
-                std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
-            } else {
-                warn!("Kill circuit round is expired");
-                kill_circuit();
-                break;
-            }
-        }
-        round += 1;
-        
-        // Wait for next round with bandwidth monitoring every 2 seconds
-        if round <= 10 {
-            if !wait_for_next_round_with_monitoring(rpc_config, socks_port, 45).await {
-                warn!("❌ Bandwidth lost during round wait. Stopping payments and rebuilding circuit.");
-                return Err("Bandwidth lost".into());
-            }
+            Ok(Db::new("data/payments_sent.json".to_string())?)
         }
     }
+}
+
+/// Get the rate limit delay from environment variable
+fn get_rate_limit_delay() -> u64 {
+    env::var("RATE_LIMIT_SECONDS")
+        .unwrap_or("0".to_string())
+        .parse()
+        .unwrap()
+}
+
+/// Check stream capacity and warn if approaching limit
+async fn check_and_warn_stream_capacity(rpc_config: &crate::types::RpcConfig) {
+    let (total_streams, needs_more_circuits) = bandwidth_test::check_stream_capacity(rpc_config).await;
+    if needs_more_circuits {
+        warn!("⚠️  WARNING: {} total streams detected - approaching 256/circuit limit!", total_streams);
+        warn!("🔄 Consider building additional circuits to distribute load");
+        warn!("💡 TIP: Call EXTENDPAIDCIRCUIT to build more circuits");
+    }
+}
+
+/// Process payments for a set of relays in a given round
+async fn process_payments_for_relays(
+    db: &Db,
+    relays: &Vec<Relay>,
+    round: usize,
+    wallet: &(dyn LightningNode + Send + Sync),
+    rate_limit_delay: u64,
+    circuit_name: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for relay in relays.iter() {
+        let payment_id_hash = match &relay.payment_id_hashes_10 {
+            Some(hashes) => hashes[round - 1].clone(),
+            None => return Err("Payment ID hashes not found".into()),
+        };
+        
+        let mut payment = match db.lookup_payment_by_id(payment_id_hash) {
+            Ok(Some(payment)) => payment,
+            Ok(None) => return Err("Payment not found in database".into()),
+            Err(_) => return Err("Payment for the circuit not found".into()),
+        };
+        
+        // Skip if zero amount or no invoice
+        if payment.amount_msat == 0 || (payment.bolt12_offer.is_none() && payment.bolt11_invoice.is_none()) {
+            info!(
+                "Payment amount is zero, skipping payment id: {:?}",
+                payment.payment_id
+            );
+            continue;
+        }
+        
+        // Check if round is expired
+        if is_round_expired(&payment) {
+            warn!("Round expired for {} circuit", circuit_name);
+            return Err(format!("Round expired on {} circuit", circuit_name).into());
+        }
+        
+        // Attempt payment
+        match pay_relay(wallet, &payment).await {
+            Ok(pay_resp) => {
+                payment.payment_hash = Some(pay_resp.payment_hash);
+                payment.preimage = Some(pay_resp.preimage);
+                payment.fee = Some(pay_resp.fee_msats);
+                payment.paid = true;
+                db.update_payment(payment)?;
+            }
+            Err(_) => {
+                warn!("Payment failed for payment id: {:?} on {} circuit", payment.payment_id, circuit_name);
+                payment.has_error = true;
+                db.update_payment(payment)?;
+            }
+        }
+        
+        std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
+    }
+    
     Ok(())
 }
 
@@ -324,10 +329,7 @@ fn is_round_expired(payment: &Payment) -> bool {
         .unwrap_or("15".to_string())
         .parse()
         .unwrap();
-    if (payment.expires_at - chrono::Utc::now().timestamp()) < expiry_padding {
-        return true;
-    }
-    false
+    (payment.expires_at - chrono::Utc::now().timestamp()) < expiry_padding
 }
 
 /// Waits for the next payment round while monitoring bandwidth every 2 seconds.
@@ -457,5 +459,3 @@ async fn pay_relay(
 
     // TODO Retry strategy
 }
-
-fn kill_circuit() {}

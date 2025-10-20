@@ -356,7 +356,7 @@ impl lni::types::OnInvoiceEventCallback for OnLnInvoiceEventCallback {
 mod tests {
     use super::*;
     use lni::{LightningNode, ApiError};
-    use lni::types::{OnInvoiceEventCallback, CreateInvoiceParams, PayInvoiceParams, OnInvoiceEventParams, NodeInfo, PayInvoiceResponse, LookupInvoiceParams, ListTransactionsParams, PayCode};
+    use lni::types::{OnInvoiceEventCallback, CreateInvoiceParams, PayInvoiceParams, OnInvoiceEventParams, NodeInfo, PayInvoiceResponse, LookupInvoiceParams, ListTransactionsParams, Offer};
     use tokio::time::{Duration, Instant};
 
     // Mock LightningNode for testing
@@ -394,18 +394,31 @@ mod tests {
             })
         }
 
-        async fn get_offer(&self, _offer_id: Option<String>) -> Result<PayCode, ApiError> {
-            Ok(PayCode {
+        async fn create_offer(&self, params: lni::CreateOfferParams) -> Result<Offer, ApiError> {
+            Ok(Offer {
+                bolt12: "test_offer".to_string(),
+                offer_id: "test_offer_id".to_string(),
+                label: params.description,
+                active: Some(true),
+                single_use: Some(false),
+                used: Some(false),
+                amount_msats: params.amount_msats,
+            })
+        }
+
+        async fn get_offer(&self, _offer_id: Option<String>) -> Result<Offer, ApiError> {
+            Ok(Offer {
                 bolt12: "test_offer".to_string(),
                 offer_id: "test_offer_id".to_string(),
                 label: Some("test_label".to_string()),
                 active: Some(true),
                 single_use: Some(false),
                 used: Some(false),
+                amount_msats: None,
             })
         }
 
-        async fn list_offers(&self, _offer_id: Option<String>) -> Result<Vec<PayCode>, ApiError> {
+        async fn list_offers(&self, _offer_id: Option<String>) -> Result<Vec<Offer>, ApiError> {
             Ok(vec![])
         }
 
