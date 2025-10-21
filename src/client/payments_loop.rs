@@ -317,7 +317,7 @@ async fn process_payments_for_relays(
             }
         }
         
-        std::thread::sleep(std::time::Duration::from_secs(rate_limit_delay));
+        tokio::time::sleep(tokio::time::Duration::from_secs(rate_limit_delay)).await;
     }
     
     Ok(())

@@ -97,9 +97,13 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
         .unwrap();
 
     // 2. Relay Descriptor Lookup
-    let mut selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config)
-        .await
-        .unwrap();
+    let mut selected_relays = match select_relay_algo::simple_relay_selection_algo(&rpc_config).await {
+        Ok(relays) => relays,
+        Err(e) => {
+            client_warn!("Failed to select relays: {}. Retrying...", e);
+            return false; // Retry immediately
+        }
+    };
     client_info!(
         "Build circuit EXTENDPAIDCIRCUIT with these selected relays"
     );
@@ -113,9 +117,13 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
 
     // 2b. Build backup circuit with different relays
     client_info!("Selecting relays for backup circuit...");
-    let mut backup_selected_relays = select_relay_algo::simple_relay_selection_algo(&rpc_config)
-        .await
-        .unwrap();
+    let mut backup_selected_relays = match select_relay_algo::simple_relay_selection_algo(&rpc_config).await {
+        Ok(relays) => relays,
+        Err(e) => {
+            client_warn!("Failed to select backup relays: {}. Continuing with primary circuit only.", e);
+            Vec::new() // Continue with empty backup
+        }
+    };
     
     if backup_selected_relays.is_empty() {
         client_warn!("No relays found for backup circuit. Continuing with primary circuit only.");
@@ -146,9 +154,10 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
     // but SOCKS connections will fail until the circuit reaches BUILT state.
     // Circuit building can take 2-10 seconds for a 3-hop circuit.
     client_info!("Waiting for circuit {} to be fully built...", circuit_id);
-    wait_for_circuit_ready(&rpc_config, &circuit_id, 30)
-        .await
-        .unwrap();
+    if let Err(e) = wait_for_circuit_ready(&rpc_config, &circuit_id, 30).await {
+        client_warn!("Primary circuit {} failed to build: {}. Retrying...", circuit_id, e);
+        return false; // Retry immediately
+    }
 
     // 5b. Build backup circuit if we have backup relays selected
     let backup_circuit_id = if !backup_selected_relays.is_empty() {

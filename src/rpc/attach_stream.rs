@@ -37,14 +37,20 @@ async fn enable_manual_stream_attachment(
     
     let response = match rpc_client(config).await {
         Ok(r) => r,
-        Err(e) => return Err(format!("RPC call failed: {}", e).into()),
+        Err(e) => return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("RPC call failed: {}", e)
+        ))),
     };
     
     if response.contains("250 OK") {
         info!("✅ Manual stream attachment enabled");
         Ok(())
     } else {
-        Err(format!("Failed to enable manual stream attachment: {}", response).into())
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to enable manual stream attachment: {}", response)
+        )))
     }
 }
 
@@ -54,29 +60,40 @@ async fn stream_attachment_loop(
     primary_circuit_id: &str,
     backup_circuit_id: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Connect to control port
+        // Connect to control port
     let mut stream = TcpStream::connect(&rpc_config.addr).await?;
     
-    // Authenticate
-    if let Some(password) = &rpc_config.rpc_password {
-        stream.write_all(format!("AUTHENTICATE \"{}\"\r\n", password).as_bytes()).await?;
-        let mut reader = BufReader::new(&mut stream);
-        let mut auth_response = String::new();
-        reader.read_line(&mut auth_response).await?;
-        
-        if !auth_response.contains("250 OK") {
-            return Err(format!("Authentication failed: {}", auth_response).into());
-        }
+    // Authenticate (always required by Tor control protocol)
+    let auth_command = if let Some(password) = &rpc_config.rpc_password {
+        format!("AUTHENTICATE \"{}\"\r\n", password)
+    } else {
+        "AUTHENTICATE\r\n".to_string()
+    };
+    
+    stream.write_all(auth_command.as_bytes()).await?;
+    
+    // Create reader and check authentication response
+    let mut reader = BufReader::new(stream);
+    let mut auth_response = String::new();
+    reader.read_line(&mut auth_response).await?;
+    
+    if !auth_response.contains("250 OK") {
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("Authentication failed: {}", auth_response)
+        )));
     }
     
     // Subscribe to STREAM events
-    stream.write_all(b"SETEVENTS STREAM\r\n").await?;
-    let mut reader = BufReader::new(stream);
+    reader.get_mut().write_all(b"SETEVENTS STREAM\r\n").await?;
     let mut event_response = String::new();
     reader.read_line(&mut event_response).await?;
     
     if !event_response.contains("250 OK") {
-        return Err(format!("Failed to subscribe to STREAM events: {}", event_response).into());
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to subscribe to STREAM events: {}", event_response)
+        )));
     }
     
     info!("🔄 Stream attachment monitor active - distributing streams across circuits {} and {}", 
@@ -146,12 +163,18 @@ async fn attach_stream_to_circuit(
     
     let response = match rpc_client(config).await {
         Ok(r) => r,
-        Err(e) => return Err(format!("RPC call failed: {}", e).into()),
+        Err(e) => return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("RPC call failed: {}", e)
+        ))),
     };
     
     if response.contains("250 OK") {
         Ok(())
     } else {
-        Err(format!("ATTACHSTREAM failed: {}", response).into())
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("ATTACHSTREAM failed: {}", response)
+        )))
     }
 }

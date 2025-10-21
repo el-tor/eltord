@@ -140,12 +140,10 @@ fn extract_circuit_state(response: &str, circuit_id: &str) -> Option<String> {
     for line in response.lines() {
         // Look for lines starting with the circuit ID
         // Format: "123 BUILT $FP1~relay1,$FP2~relay2 PURPOSE=GENERAL"
-        if line.starts_with(circuit_id) {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                // parts[0] = circuit_id, parts[1] = state
-                return Some(parts[1].to_string());
-            }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && parts[0] == circuit_id {
+            // parts[0] = circuit_id, parts[1] = state
+            return Some(parts[1].to_string());
         }
     }
     None

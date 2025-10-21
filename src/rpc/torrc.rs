@@ -88,14 +88,30 @@ pub async fn get_torrc_default_value(config: &RpcConfig, keyword: &str) -> Optio
 }
 
 /// Gets the SOCKS port from torrc configuration.
-/// Parses formats like "18057" or "0.0.0.0:18057".
+/// Parses formats like:
+/// - "18057"
+/// - "0.0.0.0:18057"
+/// - "[::1]:9050"
+/// - "9050 IsolateDestAddr"
+/// - "[::1]:9050 IsolateDestAddr IsolateDestPort"
 /// Returns the port number, defaulting to 18057 if not found or unparseable.
 pub async fn get_socks_port(config: &RpcConfig) -> u16 {
     let torrc_entries = get_torrc_value(config, &vec!["SocksPort".to_string()]).await;
     
     if let Some(entry) = torrc_entries.first() {
-        // Parse the port from value like "18057" or "0.0.0.0:18057"
-        let port_str = entry.value.split(':').last().unwrap_or(&entry.value);
+        // First, extract the address:port token (before any flags like "IsolateDestAddr")
+        let addr_port_token = entry.value.split_whitespace().next().unwrap_or(&entry.value);
+        
+        // Parse the port from the token
+        let port_str = if let Some((_, port)) = addr_port_token.rsplit_once(':') {
+            // Has colon: could be "0.0.0.0:18057" or "[::1]:9050"
+            // rsplit_once gets the last colon, which is what we want for both IPv4 and IPv6
+            port
+        } else {
+            // No colon: just a bare port like "18057"
+            addr_port_token
+        };
+        
         port_str.parse().unwrap_or_else(|_| {
             log::warn!("Failed to parse SocksPort '{}', using default 18057", entry.value);
             18057

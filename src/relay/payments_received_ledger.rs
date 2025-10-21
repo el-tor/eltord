@@ -49,7 +49,7 @@ pub fn init_payments_received_ledger(relay_payments: &RelayPayments, circuit_id:
                 // Backup the corrupted file
                 let timestamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_secs();
                 let backup_path = format!("data/payments_received.json.backup_{}", timestamp);
                 if let Err(backup_err) = std::fs::copy(payments_received_path, &backup_path) {
