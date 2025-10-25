@@ -2,7 +2,7 @@
 
 ```bash
 # Run custom usage example with client mode
-cargo run --package eltor --example client -- client -f torrc.client.prod -pw password1234_
+cargo run --package eltor --example client -- client -f torrc.client.prod --pw password1234_
 
 # Run process manager example
 cargo run --package eltor --example manager

@@ -190,7 +190,7 @@ Time 92s: Payment Round 3 → Pay relays on Circuit 68
 
 ```bash
 # Run client
-ARGS="eltord client -f torrc.client.prod -pw password1234_" cargo run
+ARGS="eltord client -f torrc.client.prod --pw password1234_" cargo run
 
 # Generate traffic (use SOCKS proxy)
 curl --socks5 127.0.0.1:18058 https://check.torproject.org

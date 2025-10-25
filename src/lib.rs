@@ -368,6 +368,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 pub mod client;
 pub mod database;
 pub mod lightning;
+pub mod logging;
 pub mod manager;
 pub mod relay;
 pub mod rpc;
@@ -548,9 +549,9 @@ pub async fn init_and_run() {
     setup_signal_handlers();
     
     // Check if ARGS are set in .env, and use it if present such as:
-    // ARGS="eltord client -f torrc.client.dev -pw password1234_"
-    // ARGS="eltord relay -f torrc.relay.dev -pw password1234_"
-    // ARGS="eltord both -f torrc.relay.dev -pw password1234_"
+    // ARGS="eltord client -f torrc.client.dev --pw password1234_"
+    // ARGS="eltord relay -f torrc.relay.dev --pw password1234_"
+    // ARGS="eltord both -f torrc.relay.dev --pw password1234_"
     let env_args = env::var("ARGS").ok();
     dbg!(env_args.clone());
     info!("Environment args: {:?}", env_args);
@@ -616,7 +617,7 @@ where
                 torrc_path = path;
             }
         }
-        if arg == "-pw" {
+        if arg == "--pw" {
             if let Some(password) = args.next() {
                 control_port_password = Some(password);
             }

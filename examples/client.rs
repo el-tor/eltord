@@ -20,7 +20,7 @@ async fn main() {
         "client".to_string(),
         "-f".to_string(),
         "torrc.client.prod".to_string(),
-        "-pw".to_string(),
+        "--pw".to_string(),
         "password1234_".to_string(),
     ];
 

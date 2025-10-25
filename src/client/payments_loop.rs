@@ -250,7 +250,7 @@ fn load_or_create_db() -> Result<Db, Box<dyn std::error::Error + Send + Sync>> {
 /// Get the rate limit delay from environment variable
 fn get_rate_limit_delay() -> u64 {
     env::var("RATE_LIMIT_SECONDS")
-        .unwrap_or("0".to_string())
+        .unwrap_or("1".to_string())
         .parse()
         .unwrap()
 }

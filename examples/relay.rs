@@ -20,7 +20,7 @@ async fn main() {
         "relay".to_string(),
         "-f".to_string(),
         "torrc.relay.prod".to_string(),
-        "-pw".to_string(),
+        "--pw".to_string(),
         "password1234_".to_string(),
     ];
 
