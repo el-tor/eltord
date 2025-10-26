@@ -81,8 +81,9 @@ async fn main() {
             lib_args.push(password);
         }
         
-        // Set the ARGS env var so lib.rs can use it
-        env::set_var("ARGS", lib_args.join(" "));
+        // Use shell_words to properly quote arguments with spaces
+        let args_string = shell_words::join(&lib_args);
+        env::set_var("ARGS", args_string);
         
         // Normal execution
         init_and_run().await;
