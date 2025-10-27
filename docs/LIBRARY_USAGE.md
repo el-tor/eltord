@@ -12,16 +12,16 @@ cargo run
 cargo run client
 
 # Run with custom torrc file
-cargo run client -f torrc.client.prod -pw password1234_
+cargo run client -f torrc.client.prod --pw password1234_
 
 # Run relay with custom torrc file
-cargo run relay -f torrc.relay.prod -pw password1234_
+cargo run relay -f torrc.relay.prod --pw password1234_
 
 # Run both client and relay
-cargo run both -f torrc.relay.prod -pw password1234_
+cargo run both -f torrc.relay.prod --pw password1234_
 
 # Run with Env var args
-ARGS="eltord both -f torrc.relay.prod -pw password1234_" cargo run
+ARGS="eltord both -f torrc.relay.prod --pw password1234_" cargo run
 
 ```
 
@@ -58,7 +58,7 @@ async fn main() {
         "both".to_string(), // relay, client or both
         "-f".to_string(),
         "torrc.relay.prod".to_string(), // torrc_path_filename
-        "-pw".to_string(),
+        "--pw".to_string(),
         "password1234_".to_string(), // control port password
     ];
     run_with_args(args).await;

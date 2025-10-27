@@ -13,7 +13,7 @@ unsafe impl Send for RpcConfig {}
 
 // Returns an RPC client response
 pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
-    info!("Connecting to Tor control port at {}...", config.addr);
+    // info!("Connecting to Tor control port at {}...", config.addr);
     let stream = TcpStream::connect(config.addr).await?;
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);

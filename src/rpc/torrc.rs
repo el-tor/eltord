@@ -87,6 +87,41 @@ pub async fn get_torrc_default_value(config: &RpcConfig, keyword: &str) -> Optio
     })
 }
 
+/// Gets the SOCKS port from torrc configuration.
+/// Parses formats like:
+/// - "18057"
+/// - "0.0.0.0:18057"
+/// - "[::1]:9050"
+/// - "9050 IsolateDestAddr"
+/// - "[::1]:9050 IsolateDestAddr IsolateDestPort"
+/// Returns the port number, defaulting to 18057 if not found or unparseable.
+pub async fn get_socks_port(config: &RpcConfig) -> u16 {
+    let torrc_entries = get_torrc_value(config, &vec!["SocksPort".to_string()]).await;
+    
+    if let Some(entry) = torrc_entries.first() {
+        // First, extract the address:port token (before any flags like "IsolateDestAddr")
+        let addr_port_token = entry.value.split_whitespace().next().unwrap_or(&entry.value);
+        
+        // Parse the port from the token
+        let port_str = if let Some((_, port)) = addr_port_token.rsplit_once(':') {
+            // Has colon: could be "0.0.0.0:18057" or "[::1]:9050"
+            // rsplit_once gets the last colon, which is what we want for both IPv4 and IPv6
+            port
+        } else {
+            // No colon: just a bare port like "18057"
+            addr_port_token
+        };
+        
+        port_str.parse().unwrap_or_else(|_| {
+            log::warn!("Failed to parse SocksPort '{}', using default 18057", entry.value);
+            18057
+        })
+    } else {
+        log::warn!("SocksPort not found in torrc, using default 18057");
+        18057
+    }
+}
+
 fn parse_kv_data(val: &str) -> Vec<KV> {
     // Only parse if at least one '=' is present
     if !val.contains('=') {
@@ -152,6 +187,26 @@ pub async fn get_conf_exit_nodes(config: &RpcConfig) -> Option<TorrcEntry> {
     let conf = get_torrc_value(config, &["ExitNodes".to_string()]).await;
     info!("conf: {:?}", conf);
     if conf.is_empty() {
+        return None;
+    }
+    // Check if value is empty string
+    if conf[0].value.is_empty() {
+        return None;
+    }
+    // return first entry
+    return Some(conf[0].clone());
+}
+
+/// Gets the EntryNodes setting from torrc and parses the values into a Vec<String>.
+/// Handles comma and space separated values, curly-brace country codes, and nicknames.
+pub async fn get_conf_entry_nodes(config: &RpcConfig) -> Option<TorrcEntry> {
+    let conf = get_torrc_value(config, &["EntryNodes".to_string()]).await;
+    info!("EntryNodes conf: {:?}", conf);
+    if conf.is_empty() {
+        return None;
+    }
+    // Check if value is empty string
+    if conf[0].value.is_empty() {
         return None;
     }
     // return first entry

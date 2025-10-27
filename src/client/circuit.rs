@@ -21,7 +21,7 @@ struct ExtendPaidCircuitRow {
 pub async fn build_circuit(
     rpc_config: &RpcConfig,
     relays: &Vec<Relay>,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut extend_paid_circuit_rows = Vec::new();
 
     for relay in relays.iter() {

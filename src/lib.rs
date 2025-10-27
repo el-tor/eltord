@@ -212,6 +212,8 @@ fn setup_signal_handlers() {
 
 /// Start Tor in a child process to isolate C library crashes
 /// This protects the main application from SIGSEGV and other C-level crashes
+/// NOTE: Currently disabled in favor of single-process mode for simpler logging
+#[allow(dead_code)]
 fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     
@@ -368,6 +370,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 pub mod client;
 pub mod database;
 pub mod lightning;
+pub mod logging;
 pub mod manager;
 pub mod relay;
 pub mod rpc;
@@ -479,8 +482,22 @@ where
 
     info!("Starting Tor...");
     let torrc_path_clone = torrc_path.clone();
+    
+    // Start Tor in the same process (simpler, single-process mode)
     let _tor = tokio::task::spawn_blocking(move || {
-        start_tor_in_child_process(torrc_path_clone, "Tor");
+        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+            Ok(_tor_instance) => {
+                info!("Tor started successfully in process");
+                // Keep the task alive indefinitely to maintain Tor
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                }
+            },
+            Err(e) => {
+                error!("Failed to start Tor: {:?}", e);
+                std::process::exit(1);
+            }
+        }
     });
     
     // Give Tor a moment to start up before trying to connect
@@ -548,14 +565,18 @@ pub async fn init_and_run() {
     setup_signal_handlers();
     
     // Check if ARGS are set in .env, and use it if present such as:
-    // ARGS="eltord client -f torrc.client.dev -pw password1234_"
-    // ARGS="eltord relay -f torrc.relay.dev -pw password1234_"
-    // ARGS="eltord both -f torrc.relay.dev -pw password1234_"
+    // ARGS="eltord client -f torrc.client.dev -p password1234_"
+    // ARGS="eltord relay -f torrc.relay.dev -p password1234_"
+    // ARGS="eltord both -f torrc.relay.dev -p password1234_"
     let env_args = env::var("ARGS").ok();
     dbg!(env_args.clone());
     info!("Environment args: {:?}", env_args);
     let args: Vec<String> = if let Some(env_args) = env_args {
-        env_args.split_whitespace().map(|s| s.to_string()).collect()
+        // Use shell_words to properly parse arguments with spaces and quotes
+        shell_words::split(&env_args).unwrap_or_else(|e| {
+            error!("Failed to parse ARGS: {:?}", e);
+            std::env::args().collect()
+        })
     } else {
         std::env::args().collect()
     };
@@ -616,7 +637,7 @@ where
                 torrc_path = path;
             }
         }
-        if arg == "-pw" {
+        if arg == "--pw" {
             if let Some(password) = args.next() {
                 control_port_password = Some(password);
             }
@@ -785,7 +806,18 @@ pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) ->
     info!("Starting new Tor instance...");
     let torrc_path_clone = torrc_path.clone();
     let tor_handle = tokio::task::spawn_blocking(move || {
-        start_tor_in_child_process(torrc_path_clone, "Tor initialization");
+        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+            Ok(_tor_instance) => {
+                info!("Tor started successfully in process");
+                // Keep the task alive indefinitely to maintain Tor
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                }
+            },
+            Err(e) => {
+                error!("Failed to start Tor: {:?}", e);
+            }
+        }
     });
     
     // Store the handle so we can manage the Tor instance lifecycle

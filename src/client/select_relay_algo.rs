@@ -1,7 +1,7 @@
 use crate::rpc;
 use crate::types::{ConsensusRelay, RelayTag};
 use crate::types::{Relay, RpcConfig};
-use log::{debug, info};
+use log::{debug, info, warn};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -17,82 +17,126 @@ pub async fn simple_relay_selection_algo(
     rpc_config: &RpcConfig,
 ) -> Result<Vec<Relay>, Box<dyn Error>> {
     let relays = rpc::get_relay_descriptors(&rpc_config).await.unwrap();
-    // Ok(relays)
-    // Assuming PaymentCircuitMaxFee is defined somewhere
+    
     let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config)
         .await
         .unwrap_or(11000);
     info!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
-    // Filter out relays with a handshake fee, i.e., where payment_handshake_fee is null
+    // Filter out relays with a handshake fee
+    // TODO implement handshake fee budget
     let filtered_relays: Vec<&Relay> = relays
         .iter()
         .filter(|relay| relay.payment_handshake_fee.is_none())
         .collect();
 
-    // Get relays then sort by guard, middle, exit
+    // Get consensus relays
     let consensus_relays = rpc::get_current_consensus(&rpc_config).await.unwrap();
     let consensus_relays: Vec<ConsensusRelay> = consensus_relays
         .into_iter()
         .filter(|r| r.tags.contains(&RelayTag::Running))
         .collect();
+    
+    // Get preferred entry and exit nodes from torrc
+    let preferred_entry_relays = rpc::get_conf_entry_nodes(&rpc_config).await;
+    let preferred_exit_relays = rpc::get_conf_exit_nodes(&rpc_config).await;
+    
+    // Categorize relays by role
+    let (guard_relays, middle_relays, exit_relays) = categorize_relays(
+        &consensus_relays,
+        &filtered_relays,
+        preferred_entry_relays.as_ref(),
+        preferred_exit_relays.as_ref(),
+    );
+
+    info!("Available relays - Guards: {}, Middle: {}, Exit: {}", 
+          guard_relays.len(), middle_relays.len(), exit_relays.len());
+
+    if guard_relays.is_empty() {
+        warn!("No guard relays available! Check your EntryNodes configuration or relay availability.");
+        return Ok(Vec::new());
+    }
+    if exit_relays.is_empty() {
+        warn!("No exit relays available! Check your ExitNodes configuration or relay availability.");
+        return Ok(Vec::new());
+    }
+    if middle_relays.is_empty() {
+        warn!("No middle relays available!");
+        return Ok(Vec::new());
+    }
+
+    // Try to find a circuit within fee limits
+    select_circuit_within_fee_limit(
+        payment_circuit_max_fee as u32,
+        guard_relays,
+        middle_relays,
+        exit_relays,
+        &filtered_relays,
+        &consensus_relays,
+        preferred_entry_relays.as_ref(),
+        preferred_exit_relays.as_ref(),
+    )
+}
+
+/// Categorizes consensus relays into guard, middle, and exit pools
+/// Returns (guards, middles, exits) as vectors of ConsensusRelay references
+/// Strategy: Build pools of ALL available relays by role, preferences will be applied later
+fn categorize_relays<'a>(
+    consensus_relays: &'a [ConsensusRelay],
+    filtered_relays: &[&Relay],
+    _preferred_entry_relays: Option<&crate::rpc::TorrcEntry>,
+    _preferred_exit_relays: Option<&crate::rpc::TorrcEntry>,
+) -> (Vec<&'a ConsensusRelay>, Vec<&'a ConsensusRelay>, Vec<&'a ConsensusRelay>) {
     let mut guard_relays = Vec::new();
     let mut middle_relays = Vec::new();
     let mut exit_relays = Vec::new();
-    let preferred_exit_relays = rpc::get_conf_exit_nodes(&rpc_config).await;
-    // TODO preferred_exit_fingerprints might contain a relay name, need to handle if its a nickname and then lookup the fingerprint
-    for r in &consensus_relays {
-        let preferred_exit_fingerprint = &Some(preferred_exit_relays.clone().unwrap().value);
 
-        if r.tags.contains(&RelayTag::Guard) {
-            if filtered_relays
-                .iter()
-                .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
-                .any(|relay| relay.fingerprint == r.fingerprint)
-            {
-                guard_relays.push(r);
-            }
+    for relay in consensus_relays {
+        // Check if relay is in our filtered list (no handshake fee)
+        let is_available = filtered_relays
+            .iter()
+            .any(|r| r.fingerprint == relay.fingerprint);
+        
+        if !is_available {
+            continue;
         }
-        if r.tags.contains(&RelayTag::Running) {
-            if filtered_relays
-                .iter()
-                .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
-                .any(|relay| relay.fingerprint == r.fingerprint)
-            {
-                middle_relays.push(r);
-            }
+
+        // Categorize all available relays by their capabilities
+        if relay.tags.contains(&RelayTag::Guard) {
+            guard_relays.push(relay);
         }
-        if r.tags.contains(&RelayTag::Exit) {
-            if preferred_exit_fingerprint.is_some()
-                && !preferred_exit_fingerprint.as_ref().unwrap().is_empty()
-            {
-                // TODO: if value of ExitNodes is {us},{de} etc.. then find an exit in that country
-                // TODO: also check if StrictNodes is set in torrc
-                // TODO: if value is nickname then look fingerprint from nickname
-                if preferred_exit_fingerprint.as_ref().unwrap().as_str() == &r.fingerprint {
-                    exit_relays.push(r);
-                }
-            } else {
-                if filtered_relays
-                    .iter()
-                    .filter(|relay| preferred_exit_fingerprint.as_ref() != Some(&relay.fingerprint))
-                    .any(|relay| relay.fingerprint == r.fingerprint)
-                {
-                    exit_relays.push(r);
-                }
-            }
+        
+        if relay.tags.contains(&RelayTag::Running) {
+            middle_relays.push(relay);
         }
-        info!("{:?}", r);
+        
+        if relay.tags.contains(&RelayTag::Exit) {
+            exit_relays.push(relay);
+        }
     }
 
-    // Retry up to 10 times to find a circuit within max fee range
+    (guard_relays, middle_relays, exit_relays)
+}
+
+/// Attempts to select a circuit within the fee limit
+/// Strategy: First select random circuit, then apply EntryNodes/ExitNodes preferences
+fn select_circuit_within_fee_limit(
+    max_fee: u32,
+    mut guard_relays: Vec<&ConsensusRelay>,
+    mut middle_relays: Vec<&ConsensusRelay>,
+    mut exit_relays: Vec<&ConsensusRelay>,
+    filtered_relays: &[&Relay],
+    consensus_relays: &[ConsensusRelay],
+    preferred_entry_relays: Option<&crate::rpc::TorrcEntry>,
+    preferred_exit_relays: Option<&crate::rpc::TorrcEntry>,
+) -> Result<Vec<Relay>, Box<dyn Error>> {
     const MAX_RETRIES: u32 = 10;
     let rng = Arc::new(Mutex::new(SmallRng::from_entropy()));
 
     for attempt in 1..=MAX_RETRIES {
         debug!("Relay selection attempt {}/{}", attempt, MAX_RETRIES);
 
-        // Shuffle the filtered relays for this attempt
+        // Shuffle for randomness
         {
             let mut rng = rng.lock().unwrap();
             guard_relays.shuffle(&mut *rng);
@@ -100,31 +144,21 @@ pub async fn simple_relay_selection_algo(
             exit_relays.shuffle(&mut *rng);
         }
 
-        // Pick 1 entry, 1 middle, 1 exit relay
-        let mut selected_relays = Vec::new();
+        // Try to pick one of each type
+        let selected_consensus = match select_three_relays(
+            &guard_relays,
+            &middle_relays,
+            &exit_relays,
+        ) {
+            Some(relays) => relays,
+            None => {
+                debug!("Could not find 3 suitable relays on attempt {}", attempt);
+                continue;
+            }
+        };
 
-        // Entry
-        if let Some(guard) = guard_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-            selected_relays.push((*guard).clone());
-        }
-        // Middle
-        if let Some(middle) = middle_relays
-            .iter()
-            .find(|&&r| !selected_relays.contains(r))
-        {
-            selected_relays.push((*middle).clone());
-        }
-        // Exit
-        if let Some(exit) = exit_relays.iter().find(|&&r| !selected_relays.contains(r)) {
-            selected_relays.push((*exit).clone());
-        }
-
-        if selected_relays.len() != 3 {
-            debug!("Could not find 3 suitable relays on attempt {}", attempt);
-            continue;
-        }
-
-        let mut matched_relays: Vec<Relay> = selected_relays
+        // Match consensus relays to full relay descriptors
+        let mut matched_relays: Vec<Relay> = selected_consensus
             .iter()
             .filter_map(|consensus_relay| {
                 filtered_relays
@@ -134,42 +168,106 @@ pub async fn simple_relay_selection_algo(
             })
             .collect();
 
-        // Check if the circuit is under the maximum fee for 10 rounds
-        if !is_circuit_under_max_fee(payment_circuit_max_fee as u32, &matched_relays) {
-            debug!(
-                "Circuit exceeds maximum fee on attempt {}, retrying...",
-                attempt
-            );
+        if matched_relays.len() != 3 {
+            debug!("Could not match all 3 relays to descriptors on attempt {}", attempt);
             continue;
         }
 
-        // Success! Add tags and hop numbers
-        let mut i = 1;
-        for relay in matched_relays.iter_mut() {
-            relay.relay_tag = Some(match i {
-                1 => RelayTag::Guard,
-                2 => RelayTag::Middle,
-                3 => RelayTag::Exit,
-                _ => unreachable!(),
-            });
-            relay.hop = Some(i);
-            i += 1;
+        // Apply EntryNodes preference: replace guard (first hop) if configured
+        if let Some(preferred_entry) = preferred_entry_relays {
+            let preferred_fingerprint = &preferred_entry.value;
+            if let Some(preferred_relay) = filtered_relays
+                .iter()
+                .find(|r| &r.fingerprint == preferred_fingerprint)
+            {
+                info!("Replacing guard with preferred EntryNode: {}", preferred_relay.nickname);
+                matched_relays[0] = (*preferred_relay).clone();
+            } else {
+                warn!("Configured EntryNode {} not found in available relays, using random guard", preferred_fingerprint);
+            }
         }
 
+        // Apply ExitNodes preference: replace exit (third hop) if configured
+        if let Some(preferred_exit) = preferred_exit_relays {
+            let preferred_fingerprint = &preferred_exit.value;
+            if let Some(preferred_relay) = filtered_relays
+                .iter()
+                .find(|r| &r.fingerprint == preferred_fingerprint)
+            {
+                info!("Replacing exit with preferred ExitNode: {}", preferred_relay.nickname);
+                matched_relays[2] = (*preferred_relay).clone();
+            } else {
+                warn!("Configured ExitNode {} not found in available relays, using random exit", preferred_fingerprint);
+            }
+        }
+
+        // Check fee limit (after applying preferences)
+        if !is_circuit_under_max_fee(max_fee, &matched_relays) {
+            debug!("Circuit exceeds maximum fee on attempt {}, retrying...", attempt);
+            continue;
+        }
+
+        // Success! Tag and number the hops
+        tag_circuit_relays(&mut matched_relays);
+
         info!(
-            "Successfully found circuit within fee limit on attempt {}/{}",
+            "✅ Successfully found circuit within fee limit on attempt {}/{}",
             attempt, MAX_RETRIES
         );
+        info!("   Guard: {}", matched_relays[0].nickname);
+        info!("   Middle: {}", matched_relays[1].nickname);
+        info!("   Exit: {}", matched_relays[2].nickname);
+        
         return Ok(matched_relays);
     }
 
-    // If we get here, all attempts failed
-    // Return empty vector instead of error to keep daemon running
-    info!(
-        "Warning: Failed to find a circuit within maximum fee of {} msats after {} attempts. Returning empty circuit.", 
-        payment_circuit_max_fee, MAX_RETRIES
+    // All attempts failed
+    warn!(
+        "Failed to find a circuit within maximum fee of {} msats after {} attempts",
+        max_fee, MAX_RETRIES
     );
     Ok(Vec::new())
+}
+
+/// Selects one guard, one middle, and one exit relay (ensuring no duplicates)
+fn select_three_relays<'a>(
+    guard_relays: &[&'a ConsensusRelay],
+    middle_relays: &[&'a ConsensusRelay],
+    exit_relays: &[&'a ConsensusRelay],
+) -> Option<Vec<ConsensusRelay>> {
+    let mut selected = Vec::new();
+
+    // Pick guard
+    let guard = guard_relays.iter().find(|&&r| !selected.contains(r))?;
+    selected.push((*guard).clone());
+
+    // Pick middle (must be different from guard)
+    let middle = middle_relays
+        .iter()
+        .find(|&&r| !selected.contains(r))?;
+    selected.push((*middle).clone());
+
+    // Pick exit (must be different from guard and middle)
+    let exit = exit_relays
+        .iter()
+        .find(|&&r| !selected.contains(r))?;
+    selected.push((*exit).clone());
+
+    Some(selected)
+}
+
+/// Tags relays with their role and hop number
+fn tag_circuit_relays(relays: &mut [Relay]) {
+    for (i, relay) in relays.iter_mut().enumerate() {
+        let hop = (i + 1) as i64;
+        relay.relay_tag = Some(match hop {
+            1 => RelayTag::Guard,
+            2 => RelayTag::Middle,
+            3 => RelayTag::Exit,
+            _ => unreachable!(),
+        });
+        relay.hop = Some(hop);
+    }
 }
 
 /// Checks if 10 rounds of payments for the selected relays do not exceed the max_fee

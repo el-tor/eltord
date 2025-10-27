@@ -193,7 +193,7 @@ impl EltordProcessManager {
 
         // Build the command to run the eltor binary
         let mut cmd = Command::new("cargo");
-        cmd.args(&["run", "--", &mode, "-f", &torrc_path, "-pw", &password])
+        cmd.args(&["run", "--", &mode, "-f", &torrc_path, "--pw", &password])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);

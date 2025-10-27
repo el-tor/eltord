@@ -22,9 +22,9 @@ PaymentLightningNodeConfig type=phoenixd url=https://YOUR_URL:PORT password=YOUR
 ```
 ./eltor -f torrc
 # or more advanced uses
-./eltor client -f torrc.client -pw password1234_
-./eltor relay -f torrc.relay -pw password1234_
-# -pw is the ControlPassword i.e the unhashed password to the HashedControlPassword in torrc
+./eltor client -f torrc.client --pw password1234_
+./eltor relay -f torrc.relay --pw password1234_
+# --pw is the ControlPassword i.e the unhashed password to the HashedControlPassword in torrc
 ```
 
 ## Usage
@@ -34,6 +34,9 @@ Eltord can now be used both as a standalone binary and as a library in other Rus
 
 **🎛️ Process Management**
 Eltord now includes a process manager for external applications. See the [manager example](./examples/manager.rs) for controlling eltord from external applications.
+
+**🔄 Round-Robin Load Balancing**
+The client automatically builds backup circuits and distributes traffic using round-robin load balancing for higher throughput and redundancy. See [BACKUP_CIRCUIT.md](./docs/BACKUP_CIRCUIT.md) for details on how dual-circuit operation works.
 
 
 ### As a Binary
@@ -46,7 +49,7 @@ cargo run client
 cargo run
 
 # Run with custom torrc file
-cargo run client -f torrc.client.dev -pw password1234_
+cargo run client -f torrc.client.dev --pw password1234_
 ```
 
 ### As a Library
@@ -70,7 +73,7 @@ async fn main() {
         "both".to_string(),
         "-f".to_string(),
         "torrc.relay.prod".to_string(),
-        "-pw".to_string(),
+        "--pw".to_string(),
         "password1234_".to_string(),
     ];
 
@@ -151,13 +154,13 @@ cargo run client
 
 # 2. Relay or Client with args*
 # *(pw is ControlPort clear password (not hashed))
-cargo run client -f torrc.client.dev -pw password1234_
-cargo run relay -f torrc.relay.dev -pw password1234_
+cargo run client -f torrc.client.dev --pw password1234_
+cargo run relay -f torrc.relay.dev --pw password1234_
 
 # 3. Relay or Client with env vars*
 # *(nice to use with debugger if you set ARGS in .env file)
-ARGS="eltrod relay -f torrc.relay.dev -pw password1234_" cargo run
-ARGS="eltrod client -f torrc.client.dev -pw password1234_" cargo run
+ARGS="eltrod relay -f torrc.relay.dev --pw password1234_" cargo run
+ARGS="eltrod client -f torrc.client.dev --pw password1234_" cargo run
 ```
 
 Release (CI)
@@ -213,7 +216,7 @@ PAYMENT_INTERVAL_ROUNDS=10 # Not being used, need to think more about this, hard
 ```
 dev
 ```sh
-ARGS="eltord client -f torrc.client.dev -pw password1234_"
+ARGS="eltord client -f torrc.client.dev --pw password1234_"
 ```
 
 
@@ -261,7 +264,7 @@ TODO
 2. simplify the default command:
 ```sh
 # from
-./eltor client -f torrc -pw password1234_
+./eltor client -f torrc --pw password1234_
 # to 
 ./eltor
 ```
