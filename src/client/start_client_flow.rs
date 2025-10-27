@@ -144,9 +144,15 @@ async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
 
     // 5. Circuit build
     // EXTENDPAIDCIRCUIT
-    let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays)
-        .await
-        .unwrap();
+    let circuit_id = circuit::build_circuit(&rpc_config, &selected_relays).await;
+    let circuit_id = match circuit_id {
+        Ok(id) => id,
+        Err(e) => {
+            client_warn!("Failed to build primary circuit: {}. Retrying...", e);
+            return false; // Retry immediately
+        }
+    };
+
     client_info!("Created paid Circuit with ID: {}", circuit_id);
     
     // 5a. Wait for circuit to be BUILT before allowing SOCKS connections
