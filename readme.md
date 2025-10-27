@@ -22,7 +22,7 @@ PaymentLightningNodeConfig type=phoenixd url=https://YOUR_URL:PORT password=YOUR
 ```
 ./eltor -f torrc
 # or more advanced uses
-./eltor client -f torrc.client --pw password1234_
+./eltor client -f torrc.client --pw password1234_ -l data/eltor.log -k
 ./eltor relay -f torrc.relay --pw password1234_
 # --pw is the ControlPassword i.e the unhashed password to the HashedControlPassword in torrc
 ```
