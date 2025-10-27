@@ -4,14 +4,24 @@ set -e
 
 echo "📦 Releasing..."
 
-# Check if we're in nix-shell, if not, enter it
-if [ -z "$IN_NIX_SHELL" ]; then
-    echo "🔧 Entering nix-shell..."
-    nix-shell --run "$0 $*"
-    exit $?
+# Load environment variables from .secrets file if it exists
+if [ -f ".secrets" ]; then
+    echo "🔐 Loading environment variables from .secrets..."
+    set -a
+    source .secrets
+    set +a
+else
+    echo "⚠️  No .secrets file found, skipping..."
 fi
 
-echo "✅ Running in nix-shell"
+# # Check if we're in nix-shell, if not, enter it
+# if [ -z "$IN_NIX_SHELL" ]; then
+#     echo "🔧 Entering nix-shell..."
+#     nix-shell --run "$0 $*"
+#     exit $?
+# fi
+
+# echo "✅ Running in nix-shell"
 
 # Parse command line arguments
 NO_BUILD=false

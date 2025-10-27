@@ -73,3 +73,20 @@ ElTorPreimageHop4 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186
 ElTorPreimageHop5 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
 ElTorPreimageHop6 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
 ElTorPreimageHop7 68b4e782fafbd5a057ec4c277f01da48db73dd67326ec4458ff89daffba186e3
+
+# LearnCircuitBuildTimeout = Don't wait to "learn" optimal timeouts, just build circuits immediately with whatever descriptors you have
+# CircuitBuildTimeout = Fixed timeout when not learning (10s for test networks, 30-60s for production)
+# These settings speed up boot from 5-30 seconds to only 2 seconds
+# Use this setting only if you have a background service download new descriptors every hour for security purposes
+LearnCircuitBuildTimeout 0
+CircuitBuildTimeout 10                   
+UseMicrodescriptors 1
+# Skip downloads on bootstrap
+FetchDirInfoEarly 0
+# No pre-fetching            
+FetchDirInfoExtraEarly 0
+# Accept 7 days old descriptors
+TestingDirConnectionMaxStall 604800
+# 24 hours in seconds
+MaxCircuitDirtiness 86400  
+CircuitPriorityHalflife 0

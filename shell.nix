@@ -7,6 +7,7 @@ pkgs.mkShell {
     cargo
     rustfmt
     clippy
+    rustup
     
     # Build dependencies
     pkg-config
@@ -17,6 +18,14 @@ pkgs.mkShell {
     git
     unzip
     gh
+    
+    # Autotools dependencies (required for libeltor-sys)
+    m4
+    autoconf
+    automake
+    libtool
+    flex
+    bison
   ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
     # macOS specific - conditionally added only on Darwin
     darwin.apple_sdk.frameworks.Security

@@ -168,7 +168,7 @@ Release (CI)
 Creating a new release is a multi-step process involving a local build (for arm on a mac) and Github actions build (for x86_64). Follow these steps:
 
 1. See [Release Prereq Install](#release-prereq-install) below for required tools and setup
-2. Locally, update the version in the Cargo.toml file. example `0.0.1` and update the CHANGELOG.md
+2. Locally, update the version in the Cargo.toml file. example `0.0.1` and update the CHANGELOG.md. Then commit and push this to github.
 3. Create a tag `git tag -a "v0.0.1" -m "Release version 0.0.1"` and then `git push origin "v0.0.1"`
 4. On Github, run this action https://github.com/el-tor/eltord/actions/workflows/build.yml to build for x86_64 linux, mac and windows
 5. Locally, to ship a new Github Release, run the build and release script. This builds linux and mac for arm64, merges remote artifacts with local artifacts and cuts a new release using gh cli `./scripts/release.sh` 
@@ -186,8 +186,10 @@ You can run this script to kick off the build locally using Github "act". See fo
 
 1. Release Prereq Install
   ```sh
-  # install nix from this website
+  # install nix from this website`
   # https://docs.determinate.systems/
+  # install github cli
+  brew install gh
   docker buildx create --name mybuilder --driver docker-container --use 
   docker buildx inspect --bootstrap 
   docker run --privileged --rm tonistiigi/binfmt --install all
