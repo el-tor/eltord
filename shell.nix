@@ -1,8 +1,8 @@
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/24.11.tar.gz") {} }:
 
 pkgs.mkShell {
   buildInputs = with pkgs; [
-    # Rust toolchain
+    # Rust toolchain  
     rustc
     cargo
     rustfmt
@@ -12,20 +12,16 @@ pkgs.mkShell {
     pkg-config
     openssl
     sqlite
-    autoconf
-    automake
-    libtool
     gnumake
     wget
     git
-    flex
-    bison
     unzip
     gh
-    
-    # macOS specific
+  ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+    # macOS specific - conditionally added only on Darwin
     darwin.apple_sdk.frameworks.Security
     darwin.apple_sdk.frameworks.SystemConfiguration
+    libiconv
   ];
   
   # Environment variables

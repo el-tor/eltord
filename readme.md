@@ -186,8 +186,8 @@ You can run this script to kick off the build locally using Github "act". See fo
 
 1. Release Prereq Install
   ```sh
-  #nix
-  curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+  # install nix from this website
+  # https://docs.determinate.systems/
   docker buildx create --name mybuilder --driver docker-container --use 
   docker buildx inspect --bootstrap 
   docker run --privileged --rm tonistiigi/binfmt --install all
