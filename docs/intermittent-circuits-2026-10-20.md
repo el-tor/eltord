@@ -96,6 +96,14 @@ Controlled faults ran after the performance soak, at 23:33 UTC:
   completed, taking 19.325 seconds. All five requests after resume succeeded, with
   the first taking 0.083 seconds.
 
+Cross-log correlation supports the relay-stall diagnosis: the 004r info log's
+last line before the pause was at 23:33:57.274, and its next burst began at
+23:34:07.766 when SIGCONT was sent. Meanwhile the app client's info log recorded
+SOCKS connection EOFs at 23:34:01, 23:34:03 and 23:34:07, aligned with the timed-out
+probes, while the direct origin request succeeded. Captured events include the
+app client and all nine Chutney nodes; relay and client circuit identifiers are
+local to their respective processes and must not be equated numerically.
+
 The deliberate failures have distinct timing and control evidence. They are
 excluded from the zero-failure steady-state counts above. The first longer
 paid-format probe also caught an attachment-monitor regression: a directory or
@@ -118,7 +126,9 @@ The final Linux Tauri build succeeded. Resource binary hashes match the compiled
 daemon and selected Phoenixd executables. Activation produced fresh log lines in
 the existing native viewer after the log file was replaced, then showed the
 connection modal at observed bootstrap completion. HTTPS through app SOCKS 18048
-returned 200. The nine-node Chutney transmission verification also passed after
+returned 200. Firefox Connection Settings showed manual SOCKS v5 at
+127.0.0.1:18048, and a newly navigated HTTPS Example Domain page rendered
+successfully. The nine-node Chutney transmission verification also passed after
 the extended idle interval. An older client log ended with `Interrupt: exiting
 cleanly`; that idle interval is not counted as a continuous traffic soak.
 
@@ -144,3 +154,17 @@ line in the Tor fork or an anonymity/security certification.
 All changes remain local. Commit author and committer are
 `Eltor Dev <eltordev@proton.me>`. All 12 checkouts have repository-local identity,
 empty credential helper overrides, disabled push URLs and rejecting pre-push hooks.
+
+## Local change and validation index
+
+| Repository | Local implementation commit | Validation |
+| --- | --- | --- |
+| tor | ba9b593 | Standalone build; 15 rejected control commands without process exit |
+| libeltor-sys | 543241c | Embedded rebuild; same 15 rejection probes; actual paid-format traffic |
+| lni | 90dd176 | Two mock Phoenixd HTTP polling regressions |
+| eltord | a433ba4 | Six controller integration tests; five payment/heartbeat/consensus/selection unit tests; two harness parser tests; live 101-second failover probe |
+| eltor-app | cf206d5 | Five SOCKS unit tests; one missing-executable regression; frontend and Linux Tauri builds; native activation, logging and Firefox HTTPS |
+
+The test artifacts and source are local. Existing free-relay C changes, local
+wallet binary replacements, Cargo.lock changes and the app's embedded-wallet
+launch setting were preserved outside these implementation commits.
