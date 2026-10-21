@@ -16,11 +16,9 @@ use std::sync::{Arc, Mutex};
 pub async fn simple_relay_selection_algo(
     rpc_config: &RpcConfig,
 ) -> Result<Vec<Relay>, Box<dyn Error>> {
-    let relays = rpc::get_relay_descriptors(&rpc_config).await.unwrap();
-    
-    let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config)
-        .await
-        .unwrap_or(11000);
+    let relays = rpc::get_relay_descriptors(&rpc_config).await?;
+
+    let payment_circuit_max_fee = rpc::get_conf_payment_circuit_max_fee(&rpc_config).await?;
     info!("PaymentCircuitMaxFee: {}", payment_circuit_max_fee);
 
     // Filter out relays with a handshake fee
@@ -31,16 +29,16 @@ pub async fn simple_relay_selection_algo(
         .collect();
 
     // Get consensus relays
-    let consensus_relays = rpc::get_current_consensus(&rpc_config).await.unwrap();
+    let consensus_relays = rpc::get_current_consensus(&rpc_config).await?;
     let consensus_relays: Vec<ConsensusRelay> = consensus_relays
         .into_iter()
         .filter(|r| r.tags.contains(&RelayTag::Running))
         .collect();
-    
+
     // Get preferred entry and exit nodes from torrc
     let preferred_entry_relays = rpc::get_conf_entry_nodes(&rpc_config).await;
     let preferred_exit_relays = rpc::get_conf_exit_nodes(&rpc_config).await;
-    
+
     // Categorize relays by role
     let (guard_relays, middle_relays, exit_relays) = categorize_relays(
         &consensus_relays,
@@ -49,15 +47,23 @@ pub async fn simple_relay_selection_algo(
         preferred_exit_relays.as_ref(),
     );
 
-    info!("Available relays - Guards: {}, Middle: {}, Exit: {}", 
-          guard_relays.len(), middle_relays.len(), exit_relays.len());
+    info!(
+        "Available relays - Guards: {}, Middle: {}, Exit: {}",
+        guard_relays.len(),
+        middle_relays.len(),
+        exit_relays.len()
+    );
 
     if guard_relays.is_empty() {
-        warn!("No guard relays available! Check your EntryNodes configuration or relay availability.");
+        warn!(
+            "No guard relays available! Check your EntryNodes configuration or relay availability."
+        );
         return Ok(Vec::new());
     }
     if exit_relays.is_empty() {
-        warn!("No exit relays available! Check your ExitNodes configuration or relay availability.");
+        warn!(
+            "No exit relays available! Check your ExitNodes configuration or relay availability."
+        );
         return Ok(Vec::new());
     }
     if middle_relays.is_empty() {
@@ -72,7 +78,6 @@ pub async fn simple_relay_selection_algo(
         middle_relays,
         exit_relays,
         &filtered_relays,
-        &consensus_relays,
         preferred_entry_relays.as_ref(),
         preferred_exit_relays.as_ref(),
     )
@@ -86,7 +91,11 @@ fn categorize_relays<'a>(
     filtered_relays: &[&Relay],
     _preferred_entry_relays: Option<&crate::rpc::TorrcEntry>,
     _preferred_exit_relays: Option<&crate::rpc::TorrcEntry>,
-) -> (Vec<&'a ConsensusRelay>, Vec<&'a ConsensusRelay>, Vec<&'a ConsensusRelay>) {
+) -> (
+    Vec<&'a ConsensusRelay>,
+    Vec<&'a ConsensusRelay>,
+    Vec<&'a ConsensusRelay>,
+) {
     let mut guard_relays = Vec::new();
     let mut middle_relays = Vec::new();
     let mut exit_relays = Vec::new();
@@ -96,7 +105,7 @@ fn categorize_relays<'a>(
         let is_available = filtered_relays
             .iter()
             .any(|r| r.fingerprint == relay.fingerprint);
-        
+
         if !is_available {
             continue;
         }
@@ -105,11 +114,11 @@ fn categorize_relays<'a>(
         if relay.tags.contains(&RelayTag::Guard) {
             guard_relays.push(relay);
         }
-        
+
         if relay.tags.contains(&RelayTag::Running) {
             middle_relays.push(relay);
         }
-        
+
         if relay.tags.contains(&RelayTag::Exit) {
             exit_relays.push(relay);
         }
@@ -126,10 +135,13 @@ fn select_circuit_within_fee_limit(
     mut middle_relays: Vec<&ConsensusRelay>,
     mut exit_relays: Vec<&ConsensusRelay>,
     filtered_relays: &[&Relay],
-    consensus_relays: &[ConsensusRelay],
     preferred_entry_relays: Option<&crate::rpc::TorrcEntry>,
     preferred_exit_relays: Option<&crate::rpc::TorrcEntry>,
 ) -> Result<Vec<Relay>, Box<dyn Error>> {
+    // Apply preferences to eligible role pools before selecting distinct hops.
+    // Replacing an already selected exit could duplicate the middle or guard.
+    apply_preference(&mut guard_relays, preferred_entry_relays);
+    apply_preference(&mut exit_relays, preferred_exit_relays);
     const MAX_RETRIES: u32 = 10;
     let rng = Arc::new(Mutex::new(SmallRng::from_entropy()));
 
@@ -145,17 +157,14 @@ fn select_circuit_within_fee_limit(
         }
 
         // Try to pick one of each type
-        let selected_consensus = match select_three_relays(
-            &guard_relays,
-            &middle_relays,
-            &exit_relays,
-        ) {
-            Some(relays) => relays,
-            None => {
-                debug!("Could not find 3 suitable relays on attempt {}", attempt);
-                continue;
-            }
-        };
+        let selected_consensus =
+            match select_three_relays(&guard_relays, &middle_relays, &exit_relays) {
+                Some(relays) => relays,
+                None => {
+                    debug!("Could not find 3 suitable relays on attempt {}", attempt);
+                    continue;
+                }
+            };
 
         // Match consensus relays to full relay descriptors
         let mut matched_relays: Vec<Relay> = selected_consensus
@@ -169,41 +178,19 @@ fn select_circuit_within_fee_limit(
             .collect();
 
         if matched_relays.len() != 3 {
-            debug!("Could not match all 3 relays to descriptors on attempt {}", attempt);
+            debug!(
+                "Could not match all 3 relays to descriptors on attempt {}",
+                attempt
+            );
             continue;
-        }
-
-        // Apply EntryNodes preference: replace guard (first hop) if configured
-        if let Some(preferred_entry) = preferred_entry_relays {
-            let preferred_fingerprint = &preferred_entry.value;
-            if let Some(preferred_relay) = filtered_relays
-                .iter()
-                .find(|r| &r.fingerprint == preferred_fingerprint)
-            {
-                info!("Replacing guard with preferred EntryNode: {}", preferred_relay.nickname);
-                matched_relays[0] = (*preferred_relay).clone();
-            } else {
-                warn!("Configured EntryNode {} not found in available relays, using random guard", preferred_fingerprint);
-            }
-        }
-
-        // Apply ExitNodes preference: replace exit (third hop) if configured
-        if let Some(preferred_exit) = preferred_exit_relays {
-            let preferred_fingerprint = &preferred_exit.value;
-            if let Some(preferred_relay) = filtered_relays
-                .iter()
-                .find(|r| &r.fingerprint == preferred_fingerprint)
-            {
-                info!("Replacing exit with preferred ExitNode: {}", preferred_relay.nickname);
-                matched_relays[2] = (*preferred_relay).clone();
-            } else {
-                warn!("Configured ExitNode {} not found in available relays, using random exit", preferred_fingerprint);
-            }
         }
 
         // Check fee limit (after applying preferences)
         if !is_circuit_under_max_fee(max_fee, &matched_relays) {
-            debug!("Circuit exceeds maximum fee on attempt {}, retrying...", attempt);
+            debug!(
+                "Circuit exceeds maximum fee on attempt {}, retrying...",
+                attempt
+            );
             continue;
         }
 
@@ -217,7 +204,7 @@ fn select_circuit_within_fee_limit(
         info!("   Guard: {}", matched_relays[0].nickname);
         info!("   Middle: {}", matched_relays[1].nickname);
         info!("   Exit: {}", matched_relays[2].nickname);
-        
+
         return Ok(matched_relays);
     }
 
@@ -235,25 +222,40 @@ fn select_three_relays<'a>(
     middle_relays: &[&'a ConsensusRelay],
     exit_relays: &[&'a ConsensusRelay],
 ) -> Option<Vec<ConsensusRelay>> {
-    let mut selected = Vec::new();
+    // Reserve the exit before choosing the middle, including when there is
+    // only one eligible exit. Identity is the fingerprint, not the full record.
+    for guard in guard_relays {
+        for exit in exit_relays {
+            if guard.fingerprint == exit.fingerprint {
+                continue;
+            }
+            if let Some(middle) = middle_relays
+                .iter()
+                .find(|m| m.fingerprint != guard.fingerprint && m.fingerprint != exit.fingerprint)
+            {
+                return Some(vec![
+                    (**guard).clone(),
+                    (**middle).clone(),
+                    (**exit).clone(),
+                ]);
+            }
+        }
+    }
+    None
+}
 
-    // Pick guard
-    let guard = guard_relays.iter().find(|&&r| !selected.contains(r))?;
-    selected.push((*guard).clone());
-
-    // Pick middle (must be different from guard)
-    let middle = middle_relays
-        .iter()
-        .find(|&&r| !selected.contains(r))?;
-    selected.push((*middle).clone());
-
-    // Pick exit (must be different from guard and middle)
-    let exit = exit_relays
-        .iter()
-        .find(|&&r| !selected.contains(r))?;
-    selected.push((*exit).clone());
-
-    Some(selected)
+fn apply_preference(pool: &mut Vec<&ConsensusRelay>, preference: Option<&crate::rpc::TorrcEntry>) {
+    if let Some(preference) = preference {
+        let fingerprint = preference.value.trim_start_matches('$');
+        if pool
+            .iter()
+            .any(|r| r.fingerprint.eq_ignore_ascii_case(fingerprint))
+        {
+            pool.retain(|r| r.fingerprint.eq_ignore_ascii_case(fingerprint));
+        } else {
+            warn!("Preferred relay is unavailable for this role; retaining eligible candidates");
+        }
+    }
 }
 
 /// Tags relays with their role and hop number
@@ -309,3 +311,44 @@ fn is_circuit_under_max_fee(max_fee: u32, selected_relays: &[Relay]) -> bool {
 }
 
 // TODO: implement more complicated relay selection algos
+
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+    fn relay(id: &str) -> ConsensusRelay {
+        ConsensusRelay {
+            nickname: id.into(),
+            fingerprint: id.into(),
+            contact: None,
+            bandwidth: None,
+            ip: None,
+            port: None,
+            tags: vec![],
+            policy: None,
+        }
+    }
+    #[test]
+    fn pinned_exit_is_reserved_before_middle_selection() {
+        let guard = relay("guard");
+        let exit = relay("exit");
+        let middle = relay("middle");
+        let mut exits = vec![&middle, &exit];
+        apply_preference(
+            &mut exits,
+            Some(&crate::rpc::TorrcEntry {
+                key: "ExitNodes".into(),
+                value: "exit".into(),
+                data: vec![],
+            }),
+        );
+        let selected = select_three_relays(&[&guard], &[&exit, &middle, &guard], &exits).unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|r| r.fingerprint.as_str())
+                .collect::<Vec<_>>(),
+            vec!["guard", "middle", "exit"]
+        );
+        assert!(select_three_relays(&[&guard], &[&exit, &guard], &exits).is_none());
+    }
+}

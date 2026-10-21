@@ -13,6 +13,12 @@ unsafe impl Send for RpcConfig {}
 
 // Returns an RPC client response
 pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
+    tokio::time::timeout(std::time::Duration::from_secs(15), rpc_client_inner(config))
+        .await
+        .map_err(|_| -> Box<dyn Error> { "Tor control request timed out".into() })?
+}
+
+async fn rpc_client_inner(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     // info!("Connecting to Tor control port at {}...", config.addr);
     let stream = TcpStream::connect(config.addr).await?;
     let (reader, mut writer) = tokio::io::split(stream);
@@ -44,6 +50,45 @@ pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     }
 
     Ok(response)
+}
+
+/// Return only the command's response, after validating authentication and the
+/// final command status. AUTHENTICATE's 250 OK is not command success.
+pub fn command_response(response: &str) -> Result<String, Box<dyn Error>> {
+    let mut lines = response.lines();
+    if lines.next() != Some("250 OK") {
+        return Err("Tor control authentication failed".into());
+    }
+    let mut command_lines = Vec::new();
+    let mut complete = false;
+    let mut data_block = false;
+    for line in lines {
+        if complete {
+            break;
+        }
+        if data_block {
+            command_lines.push(line);
+            if line == "." {
+                data_block = false;
+            }
+            continue;
+        }
+        if line.starts_with("650") {
+            continue;
+        }
+        if line.len() >= 4 && line.as_bytes()[..3].iter().all(u8::is_ascii_digit) {
+            if !line.starts_with("250") {
+                return Err(format!("Tor control command failed: {}", line).into());
+            }
+            data_block = line.as_bytes()[3] == b'+';
+            complete = line.as_bytes()[3] == b' ';
+        }
+        command_lines.push(line);
+    }
+    if !complete {
+        return Err("Incomplete Tor control command response".into());
+    }
+    Ok(command_lines.join("\n"))
 }
 
 pub async fn rpc_event_listener(

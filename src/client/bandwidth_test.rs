@@ -6,33 +6,30 @@ use std::time::{Duration, Instant};
 /// Uses Cloudflare's CDN trace endpoint (very lightweight, ~300 bytes response)
 /// TODO figure out a way to bandwidth test the websites you are already visiting
 pub async fn heartbeat_check(socks_port: u16) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let start = Instant::now();
-    
-    // Create SOCKS5 proxy URL with 'h' suffix for DNS resolution through proxy
-    let proxy_url = format!("socks5h://127.0.0.1:{}", socks_port);
-    let proxy = reqwest::Proxy::all(&proxy_url)?;
-    
-    let client = reqwest::Client::builder()
-        .proxy(proxy)
-        .timeout(Duration::from_secs(10))
-        .build()?;
-    
-    // Lightweight endpoint - Cloudflare's trace endpoint
-    // TODO make this configurable
-    let response = client
-        .get("https://cloudflare.com/cdn-cgi/trace")
-        .send()
-        .await?;
-    
-    let latency_ms = start.elapsed().as_millis();
-    
-    if response.status().is_success() {
-        debug!("✅ Heartbeat OK ({}ms)", latency_ms);
-        Ok(true)
-    } else {
-        warn!("❌ Heartbeat failed: HTTP {}", response.status());
-        Ok(false)
+    heartbeat_with_endpoints(socks_port, &[
+        "https://cloudflare.com/cdn-cgi/trace", "https://example.com/"
+    ]).await
+}
+
+async fn heartbeat_with_endpoints(socks_port: u16, endpoints: &[&str])
+    -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let proxy = reqwest::Proxy::all(format!("socks5h://127.0.0.1:{}", socks_port))?;
+    let client = reqwest::Client::builder().proxy(proxy)
+        .timeout(Duration::from_secs(10)).build()?;
+    let mut last_error = None;
+    for endpoint in endpoints {
+        match client.get(*endpoint).send().await {
+            Ok(response) => {
+                // A site-specific 403/429/5xx is still evidence of working
+                // end-to-end transport; do not tear down paid circuits for it.
+                debug!("SOCKS heartbeat received HTTP {}", response.status());
+                return Ok(true);
+            }
+            Err(error) => last_error = Some(error),
+        }
     }
+    if let Some(error) = last_error { return Err(error.into()); }
+    Ok(false)
 }
 
 /// Full bandwidth test - downloads a file to test throughput
@@ -209,4 +206,50 @@ pub async fn check_stream_capacity(rpc_config: &crate::types::RpcConfig) -> (usi
     }
     
     (active_streams, needs_more)
+}
+
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt,AsyncReadExt,AsyncWriteExt,BufReader};
+
+    async fn proxy(fail_first: bool) -> (u16, tokio::task::JoinHandle<()>) {
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let handle=tokio::spawn(async move {
+            for attempt in 0..if fail_first {2} else {1} {
+                let (mut stream,_)=listener.accept().await.unwrap();
+                let mut greeting=[0;3];stream.read_exact(&mut greeting).await.unwrap();
+                stream.write_all(&[5,0]).await.unwrap();
+                let mut header=[0;5];stream.read_exact(&mut header).await.unwrap();
+                let mut rest=vec![0;header[4] as usize+2];stream.read_exact(&mut rest).await.unwrap();
+                if fail_first && attempt==0 {
+                    stream.write_all(&[5,1,0,1,0,0,0,0,0,0]).await.unwrap();
+                    continue;
+                }
+                stream.write_all(&[5,0,0,1,0,0,0,0,0,0]).await.unwrap();
+                let mut reader=BufReader::new(stream);
+                loop {
+                    let mut line=String::new();reader.read_line(&mut line).await.unwrap();
+                    if line=="\r\n" {break;}
+                }
+                reader.get_mut().write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            }
+        });
+        (port,handle)
+    }
+
+    #[tokio::test]
+    async fn website_status_is_not_circuit_failure() {
+        let (port,server)=proxy(false).await;
+        assert!(heartbeat_with_endpoints(port,&["http://first.invalid/"]).await.unwrap());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn retries_an_independent_endpoint_after_transport_failure() {
+        let (port,server)=proxy(true).await;
+        assert!(heartbeat_with_endpoints(port,&["http://first.invalid/","http://second.invalid/"]).await.unwrap());
+        server.await.unwrap();
+    }
 }

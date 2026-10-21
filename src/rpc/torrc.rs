@@ -28,7 +28,6 @@ pub async fn get_torrc_value(config: &RpcConfig, keywords: &[String]) -> Vec<Tor
         match get_conf(config, key.clone()).await {
             Ok(resp) => {
                 let resp = resp.trim();
-                info!("resp: {:?}", resp);
                 if resp.is_empty() {
                     continue;
                 }
@@ -147,7 +146,7 @@ fn parse_kv_data(val: &str) -> Vec<KV> {
 }
 
 pub async fn get_conf(config: &RpcConfig, setting: String) -> Result<String, Box<dyn Error>> {
-    info!("get_conf: {:?}", config);
+    info!("Reading Tor setting: {}", setting);
     let rpc = rpc_client(RpcConfig {
         addr: config.clone().addr,
         rpc_password: config.clone().rpc_password,
@@ -155,18 +154,15 @@ pub async fn get_conf(config: &RpcConfig, setting: String) -> Result<String, Box
     })
     .await?;
 
-    if rpc.starts_with("250 ") {
-        let resp = rpc.trim_start_matches("250 ");
-        Ok(resp.to_string())
-    } else {
-        Ok("".to_string())
-    }
+    let response = super::command_response(&rpc)?;
+    Ok(response.lines().filter_map(|line| {
+        line.strip_prefix("250 ").or_else(|| line.strip_prefix("250-"))
+    }).filter(|line| *line != "OK").collect::<Vec<_>>().join("\r\n"))
 }
 
 pub async fn get_conf_payment_circuit_max_fee(config: &RpcConfig) -> Result<u64, Box<dyn Error>> {
     let conf = get_conf(&config, "PaymentCircuitMaxFee".to_string())
-        .await
-        .unwrap();
+        .await?;
     if conf.is_empty() {
         return Ok(12000);
     }
@@ -219,35 +215,20 @@ pub async fn get_rpc_config_from_torrc(
     torrc_path: &str,
     rpc_password: Option<String>,
 ) -> Option<RpcConfig> {
-    let mut rpc_config: Option<RpcConfig> = None;
+    let entries = parse_raw_torrc_file(torrc_path).await.ok()?;
+    let port = entries.iter().rev().find(|entry| entry.key.eq_ignore_ascii_case("ControlPort"))
+        .and_then(|entry| entry.value.split_whitespace().next()).unwrap_or("9999");
+    let addr = if let Ok(port) = port.parse::<u16>() {
+        if port == 0 { return None; }
+        format!("127.0.0.1:{}", port)
+    } else if let Ok(address) = port.parse::<std::net::SocketAddr>() {
+        address.to_string()
+    } else {
+        log::warn!("ControlPort is not a supported TCP endpoint");
+        return None;
+    };
+    Some(RpcConfig { addr, rpc_password, command: String::new() })
 
-    if let Ok(entries) = parse_raw_torrc_file(torrc_path).await {
-        // Look for an entry with key "RpcConfig"
-        for entry in &entries {
-            if entry.key == "ControlPort" || entry.key == "Address" {
-                // We'll collect these values to build addr later
-            }
-        }
-        // After collecting all entries, search for Address and ControlPort
-        let mut address = "127.0.0.1".to_string();
-        let mut port = "9999".to_string();
-        for entry in &entries {
-            // TODO - probably remove this becuase a Relay might use a public address and we dont want to use a public IP for the control port
-            // if entry.key == "Address" && !entry.value.is_empty() {
-            //     address = entry.value.clone();
-            // }
-            if entry.key == "ControlPort" && !entry.value.is_empty() {
-                port = entry.value.clone();
-            }
-        }
-        let addr = format!("{}:{}", address, port);
-        rpc_config = Some(RpcConfig {
-            addr,
-            rpc_password: rpc_password.clone(),
-            command: "".to_string(),
-        });
-    }
-    return rpc_config;
 }
 
 pub async fn parse_raw_torrc_file(torrc_path: &str) -> Result<Vec<TorrcEntry>, Box<dyn Error>> {

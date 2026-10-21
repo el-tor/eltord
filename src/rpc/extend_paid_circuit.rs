@@ -17,15 +17,12 @@ pub async fn extend_paid_circuit(config: &RpcConfig, command: String) -> Result<
 
     match rpc {
         Ok(rpc) => {
-            if rpc.starts_with("250 ") {
-                let resp = rpc.trim_start_matches("250 ");
-                let start = resp.find("EXTENDED").map(|i| i + "EXTENDED".len()).unwrap_or(0);
-                let end = resp.find("250 closing connection").unwrap_or(resp.len());
-                let circuit_id = &resp[start..end].trim();
-                Ok(circuit_id.to_string())
-            } else {
-                Ok("".to_string())
-            }
+            let response = super::command_response(&rpc)?;
+            let circuit_id = response.strip_prefix("250 EXTENDED ")
+                .ok_or("Tor did not return an EXTENDED circuit ID")?.trim();
+            let id: u32 = circuit_id.parse()?;
+            if id == 0 { return Err("Tor returned circuit ID zero".into()); }
+            Ok(id.to_string())
         }
         Err(e) => {
             Err(e)

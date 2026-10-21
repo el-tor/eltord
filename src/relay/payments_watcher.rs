@@ -149,7 +149,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
                 let params = lni::types::OnInvoiceEventParams {
                     search: Some(payment_hash.clone()),
                     polling_delay_sec: 3,
-                    max_polling_sec: 60,
+                    max_polling_sec: (60 + GRACE_PERIOD_SEC) as i64,
                     ..Default::default()
                 };
                 
@@ -208,7 +208,10 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
                     );
                     
                     // Start the invoice event watcher
-                    wallet_clone.on_invoice_events(params, Box::new(callback)).await;
+                    tokio::select! {
+                        _ = wallet_clone.on_invoice_events(params, Box::new(callback)) => {},
+                        _ = cancellation_receiver_clone.recv() => return,
+                    }
 
                     info!("✅ Finished Round {} invoice monitoring for payment hash: {} on circuit {}", 
                           i, payment_hash_clone, circuit_id_clone);
