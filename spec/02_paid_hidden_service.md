@@ -87,6 +87,49 @@ A background wallet component synchronizes settled invoices and reconciles outgo
 
 These measures bound financial exposure; they do not eliminate CPU, bandwidth, liquidity, or availability attacks. Tor encryption and Lightning blinded paths also do not eliminate payment timing/amount correlation. The final protocol needs a privacy review as well as spending-limit validation.
 
+## Payment timing and circuit rounds
+
+### Draft schedule
+
+Keep one-minute payment rounds and a ten-minute maximum paid-circuit lifetime. The initial timing candidate is **60 seconds of advance payment lead time**, separate from late-payment grace. While the current minute runs, the client starts funding the next minute. The service waits for incoming settlement, reserves that round's funds, and then pays its own relays. Client-side relay payments can proceed independently; payments to distinct service-side relays need not be serialized after the service has received sufficient funding.
+
+| Parameter | Draft starting point | Meaning |
+| --- | --- | --- |
+| Round duration | 60 seconds | Paid service interval; unchanged by paying early. |
+| Payment lead time | 60 seconds | Start the client-to-service funding step before the next round is needed, leaving time for onward relay payments and wallet observation. |
+| Late-payment grace | Separate bounded value; 15 seconds is the current relay implementation's baseline | Determines the final nonpayment closure deadline. It is not another minute of advance notice and must be explicit in agreed terms. |
+| Maximum rounds | 10 | No automatic eleventh round or transfer to a replacement circuit. |
+
+These are draft timing candidates, not measured guarantees. Small payment amounts do not guarantee fast routing or settlement. The additional lead time addresses the two successive payment stages, client-to-service and service-to-relays, rather than assuming that Tor's data-path hop count determines Lightning payment duration. The 60-second budget must cover both stages, wallet observation, and any permitted retries; it is not a separate 60-second promise for each stage.
+
+### Initial round and setup
+
+There is no preceding minute in which to prepay round one. Before the service incurs any paid setup or relay charges, the client MUST settle funding for the initial round and all explicitly agreed setup/handshake costs. The service MUST reserve that funding before spending it. A pending payment or the client's claim that it has sent funds is insufficient.
+
+The quote and circuit establishment exchange must distinguish the bounded build/setup phase from the paid round schedule. They must define the start event and build timeout, what setup charges may be incurred before rendezvous succeeds, and what happens if either circuit half fails to become usable. First-round funding does not promise a successful connection. Exact start-event signaling remains wire-protocol work; it MUST NOT depend on an unpaid request being allowed to spend the operator's funds.
+
+### Round identifiers, acceptance windows, and deadlines
+
+Every payment and its authorization MUST identify the intended circuit, recipient, round, and agreed amount. Define a valid early-payment acceptance window, the round start/end, and final grace deadline. The service's incoming funding deadline must leave time before its outgoing relay-payment deadlines. An advertised schedule must be achievable across all selected hops; paying the service alone does not prove that any relay has been paid.
+
+The protocol MUST accept legitimate, correctly bound prepayment for an upcoming round instead of rejecting it merely because the preceding round is still active. Early settlement does not start the next round early, extend circuit lifetime, authorize another round, or permit replay. Duplicate observations must refer to the same payment record and reservation.
+
+Use authenticated circuit-relative schedules and bounded clock/observation tolerances rather than requiring perfectly synchronized clocks across all relays. The final encoding must specify how each relay's local schedule maps to its payment identifiers and how the client/service learns the relevant deadlines. A relay need not learn the identities of the service's other relays. Recipient-node settlement records are authoritative for payment status and settlement time where available; callback arrival time alone is not the settlement time. Wallet adapters must expose the information needed to enforce the agreed acceptance policy.
+
+### Renewal and failure behavior
+
+During round N, begin funding round N+1 with the advertised lead time. The service MUST wait for settled incoming funding and reserve enough for the corresponding outgoing payments, including agreed fees and padding costs, before sending them. The schedule does not permit the service to borrow from unrelated circuit rounds or subsidize a delayed client payment. The relay's explicitly agreed grace bounds its own exposure; it does not authorize unlimited spending by the service.
+
+Keep incoming funding, outgoing payment state, and circuit state distinct. Incoming settlement, outgoing payment initiation, outgoing settlement, and a usable circuit are different events. A required payment missing its final deadline closes the affected paid circuit; any remaining work and the other circuit half must be stopped or reconciled without silently extending fees, lifetime, or access. Do not grant a new full grace period merely because a poll, retry, or process restart occurred.
+
+A wallet timeout or RPC cancellation does not prove that a payment failed: an in-flight payment may still settle. Persist its identity and reconcile its terminal state before issuing a replacement payment, releasing its reserved funds, or considering a refund. A late-settling payment MUST NOT reopen a closed circuit or automatically authorize a different circuit or round. Record actual agreed costs and resolve unused settled funds under the disclosed failure/refund policy. Authenticated refund details, fees, and eligibility remain open design work; no unconditional refund or delivery guarantee is implied.
+
+### Final round and validation
+
+Prepayment stops at round ten. While round nine runs, funding may be sent for round ten; while round ten runs, the scheduler MUST NOT request or pay for round eleven. Expiration or replacement begins a separate authorization/payment sequence. Circuit-specific funding MUST NOT silently migrate to the replacement. Reconcile pending payments and unused reservations on closure, including when the client disconnects before a prepaid round is used. Active-stream behavior at the ten-minute cutoff remains a separate planning topic.
+
+Before finalizing the lead time or grace value, measure the complete client-to-service-to-relays sequence, including invoice acquisition, settlement, wallet polling/event latency, concurrent onward payments, and retries. Test initial construction, valid early payment, boundary timings, late wallet observations, late settlement after closure, duplicate callbacks, uncertain outgoing payments, restarts, and the absence of round-eleven charges. Local mocked-wallet timing tests do not establish live Lightning routing latency. This section records the agreed draft direction; implementation and timing measurements remain future work.
+
 ## Payment methods and receiver privacy
 
 ### Receiver choice and negotiation
@@ -149,6 +192,12 @@ The service MUST NOT automatically spend wallet funds when free capacity is exha
 
 Before choosing numeric limits or claiming this is affordable, measure introduction message sizes, bursts, maintenance/padding, circuit setup, and descriptor-update work under the ten-minute rotation policy. Validate that a legitimate service remains reachable through repeated rotations without continuous relay payments. Separately test combined free circuits, rebuild storms, queue exhaustion, and attempts to carry bulk traffic. Verify that each hop enforces its local limits, aggregate resource use stays bounded, and exhausted free capacity cannot drain either wallet. This is future validation work, not a report of completed tests.
 
+## Planning resume point
+
+The receiver-choice privacy policy and the payment-timing draft above are recorded. The next discussion is **price agreement**: disclose the full per-round price and setup/routing fees before payment, decide how long the quote is fixed, and define what happens if underlying relay costs change. No pricing decision is implied yet.
+
+Remaining discussion topics afterward are active connections at the ten-minute circuit cutoff and client compatibility/version negotiation. The separate paid-circuit replay-protection investigation remains deferred; these specification edits do not implement its fixes.
+
 **References:**
 
 - [Tor onion-service overview](https://community.torproject.org/onion-services/overview/) describes descriptor publication, introduction points, and rendezvous.
@@ -156,3 +205,4 @@ Before choosing numeric limits or claiming this is affordable, measure introduct
 - [Tor rendezvous protocol](https://spec.torproject.org/rend-spec/rendezvous-protocol.html) defines circuit establishment and rendezvous cookies.
 - [BOLT 12](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md) defines offer/invoice negotiation and distinguishes payment knowledge from payer proof. The authorization and funding rules above are proposed El Tor extensions, not guarantees supplied by BOLT 12.
 - [LND blinded invoice creation](https://lightning.engineering/api-docs/api/lnd/lightning/add-invoice/) documents `is_blinded` and blinded-path configuration; support depends on the participating wallet implementations.
+- [LND payment timeout and cancellation behavior](https://lightning.engineering/api-docs/api/lnd/router/send-payment-v2/) explains why an in-flight payment can still settle after cancellation or the routing timeout.
