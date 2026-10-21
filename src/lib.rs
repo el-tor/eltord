@@ -484,14 +484,17 @@ where
     let torrc_path_clone = torrc_path.clone();
     
     // Start Tor in the same process (simpler, single-process mode)
-    let _tor = tokio::task::spawn_blocking(move || {
+    let mut tor = tokio::task::spawn_blocking(move || {
         match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
-            Ok(_tor_instance) => {
-                info!("Tor started successfully in process");
-                // Keep the task alive indefinitely to maintain Tor
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(60));
-                }
+            Ok(0) => {
+                // start() runs Tor's event loop and returns after shutdown.
+                // Keeping this task alive would leave the controller retrying
+                // against a later daemon that reuses the same control port.
+                info!("Tor event loop stopped");
+            },
+            Ok(exit_code) => {
+                error!("Tor exited with status {}", exit_code);
+                std::process::exit(i32::from(exit_code));
             },
             Err(e) => {
                 error!("Failed to start Tor: {:?}", e);
@@ -502,7 +505,10 @@ where
     
     // Give Tor a moment to start up before trying to connect
     info!("Waiting for Tor to initialize...");
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    tokio::select! {
+        _ = &mut tor => return,
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {}
+    }
 
     let mut tasks = Vec::new();
 
@@ -529,11 +535,21 @@ where
         std::process::exit(1);
     }
 
-    // Wait for all tasks to complete (they run indefinitely)
-    for task in tasks {
-        if let Err(e) = task.await {
-            info!("Task completed with error: {:?}", e);
-        }
+    let abort_handles: Vec<_> = tasks.iter().map(|task| task.abort_handle()).collect();
+    // The controller flows must never outlive their embedded Tor instance.
+    // Dropping a JoinHandle detaches its task, so retain explicit cancellation.
+    tokio::select! {
+        _ = &mut tor => info!("Tor stopped; cancelling client and relay controllers"),
+        _ = async {
+            for task in tasks {
+                if let Err(e) = task.await {
+                    info!("Task completed with error: {:?}", e);
+                }
+            }
+        } => {}
+    }
+    for handle in abort_handles {
+        handle.abort();
     }
     
     // Clean up any spawned processes before exit

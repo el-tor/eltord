@@ -20,6 +20,26 @@ python3 eltord/tools/stability/paid_format_probe.py
 python3 eltord/tools/stability/fault_tests.py
 ```
 
+`firefox_soak.py` runs actual Firefox downloads alongside the same curl routes.
+Start a local geckodriver session with a disposable Firefox profile, configure
+SOCKS5 at `127.0.0.1:18048`, enable proxy DNS and
+`network.proxy.allow_hijacking_localhost`, clear proxy exclusions, disable direct
+proxy fallback and browser caches, then pass its WebDriver session ID:
+
+```sh
+python3 eltord/tools/stability/firefox_soak.py --seconds 1200 \
+  --session SESSION_ID --out .runtime/circuit-audit/firefox-run
+python3 eltord/tools/stability/daemon_lifecycle.py eltor-app/backend/bin/eltord \
+  --out .runtime/circuit-audit/lifecycle-run
+```
+
+The Firefox origin uses port 18881 so its SOCKS streams can be identified
+separately from curl traffic on 18880. Each browser payload is checked by size and
+SHA256; public HTTPS page loads are recorded separately. Ensure only one daemon
+controls the app client before starting a measurement. The lifecycle regression
+uses disposable network-disabled Tor instances and checks process exit after
+SIGTERM and controller shutdown, including during startup.
+
 `protocol_probes.py` requires the soak's HTTP origin on 18880 to be running.
 It compares intact, split-greeting, split-request, and bytewise-request SOCKS
 frames across the router, direct embedded Tor, and standalone Chutney client.

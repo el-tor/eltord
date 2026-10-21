@@ -246,12 +246,17 @@ fn select_three_relays<'a>(
 
 fn apply_preference(pool: &mut Vec<&ConsensusRelay>, preference: Option<&crate::rpc::TorrcEntry>) {
     if let Some(preference) = preference {
-        let fingerprint = preference.value.trim_start_matches('$');
-        if pool
-            .iter()
-            .any(|r| r.fingerprint.eq_ignore_ascii_case(fingerprint))
-        {
-            pool.retain(|r| r.fingerprint.eq_ignore_ascii_case(fingerprint));
+        // Tor accepts nicknames as well as fingerprints in EntryNodes/ExitNodes.
+        // Ignoring a nickname can route browser traffic to an unintended exit.
+        let matches = |relay: &&ConsensusRelay| {
+            preference.value.split(',').any(|identifier| {
+                let identifier = identifier.trim().trim_start_matches('$');
+                relay.fingerprint.eq_ignore_ascii_case(identifier)
+                    || relay.nickname.eq_ignore_ascii_case(identifier)
+            })
+        };
+        if pool.iter().any(matches) {
+            pool.retain(matches);
         } else {
             warn!("Preferred relay is unavailable for this role; retaining eligible candidates");
         }
@@ -327,6 +332,21 @@ mod stability_tests {
             policy: None,
         }
     }
+    #[test]
+    fn exit_preference_accepts_nicknames_and_fingerprint_lists() {
+        let mut preferred = relay("fingerprint");
+        preferred.nickname = "test004r".into();
+        let other = relay("other");
+        for value in ["TEST004R", "$FINGERPRINT", "unavailable, test004r"] {
+            let mut pool = vec![&other, &preferred];
+            apply_preference(&mut pool, Some(&crate::rpc::TorrcEntry {
+                key: "ExitNodes".into(), value: value.into(), data: vec![],
+            }));
+            assert_eq!(pool.len(), 1);
+            assert_eq!(pool[0].fingerprint, "fingerprint");
+        }
+    }
+
     #[test]
     fn pinned_exit_is_reserved_before_middle_selection() {
         let guard = relay("guard");
