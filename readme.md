@@ -88,6 +88,9 @@ Spec
 ----
 - [(00) - El Tor Spec](./spec/00_spec.md)
 - [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
+- [(01a) - Circuit Renewal Wire Draft](./spec/01a_circuit_renewal_wire.md)
+- [(02) - Paid Hidden Services](./spec/02_paid_hidden_service.md)
+- [El Tor implementation TODO — deferred protocol work](./TODO.md)
 
 
 eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `torrc` with these additional settings:
@@ -262,6 +265,9 @@ In  ~/code/libtor-sys/scripts/copy.sh
 
 TODO
 ----
+
+See the [El Tor implementation TODO](./TODO.md) for deferred specification work, dependencies, and acceptance checks. The existing general items below remain in place.
+
 1. simply read the payments-sent.json in as the same dir as the TOR DataDirectory
 2. simplify the default command:
 ```sh
