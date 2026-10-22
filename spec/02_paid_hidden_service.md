@@ -52,12 +52,12 @@ Use a fresh authorization identity for each new paid circuit rather than a reusa
 
 ### 2. Define who funds each circuit
 
-Paying the service for access and paying transport relays are distinct charges. The client funds the variable costs of its connection one circuit round at a time. The service maintains its introduction circuits within the bounded free allowance below; exceeding that allowance MUST NOT silently charge the operator. Any separate descriptor publication or hosting cost remains explicitly budgeted.
+Paying the service for access and paying transport relays are distinct charges. The client funds the variable costs of its connection one circuit round at a time. The service maintains its introduction circuits within the bounded free allowance below; exceeding that allowance MUST NOT silently charge the operator. Descriptor publication and retrieval use the proposed bounded free discovery allowance below. Optional paid capacity beyond that baseline requires explicit payer approval and a spending cap.
 
 | Activity | Payer and budget |
 | --- | --- |
 | Service-to-introduction-point circuits | Free within advertised limits at every hop, including bounded setup and replacement work. |
-| Descriptor publication, hosting, and client retrieval | Separate from maintaining introduction circuits; any paid charges must have explicit payer approval and caps. |
+| Descriptor publication, storage, and client retrieval | Proposed bounded free discovery service, covering path traffic and HSDir resource limits; any optional paid extras require explicit approval and caps. |
 | Client introduction circuit | May use the same purpose-independent free allowance where supported and sufficient. |
 | Client-to-rendezvous circuit | Client pays its chosen relays in one-minute rounds. |
 | Service-to-rendezvous circuit | Service pays its privately selected relays using this client's funding for the corresponding circuit and round. |
@@ -152,6 +152,52 @@ When the receiver chooses BOLT 12 blinded paths, account for both invoice-reques
 
 LND documents blinded invoice creation through its `is_blinded` option and an ephemeral signing key. The local LNI LND adapter exposes this option; that source support is not an end-to-end interoperability test. Wallet-specific support must be checked and tested before advertising a method as usable. No new wallet implementation is claimed by this specification update.
 
+## Descriptor publication, retrieval, and free discovery
+
+### Ordinary onion-service publication flow
+
+Descriptor publication is separate from maintaining an introduction point. For a normal anonymous onion service:
+
+1. The service's Tor software establishes introduction points, creates the descriptor describing how to contact them, and signs and encrypts it using the v3 onion-service descriptor construction.
+2. The service derives the responsible HSDir relays from the current consensus, time-period/blinded-key rules, and shared randomness. These are selected directory relays, not the directory authorities receiving an ordinary relay descriptor.
+3. It builds anonymized, normally three-hop upload circuits ending at those HSDirs and uploads descriptor copies. It MUST NOT replace this with a direct connection that exposes the service's origin address.
+4. Once an upload finishes, that upload circuit need not remain open to keep the stored descriptor available. The service continues maintaining separate introduction circuits for forwarding client introductions.
+5. A client knowing the onion address derives the appropriate lookup information, fetches a descriptor through Tor, and verifies and decrypts it. Optional client authorization can restrict who can decrypt the connection information.
+
+Descriptors are replicated and refreshed, including when introduction information changes and across descriptor time-period transitions. They are not a single permanent upload or a cleartext network-wide directory listing. HSDirs need not learn the onion address or decrypt introduction details merely to store and serve a valid descriptor. Ordinary clients knowing a non-restricted onion address can retrieve its descriptor.
+
+### Proposed pricing: bounded free discovery
+
+Basic descriptor publication, storage, refresh, and retrieval SHOULD be available without Lightning payments within explicitly advertised resource limits. This allows a service to become discoverable before its first paying client and allows clients to learn contact and payment information before purchasing rendezvous traffic. It is a proposed policy, not an already implemented free service or an unlimited availability guarantee.
+
+The transport part uses the same purpose-independent bounded free allowance at every hop, including the guard, middle, and HSDir endpoint. Intermediate relays enforce resource limits without needing to inspect descriptor contents or recognize a directory operation. The HSDir separately enforces limits on its storage and request-processing resources. Making endpoint storage free alone would not remove transport charges on the earlier hops.
+
+The allowance must fit legitimate complete descriptor uploads/downloads, acknowledgments, copies, refreshes, and permitted replacement overlap. A descriptor is larger than a single introduction message; a tiny sustained rate may require a bounded burst budget to finish publication in a useful time. Measure this workload before selecting byte rates or burst sizes. Include transport/padding overhead and any compression/decompression limits in the resource accounting. Descriptor size, lifetime, and periodic refresh are distinct from the ten-minute maximum circuit lifetime.
+
+Free capacity does not silently waive the normal price of an already paid circuit, turn paid application traffic into free traffic, or authorize an automatic wallet charge if a limit is reached. Eligible discovery setup must fit the bounded free setup policy. Additional paid capacity requires explicit operator/client consent and a spending limit; overload should produce bounded retries or temporary unavailability rather than an unexpected charge.
+
+HSDir endpoints cannot be chosen arbitrarily merely because another relay offers free storage: clients must derive the same responsible locations as publishers. Capability signaling and HSDir eligibility/selection rules must be consistent across the network. If a responsible endpoint lacks this feature or is overloaded, use the permitted replicas and bounded retry behavior. Any alternative eligibility rule requires an explicitly specified interoperable protocol change; do not silently change the hash ring on one side.
+
+### Spam and resource-exhaustion controls
+
+Low bandwidth per honest service does not make unrestricted publication safe. An origin can create many service keys, issue repeated descriptor updates, submit malformed documents, or trigger repeated lookups. These consume storage, signature-verification CPU, circuit setup, queues, and response bandwidth. A valid signature proves control of a key, not scarcity of identities or absence of spam.
+
+Supporting HSDirs and path relays MUST have enforceable bounds covering:
+
+- Complete request/document size, parsing and cryptographic verification work, and bounded queues/concurrency. Reject oversized or malformed requests without unbounded allocation or processing.
+- Descriptor certificate/signature validation, revision handling, and retention/expiration following the v3 descriptor rules. Do not overwrite a newer accepted revision with an older one or retain an unbounded history of revisions.
+- Publication/update frequency and request traffic per descriptor key where useful, plus global storage, CPU, free bandwidth, and pending-request ceilings. New keys, circuits, or connections must not reset the global budget.
+- Download traffic, repeated misses, and repeated uploads of the same data, with bounded retries/backoff and explicit overload behavior.
+- Legitimate replicas, overlapping descriptor time periods, introduction replacement, and recovery after missed publication. Limits must leave capacity for required maintenance rather than counting only an initial upload.
+
+Keep the outer descriptor verifiable without requiring HSDirs to decrypt its connection information, learn the long-term onion identity, or link successive blinded identities solely to enforce quotas. Per-key and per-connection throttles supplement global limits; they cannot prevent one origin from creating many identities. Fair admission under a flood remains a design and test topic. Limits bound resource exposure but do not promise that spam cannot make a service temporarily unreachable.
+
+### Validation and open decisions
+
+Measure publication size, replica count, update rate, and retrieval traffic for legitimate services, especially with ten-minute introduction-circuit replacement and time-period overlap. Test that an onion service can publish, refresh, and be found through an entirely eligible free path without paying continuous relay fees or exposing its origin. Confirm that clients and publishers agree on responsible HSDirs and reject stale/invalid descriptors.
+
+Then test many-key upload floods, frequent revisions, malformed/oversized inputs, repeated lookups/misses, and combined traffic across circuits and connections. Verify bounded storage, CPU, queues, setup work, and bandwidth, as well as recovery for legitimate users after overload. Numeric quotas, fair admission, capability encoding, and any extra anti-spam mechanism remain undecided until these tests inform them. This section records a bounded-free proposal, not completed spam-resistance validation.
+
 ## Bounded free allowance for introduction availability
 
 ### Purpose and scope
@@ -180,7 +226,7 @@ At the introduction endpoint, enforce the introduction protocol's permitted beha
 
 ### Circuit lifetime and payment behavior
 
-Free introduction circuits follow the proposed ten-minute maximum circuit lifetime. The service establishes replacements before retiring old circuits and updates its descriptor when introduction points or their published keys change. Replacement overlap, setup, acknowledgments, and normal maintenance must fit the bounded free allowance. The descriptor upload circuit is separate and need not stay open just to keep the descriptor published. Pricing and capacity for descriptor distribution are separate design work.
+Free introduction circuits follow the proposed ten-minute maximum circuit lifetime. The service establishes replacements before retiring old circuits and updates its descriptor when introduction points or their published keys change. Replacement overlap, setup, acknowledgments, and normal maintenance must fit the bounded free allowance. The descriptor upload circuit is separate and need not stay open just to keep the descriptor published. Descriptor distribution uses the proposed bounded free discovery policy below; exact capacity limits remain design work.
 
 Eligible free setup and maintenance MUST NOT require the service to pay a normal paid-circuit handshake fee merely to remain reachable. The existing paid-circuit handshake-fee logic remains: relay operators set that fee, and new relays may advertise zero sats. This proposal does not introduce a new paid-activation fee or use the free allowance as a promise of full-bandwidth testing.
 
@@ -194,7 +240,7 @@ Before choosing numeric limits or claiming this is affordable, measure introduct
 
 ## Planning resume point
 
-The receiver-choice privacy policy and the payment-timing draft above are recorded. The next discussion is **price agreement**: disclose the full per-round price and setup/routing fees before payment, decide how long the quote is fixed, and define what happens if underlying relay costs change. No pricing decision is implied yet.
+The receiver-choice privacy policy, payment-timing draft, and bounded-free descriptor discovery proposal are recorded. The **price agreement** discussion remains open: disclose the full per-round price and setup/routing fees before payment, decide how long the quote is fixed, and define what happens if underlying relay costs change. No pricing decision is implied yet.
 
 Remaining discussion topics afterward are active connections at the ten-minute circuit cutoff and client compatibility/version negotiation. The separate paid-circuit replay-protection investigation remains deferred; these specification edits do not implement its fixes.
 
@@ -206,3 +252,6 @@ Remaining discussion topics afterward are active connections at the ten-minute c
 - [BOLT 12](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md) defines offer/invoice negotiation and distinguishes payment knowledge from payer proof. The authorization and funding rules above are proposed El Tor extensions, not guarantees supplied by BOLT 12.
 - [LND blinded invoice creation](https://lightning.engineering/api-docs/api/lnd/lightning/add-invoice/) documents `is_blinded` and blinded-path configuration; support depends on the participating wallet implementations.
 - [LND payment timeout and cancellation behavior](https://lightning.engineering/api-docs/api/lnd/router/send-payment-v2/) explains why an in-flight payment can still settle after cancellation or the routing timeout.
+- [Tor descriptor publication and lookup](https://spec.torproject.org/rend-spec/deriving-keys.html) defines responsible HSDirs, replication, and periodic/time-period-overlap publication.
+- [Tor descriptor outer wrapper](https://spec.torproject.org/rend-spec/hsdesc-outer.html) defines certificates, signatures, lifetime, and revision handling.
+- [Tor descriptor encryption](https://spec.torproject.org/rend-spec/hsdesc-encrypt.html) describes address-based confidentiality and optional restricted discovery.
