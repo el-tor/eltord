@@ -2,6 +2,34 @@
 ==============================
 
 
+## Shared circuit construction and bounded free allowance
+
+**Draft extension:** All El Tor circuits use the same construction and per-hop payment payload below, including circuits used only within the bounded free allowance. This section adds a protocol proposal; it does not claim that bandwidth quotas or free-resource enforcement are already implemented. Paid service retains one-minute rounds and a ten-minute maximum circuit lifetime under the agreed network policy.
+
+### Uniform per-hop payment payload
+
+For each hop, preserve the handshake payment hash/preimage fields and ten distinct 32-byte round payment identifiers in the existing `EXTENDPAIDCIRCUIT` construction. Generate independent identifiers for each hop, round, and new circuit, including when no real payment is expected for the free allowance. Preserve per-hop encryption and equal-size padding. A relay decrypts only its own payment information.
+
+Where no handshake fee applies, populate the existing handshake fields with fresh, correctly sized dummy hash/preimage values instead of omitting them. Where the agreed paid handshake fee applies, use its actual proof and verify it against the recipient's settled invoice records. A relay's advertised paid rate and paid handshake fee remain under operator control; a new relay may advertise a zero-sat handshake fee as before.
+
+The free allowance MUST NOT use a shorter payload, missing payment fields, shared dummy constants, or a new circuit-purpose header identifying an onion service. It is available based on resource use, not an origin's claim to be a service. Ordinary clients and onion services construct their circuits the same way. Standard endpoint-specific Tor commands such as `ESTABLISH_INTRO` and descriptor publication remain necessary at their destinations; they do not require disclosing that role in the guard's or middle relay's payment payload.
+
+### Small free capacity on ordinary circuits
+
+Supporting relays advertise a small, bounded free traffic allowance alongside their normal paid rate. It is purpose-independent and may support low-volume communication, descriptor publication/retrieval, and introduction availability without recurring Lightning fees within those bounds. Every hop on the selected path must support and admit the allowance. The ordinary construction is shared; free usage is not a different onion-service circuit format.
+
+Eligible setup and maintenance within the free allowance do not require a paid-service handshake charge. The preexisting handshake-fee and bandwidth-testing logic for paid service remains unchanged; this proposal does not introduce a separate paid-activation fee or promise a full-speed trial from the tiny allowance. A zero handshake fee alone does not advertise free recurring capacity, and the presence of dummy fields does not prove that a required payment was made.
+
+Limits MUST bound per-circuit sustained/burst traffic in both directions, total relay-wide free traffic, circuit creation, concurrent/pending circuits, CPU/memory, queued work, and buffering. Include normal protocol maintenance and padding in the accounting. Many circuits or fresh identities MUST NOT multiply free resources beyond the relay's aggregate budget. Excess use is throttled or rejected with bounded queues/retries; it MUST NOT silently charge the origin. Numeric rates, bursts, and resource budgets remain configurable draft work to be selected through measurement.
+
+Paid bandwidth beyond the allowance requires the agreed handshake and recurring payments. A circuit with a required paid round MUST close if that payment misses its bounded deadline/grace; it MUST NOT continue by falling back to free capacity. An independently admitted circuit using only the free allowance remains subject to the same small limits and aggregate budget. A dummy handshake proof or unused round identifier never counts as settled funds and cannot authorize paid capacity. Paid-round enforcement and free-resource accounting must therefore be explicit, without using a purpose-specific construction.
+
+### Shared lifetime and specification relationship
+
+The ten-minute maximum applies to free and paid circuits in the proposed El Tor policy. Early closure remains valid for failure, poor performance, loss of required payment, user choice, or enforced resource limits; ten minutes is not a requirement to keep a broken circuit alive. Idle periods are also normal. See [spec two](02_paid_hidden_service.md) for descriptor-upload retention and introduction-circuit replacement within this shared lifecycle.
+
+`BANDWIDTH_QUOTA` below describes a separate proposed quota for paid bandwidth; its legacy zero/unlimited value MUST NOT be interpreted as an unlimited free allowance. The bounded free allowance is also distinct from the initial bandwidth-testing window on a paid circuit. Capability signaling, exact accounting/acceptance rules, and the interactions with payment watchers remain implementation work. Validate identical construction/padding, aggregate bounds, legitimate free discovery, and correct paid-circuit closure before claiming support.
+
 Client Flow
 ==========
 A client wants to build a paid circuit.
@@ -93,10 +121,7 @@ The `EXTENDPAIDCIRCUIT` RPC command builds an onion layer for each of the relays
 - Finally the exit relay gets his payment hashes and preimage wrapped up in hop 3 (or N). 
 - *This works a little bit different for Hidden Services because there is no exit relay as they build a circuit to the introductory and rendevous points.
 
-This is important for privacy because the client is never directly communicating with the middle or exit relays to preserve privacy. 
-The relays cannot correlate any data because the data is all unique hashes. Even if two relays in a circuit are the same, they 
-would not be able to correlate data because all communication is done thru onion messages and all data is padded to be equal size. 
-Each relay can only decrypt the data that belongs to them in their decrypted onion.  
+Each relay receives independent payment identifiers through its own encrypted onion layer. Unique per-hop values avoid shared payment identifiers across hops, and equal-size padding avoids fee-dependent payload lengths. Zero-fee handshakes retain the same fields using dummy values. Each relay decrypts only the payment data intended for that hop. These construction requirements also apply to the bounded free allowance and the circuits in [spec two](02_paid_hidden_service.md).
 
 <b>4. Test Bandwidth</b>
 
@@ -193,7 +218,7 @@ PAYMENT_BOLT11_LIGHTNING_ADDRESS name@domain.com
 A relay receives a handshake cell to extend/create a circuit from a client willing to pay for bandwidth.
 
 Handshake Fee check: A relay receives an onion message to `EXTENDPAIDCIRCUIT`. Verify the `handshake_fee_payment_hash` and `handshake_fee_preimage`. 
-If no fee is required you can ignore the padded data.
+If no fee applies under the agreed allowance or handshake terms, retain the padded fields and do not treat dummy values as a real payment. The bounded free allowance above is distinct from paid service: required paid fees still need verification, while eligible free-only use is governed by resource limits rather than unpaid paid-round deadlines.
 
 <b>3. Watch emitted Event PAYMENT_ID_HASH_RECEIVED</b>
 

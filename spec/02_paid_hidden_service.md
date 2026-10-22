@@ -8,6 +8,14 @@
 
 **Design status:** This is a proposed El Tor extension, not a description of standard Tor or a completed implementation. The four revision requirements below refine the payment and authorization flow. The existing diagram is conceptual; it does not yet show client-bound authorization, circuit/round funding, retry accounting, or the bounded free introduction allowance. Paid circuits use one-minute rounds with a ten-minute maximum lifetime. Wire formats, padding durations, and free-capacity limits remain open design work.
 
+## Circuit construction inherited from spec one
+
+All circuits in this proposal MUST be built the same way as [spec one](01_paid_circuits.md#shared-circuit-construction-and-bounded-free-allowance): descriptor upload/fetch circuits, both introduction paths, and both rendezvous paths inherit the ordinary El Tor per-hop payment construction. Retain the handshake hash/preimage fields, ten unique round identifiers per hop, per-hop encryption, and equal-size padding. Use fresh dummy handshake values where no fee applies; do not omit fields or introduce shared constants for free circuits.
+
+The small free allowance is part of spec one's shared circuit/resource policy, not an onion-service-only circuit header or a shorter payment payload. No guard/middle payment field needs to label its origin as an onion service, and construction size or payment-field presence MUST NOT vary merely because a circuit is using the free allowance. Normal Tor introduction, directory, and rendezvous commands still operate at their intended endpoints. The client-to-service access authorization in this document is carried separately inside the service-encrypted introduction message; it does not replace or change the shared relay-payment construction.
+
+One-minute paid rounds, the ten-minute circuit cap, early closure, and idle periods are ordinary El Tor lifecycle behavior. This section preserves the same construction and resource policy across roles; it is not a claim that every traffic pattern is indistinguishable or that these proposed extensions are implemented.
+
 **Service setup:** Before a client arrives, the service establishes circuits to its introduction points and publishes a descriptor listing them to hidden-service directories. The service keeps introduction circuits available using the bounded free allowance described below. Descriptor upload is a separate operation; publishing a descriptor does not require retaining its upload circuit. Introduction circuits carry introduction messages, while the later rendezvous circuits carry application traffic.
 
 The sequence below uses BOLT 12 as the recommended example. It does not require BOLT 12 or receiver-hiding paths; other mutually supported, verifiable payment methods are permitted under the payment-method policy below.
@@ -161,10 +169,16 @@ Descriptor publication is separate from maintaining an introduction point. For a
 1. The service's Tor software establishes introduction points, creates the descriptor describing how to contact them, and signs and encrypts it using the v3 onion-service descriptor construction.
 2. The service derives the responsible HSDir relays from the current consensus, time-period/blinded-key rules, and shared randomness. These are selected directory relays, not the directory authorities receiving an ordinary relay descriptor.
 3. It builds anonymized, normally three-hop upload circuits ending at those HSDirs and uploads descriptor copies. It MUST NOT replace this with a direct connection that exposes the service's origin address.
-4. Once an upload finishes, that upload circuit need not remain open to keep the stored descriptor available. The service continues maintaining separate introduction circuits for forwarding client introductions.
+4. In ordinary Tor, an upload circuit need not remain open merely to keep the descriptor stored. The proposed El Tor lifecycle below normally retains it until its ten-minute expiration. The service continues maintaining separate introduction circuits for forwarding client introductions.
 5. A client knowing the onion address derives the appropriate lookup information, fetches a descriptor through Tor, and verifies and decrypts it. Optional client authorization can restrict who can decrypt the connection information.
 
 Descriptors are replicated and refreshed, including when introduction information changes and across descriptor time-period transitions. They are not a single permanent upload or a cleartext network-wide directory listing. HSDirs need not learn the onion address or decrypt introduction details merely to store and serve a valid descriptor. Ordinary clients knowing a non-restricted onion address can retrieve its descriptor.
+
+### El Tor upload-circuit lifetime
+
+After completing publication, normally retain the descriptor-upload circuit until its ten-minute expiration rather than closing it immediately because the upload finished. This follows the shared lifetime policy in spec one, subject to user choice, failures, and free-resource admission/enforcement limits. Remaining idle after a small transfer and closing early when a circuit performs poorly are also normal client behaviors; circuit lifetime or idleness alone is not an onion-service identifier.
+
+Retaining an upload circuit is a lifecycle choice, not a requirement for HSDir storage. Its expiration MUST NOT itself cause an unnecessary new upload or immediate circuit replacement. Publish again when a descriptor update or refresh is needed. Preserve the shared padding/maintenance policy within the free resource budget and count retained idle circuits against the same aggregate limits. Introduction circuits, which must remain available to receive invitations, have their separate replacement requirements below.
 
 ### Proposed pricing: bounded free discovery
 
@@ -208,7 +222,7 @@ Then test many-key upload floods, frequent revisions, malformed/oversized inputs
 
 The service needs open circuits to its introduction points so those relays can forward client introductions. These circuits are shared availability infrastructure across many visitors, not a new service-side circuit built for every client. Charging ordinary paid-circuit rates continuously could make staying reachable prohibitively expensive.
 
-This proposal provides a tiny, explicitly advertised free traffic allowance at **every hop** of an eligible circuit, including its guard, middle, and introduction endpoint. Waiving only the introduction endpoint's fee would leave the other hops charging the operator. A service MUST choose a path whose relays support the allowance and currently admit free circuits. Availability remains subject to advertised resource limits; free capacity is not guaranteed under overload.
+This proposal uses spec one's shared, purpose-independent free traffic allowance at **every hop** of an eligible ordinary El Tor circuit, including its guard, middle, and introduction endpoint. Waiving only the introduction endpoint's fee would leave the other hops charging the operator. A service MUST choose a path whose relays support the allowance and currently admit free circuits. Availability remains subject to advertised resource limits; free capacity is not guaranteed under overload.
 
 The allowance is based on enforceable resource use, not a claim that a circuit is for an onion service. Earlier relays MUST NOT need to learn the onion-service identity, full path, or introduction role to apply it. Any origin may use this limited capacity, including for other low-volume communication. Such use is an intentional subsidy; the design does not claim that a tiny allowance is useless to a freeloader.
 
@@ -246,7 +260,7 @@ Before choosing numeric limits or claiming this is affordable, measure introduct
 
 The receiver-choice privacy policy, payment-timing draft, and bounded-free descriptor discovery proposal are recorded. The **price agreement** discussion remains open: disclose the full per-round price and setup/routing fees before payment, decide how long the quote is fixed, and define what happens if underlying relay costs change. No pricing decision is implied yet.
 
-A fingerprinting review is also open: determine whether free-versus-paid circuit behavior, deterministic introduction-circuit replacement, descriptor update timing/size, or payment identifiers create distinguishable patterns within El Tor. Standard Tor introduction-point lifetimes are randomized over a default 18–24-hour range; the draft's ten-minute circuit replacement is a design difference, not a demonstrated deanonymization finding. Preserve the distinction between introduction-point lifetime and the lifetime of a circuit connecting to it when reviewing alternatives. No change to the chosen circuit cap or privacy policy is made by recording this question.
+A fingerprinting review is also open for combinations of observable traffic behavior, introduction-circuit replacement, descriptor update timing/size, and identifier reuse. The shared spec-one construction already requires equal-size per-hop encrypted payment fields and dummy zero-fee handshake values; their mere presence is not an added onion-service marker. Normal client comparisons must include idle ten-minute circuits and early closure for poor performance. No traffic-correlation finding has been demonstrated by this planning discussion. Standard Tor introduction-point lifetimes are randomized over a default 18–24-hour range; the draft's ten-minute circuit replacement is a design difference, not a demonstrated deanonymization finding. Preserve the distinction between introduction-point lifetime and the lifetime of a circuit connecting to it when reviewing alternatives. No change to the chosen circuit cap or privacy policy is made by recording this question.
 
 Remaining discussion topics afterward are active connections at the ten-minute circuit cutoff and client compatibility/version negotiation. The separate paid-circuit replay-protection investigation remains deferred; these specification edits do not implement its fixes.
 
