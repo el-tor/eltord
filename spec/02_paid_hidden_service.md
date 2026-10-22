@@ -182,13 +182,17 @@ HSDir endpoints cannot be chosen arbitrarily merely because another relay offers
 
 Low bandwidth per honest service does not make unrestricted publication safe. An origin can create many service keys, issue repeated descriptor updates, submit malformed documents, or trigger repeated lookups. These consume storage, signature-verification CPU, circuit setup, queues, and response bandwidth. A valid signature proves control of a key, not scarcity of identities or absence of spam.
 
-Supporting HSDirs and path relays MUST have enforceable bounds covering:
+Supporting HSDirs and path relays MUST implement the following five resource bounds. The policy is recorded here; new numeric defaults remain provisional until legitimate workloads and overload behavior are measured.
 
-- Complete request/document size, parsing and cryptographic verification work, and bounded queues/concurrency. Reject oversized or malformed requests without unbounded allocation or processing.
-- Descriptor certificate/signature validation, revision handling, and retention/expiration following the v3 descriptor rules. Do not overwrite a newer accepted revision with an older one or retain an unbounded history of revisions.
-- Publication/update frequency and request traffic per descriptor key where useful, plus global storage, CPU, free bandwidth, and pending-request ceilings. New keys, circuits, or connections must not reset the global budget.
-- Download traffic, repeated misses, and repeated uploads of the same data, with bounded retries/backoff and explicit overload behavior.
-- Legitimate replicas, overlapping descriptor time periods, introduction replacement, and recovery after missed publication. Limits must leave capacity for required maintenance rather than counting only an initial upload.
+| Bound | Initial policy | Scope and rationale |
+| --- | --- | --- |
+| Descriptor size | Retain Tor's active consensus size limit, currently `HSV3MaxDescriptorSize` with a default of 50,000 bytes. Do not invent a smaller El Tor format. | Bound complete documents and request framing; reject oversized/malformed inputs without unbounded allocation. Preserve descriptor encryption and padding rules. |
+| Upload/update rate | Allow a bounded burst, then a configurable sustained update rate per descriptor key, with explicit retry/backoff behavior. | Accommodate introduction replacement, legitimate revisions, replicas, overlapping periods, and recovery. Repeated uploads or new keys must not bypass global work limits. |
+| Total storage | Use a configurable HSDir cache/memory budget, expire entries, and retain the appropriate latest revision rather than unlimited revision history. | Validate descriptor certificates/signatures and revision rules. Do not overwrite a newer accepted revision with an older one. Establish bounded overload/eviction behavior. |
+| Free traffic | Bound sustained and burst traffic per circuit and across the relay, in both directions, including responses, padding, and accounting overhead. | A burst must fit a complete valid descriptor transfer. Cap repeated lookups/misses and combined traffic across circuits; the free allowance is not multiplied without limit by opening more circuits. |
+| Setup and processing | Bound circuit creation, concurrent uploads/downloads, verification work, queued requests, pending builds, and buffering. | Tiny transfers still consume CPU and memory. Enforce relay-wide ceilings across connections and newly generated identities. |
+
+Relay-local resource budgets should be configurable, with interoperable advertised free-capacity limits and predictable rejection/retry behavior. Retaining a Tor consensus size limit does not mean that every other quota becomes a consensus parameter. Clients and services must have enough information to select a usable path without exposing their onion identity to intermediate relays. Test defaults against actual publication and retrieval workloads, especially our proposed ten-minute introduction-circuit replacements, before selecting update rates, free byte rates, burst sizes, or concurrency/cache budgets.
 
 Keep the outer descriptor verifiable without requiring HSDirs to decrypt its connection information, learn the long-term onion identity, or link successive blinded identities solely to enforce quotas. Per-key and per-connection throttles supplement global limits; they cannot prevent one origin from creating many identities. Fair admission under a flood remains a design and test topic. Limits bound resource exposure but do not promise that spam cannot make a service temporarily unreachable.
 
@@ -226,7 +230,7 @@ At the introduction endpoint, enforce the introduction protocol's permitted beha
 
 ### Circuit lifetime and payment behavior
 
-Free introduction circuits follow the proposed ten-minute maximum circuit lifetime. The service establishes replacements before retiring old circuits and updates its descriptor when introduction points or their published keys change. Replacement overlap, setup, acknowledgments, and normal maintenance must fit the bounded free allowance. The descriptor upload circuit is separate and need not stay open just to keep the descriptor published. Descriptor distribution uses the proposed bounded free discovery policy below; exact capacity limits remain design work.
+Free introduction circuits follow the proposed ten-minute maximum circuit lifetime. The service establishes replacements before retiring old circuits and updates its descriptor when introduction points or their published keys change. Replacement overlap, setup, acknowledgments, and normal maintenance must fit the bounded free allowance. The descriptor upload circuit is separate and need not stay open just to keep the descriptor published. Descriptor distribution uses the proposed bounded free discovery policy above; exact capacity limits remain design work.
 
 Eligible free setup and maintenance MUST NOT require the service to pay a normal paid-circuit handshake fee merely to remain reachable. The existing paid-circuit handshake-fee logic remains: relay operators set that fee, and new relays may advertise zero sats. This proposal does not introduce a new paid-activation fee or use the free allowance as a promise of full-bandwidth testing.
 
@@ -242,6 +246,8 @@ Before choosing numeric limits or claiming this is affordable, measure introduct
 
 The receiver-choice privacy policy, payment-timing draft, and bounded-free descriptor discovery proposal are recorded. The **price agreement** discussion remains open: disclose the full per-round price and setup/routing fees before payment, decide how long the quote is fixed, and define what happens if underlying relay costs change. No pricing decision is implied yet.
 
+A fingerprinting review is also open: determine whether free-versus-paid circuit behavior, deterministic introduction-circuit replacement, descriptor update timing/size, or payment identifiers create distinguishable patterns within El Tor. Standard Tor introduction-point lifetimes are randomized over a default 18–24-hour range; the draft's ten-minute circuit replacement is a design difference, not a demonstrated deanonymization finding. Preserve the distinction between introduction-point lifetime and the lifetime of a circuit connecting to it when reviewing alternatives. No change to the chosen circuit cap or privacy policy is made by recording this question.
+
 Remaining discussion topics afterward are active connections at the ten-minute circuit cutoff and client compatibility/version negotiation. The separate paid-circuit replay-protection investigation remains deferred; these specification edits do not implement its fixes.
 
 **References:**
@@ -255,3 +261,5 @@ Remaining discussion topics afterward are active connections at the ten-minute c
 - [Tor descriptor publication and lookup](https://spec.torproject.org/rend-spec/deriving-keys.html) defines responsible HSDirs, replication, and periodic/time-period-overlap publication.
 - [Tor descriptor outer wrapper](https://spec.torproject.org/rend-spec/hsdesc-outer.html) defines certificates, signatures, lifetime, and revision handling.
 - [Tor descriptor encryption](https://spec.torproject.org/rend-spec/hsdesc-encrypt.html) describes address-based confidentiality and optional restricted discovery.
+- [Tor network parameters](https://spec.torproject.org/param-spec) defines the descriptor size consensus parameter and randomized introduction-point lifetime defaults.
+- [Tor padding specification](https://spec.torproject.org/padding-spec/index.html) describes cover traffic and cautions that alternate choices have anonymity implications.
