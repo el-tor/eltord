@@ -9,3 +9,5 @@ Validation has separate levels: documentation integrity, synthetic byte/vector
 checks, independent protocol/cryptographic review, implementation interoperability,
 and measured runtime privacy/resource behavior. Passing one does not establish
 the others. Existing free-mode Chutney results do not validate these paid features.
+
+For the next planning session, follow the [ordered protocol design checklist](design-checklist.md). Start with renewal preparation and its status query.

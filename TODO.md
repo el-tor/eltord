@@ -6,6 +6,10 @@ Existing general implementation notes remain in the [README TODO](readme.md#todo
 
 Specifications: [paid circuits](spec/01_paid_circuits.md), [renewal wire draft](spec/01a_circuit_renewal_wire.md), [paid hidden services](spec/02_paid_hidden_service.md), and [technical chapter index](spec/02_paid_hidden_service_implementation_details.md). Repository names below are workspace-relative. Keep all work local with the agreed development identity and push protections. Preserve the reliability fixes on `intermitted-fix`; this spec branch is based on master and does not itself contain those fixes.
 
+## Next design discussions
+
+Follow the [ordered protocol design checklist](spec/validation/design-checklist.md), starting with renewal preparation and its status query. It organizes the existing ET tasks; checking a design item does not complete its implementation task.
+
 ## Tracking rule
 
 For every new or changed specification requirement, add or update a stable TODO item in the same change. Include its spec link, affected projects, dependencies/open decisions, and concrete acceptance checks. Do not mark an item complete until the implementation and relevant verification exist. Record partial status explicitly. Follow [the spec AGENTS.md](spec/AGENTS.md): every new/edited spec requires a privacy/timing assessment covering observers and identities, linkability/retries, size/framing, timing/lifecycle, resource bounds and remaining validation. Record conclusions and uncertainty in the spec/review notes or local commit description; even editorial changes record that protocol behavior is unaffected. Keep design decisions open when they have not been approved; a TODO is not authorization to start deferred work, spend wallet funds, publish, or push.

@@ -49,6 +49,7 @@
 # Validation and open work
 
 - [Validation](validation/index.md)
+  - [Protocol design checklist](validation/design-checklist.md)
   - [Implementation and deployment gates](validation/gates.md)
   - [Consistency review](validation/review.md)
   - [Implementation backlog](validation/backlog.md)
