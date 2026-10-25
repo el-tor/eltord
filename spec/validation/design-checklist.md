@@ -56,6 +56,8 @@ Before finalizing each item, reconcile it with the [existing-code comparison](so
   formats and actual-rendezvous binding; reconcile setup, funded recovery,
   READY/ACK loss, terminal closure, cancellation and refund-policy reporting.
   No readiness report is permission to exceed the accepted budget.
+  [Status/READY wire](../onion-services/readiness-wire.md) is drafted; complete
+  the paid-introduction cookie/hs-ntor input binding before checking this item.
   **Tasks: ET-16, ET-29–33.**
 - [ ] **9. Two-half continuation and lifetime policy.** Finalize SCQ continuation,
   all-hop admission and independent half schedules. Decide finite circuit age,

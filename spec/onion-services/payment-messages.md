@@ -82,7 +82,9 @@ payment locally, but cannot silently amend signed terms. Method/issuer/acquisiti
 must equal the retained quote. The core digest commits to all other pricing and
 policy fields, including funding_policy_ref; do not resolve a new catalog on retry.
 
-Messages: 1 ACCEPT_ROUND, 2 ROUND_INVOICE, 3 ROUND_QUERY. Other values are reserved.
+Messages: 1 ACCEPT_ROUND, 2 ROUND_INVOICE, 3 ROUND_QUERY.
+[Status/readiness](readiness-wire.md) adds 4 STATUS_GET and 5 CANCEL_ATTEMPT
+and response status 8 STATE; other values are reserved.
 ACCEPT_ROUND requires round 1 and durably accepts the exact offered core before
 invoice creation. ROUND_INVOICE requires existing acceptance and a currently
 admissible round. ROUND_QUERY is read-only financial observation: no invoice
