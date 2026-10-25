@@ -24,6 +24,12 @@ circuit identity. The payload reports received payment information; it is not
 proof of Lightning settlement, recipient ownership, client authorization or
 single-use redemption. Never treat event arrival time as settlement time.
 
+## Proposed lifecycle events
+
+The [lifecycle chapter](lifecycle.md) defines the new ELTOR_PAYMENT_STATE
+event, inventory resynchronization and local initial-state queries. It is distinct
+from the source-observed event above and does not imply existing runtime support.
+
 ## Reply handling
 
 Inherit Tor's numeric reply and asynchronous event framing. Parse complete replies

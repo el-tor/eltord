@@ -13,8 +13,9 @@ identity across all hops or expose a service-purpose marker to intermediates.
 
 Accepted relay prices, capabilities, initial round start, early acceptance window,
 grace, resource limits and renewal policy must be authenticated and retained
-before relying on them. The exact initial commitment and capability encoding are
-still gates in ET-02/06/08; the renewal reply cannot retroactively establish them.
+before relying on them. The [initial wire profile](initial-profile.md) defines commitment and capability
+encoding; the renewal reply cannot retroactively establish them. ET-02/06/08
+still require implementation and independent cryptographic review.
 
 ## Settlement and ledger contract
 
@@ -30,11 +31,17 @@ Require finite retention and durable replay protection, with exact storage and
 recovery rules in ET-01/16. The separate deferred replay-protection investigation
 remains deferred; this rewrite does not fix runtime code.
 
-## Unresolved initial-profile details
+## Initial-profile contracts
 
 The original [client/relay sketch](../history/paid-circuit-flow.md) contains
-configuration and watcher examples, but is historical. Finalize initial paid
-handshake encoding, authenticated term acceptance, activation events, wallet
-method mappings and controller errors before implementing the revised profile.
-Renewal and service quote encodings must not be used as substitutes for these
-missing contracts. Track them in the [implementation gates](../validation/gates.md).
+configuration and watcher examples, but is historical. Use the [initial wire profile](initial-profile.md),
+[lifecycle controller contract](../control/lifecycle.md) and
+[durable recovery rules](../control/recovery.md) for term acceptance, activation,
+queries, authorization and process loss. Wallet adapters still require explicit
+conformance tests for payment-ID mapping. These proposals do not alter the
+source-observed legacy command or claim its runtime already implements them. Track them in the [implementation gates](../validation/gates.md).
+
+**Privacy/timing assessment:** new control messages use uniform encrypted
+per-hop framing; lifecycle/recovery chapters specify privileged observations
+and conservative clocks. Source comparison and document checks do not prove
+cryptographic security or runtime settlement correctness.

@@ -12,6 +12,7 @@
 - [Paid circuit architecture](01_paid_circuits.md)
   - [Construction and free allowance](circuits/free-allowance.md)
   - [Initial construction and accounting](circuits/initial-construction.md)
+  - [Initial commitment wire profile](circuits/initial-profile.md)
   - [Renewal semantics](circuits/renewal.md)
   - [Renewal wire protocol](01a_circuit_renewal_wire.md)
 
@@ -45,6 +46,8 @@
   - [Commands](control/commands.md)
   - [Proposed renewal controller protocol](control/renewal.md)
   - [Events and errors](control/events.md)
+  - [Initial operations and lifecycle](control/lifecycle.md)
+  - [Durable authorization and recovery](control/recovery.md)
   - [Daemon helpers and proposed interfaces](control/daemon.md)
 
 # Validation and open work

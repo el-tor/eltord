@@ -199,6 +199,7 @@ wire or wallet traffic; partial all-hop admission; delayed/replayed relay reply;
 expired admission budget; daemon versus Tor restart; tombstone eviction with
 financial records intact; line/hex overflow; and no key material in output.
 These are specification acceptance tests, not tests executed against runtime.
-Implementation remains deferred under ET-08/09/33. Initial terms and activation,
-full event schema and durable financial recovery are coordinated with checklist
-items 2–4 before marking the controller profile final.
+Implementation remains deferred under ET-08/09/33. Initial terms and activation are specified in the [initial wire profile](../circuits/initial-profile.md);
+[initial operations and lifecycle events](lifecycle.md) and
+[durable recovery](recovery.md) define the related controller contracts.
+Whole-profile clock, parser and restart conformance remains part of final review.
