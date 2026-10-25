@@ -23,6 +23,7 @@
   - [Descriptor discovery](onion-services/discovery.md)
   - [Descriptor metadata encoding](onion-services/metadata.md)
   - [Quote transport commands](onion-services/transport.md)
+  - [Acceptance and invoice wire](onion-services/payment-messages.md)
   - [Introduction availability](onion-services/introductions.md)
   - [Version agreement](onion-services/version.md)
   - [Service Circuit Quote and pricing](onion-services/pricing.md)

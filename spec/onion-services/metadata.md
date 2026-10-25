@@ -222,7 +222,7 @@ before permitting a fresh invoice. The acceptance protocol defines the exchange.
 
 Method must be 2. Append `u8 mechanism=2 || issuer_ref32 || u16 invoice_profile=1 ||
 u16 offer_length || offer_ascii[offer_length]`. Length is 1 through 2048 bytes.
-Use the exact valid lowercase, whitespace-free BOLT12 offer string; uppercase,
+Use the exact valid lowercase, whitespace-free, continuation-free BOLT12 offer string; uppercase, `+`,
 continuation whitespace and alternate textual spellings are not canonical entry
 bytes. Validate the offer under the wallet's supported BOLT12 profile before
 acceptance. Do not merely hash a string that the wallet cannot interpret. Reject

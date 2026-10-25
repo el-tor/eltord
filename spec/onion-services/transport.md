@@ -3,7 +3,7 @@
 **Proposed El Tor extension; not implemented.** This chapter assigns commands and
 state transitions to the [fixed quote envelopes](wire.md). It does not change
 Tor's existing INTRODUCE/RENDEZVOUS command meanings or turn INTRODUCE_ACK into
-a service-authenticated quote. Later invoice/status records use their own profile;
+a service-authenticated quote. Later invoice/status records use the [service-control profile](payment-messages.md);
 they cannot be smuggled into these fixed initial quote records.
 
 ## Capabilities and command allocation
