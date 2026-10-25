@@ -20,7 +20,7 @@ tradeoffs and open topics; put exact schemas/bytes, cryptography, key/state
 machines, retry/timing algorithms, resource ceilings and validation details in
 [the technical companion](02_paid_hidden_service_implementation_details.md). Preserve cross-links and
 one authoritative location for detailed requirements; avoid copying the full
-technical rules into the overview. Apply this split to future specification
+technical rules into the overview. The technical companion is now a stable index into focused chapter files; keep one authoritative section per topic. Use spec/SUMMARY.md for independent El Tor numbering and navigation, preserve old anchors with links, and put superseded reports in the historical section. Control/RPC chapters must separate source-observed commands, daemon helpers, relay wire commands and deferred proposals. Apply this split to future specification
 work using a descriptive `<spec>_implementation_details.md` companion, and
 preserve existing requirements when
 reorganizing. Neither document implies implemented support. Both layers still

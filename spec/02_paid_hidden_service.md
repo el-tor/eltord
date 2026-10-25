@@ -16,7 +16,7 @@ The client chooses a rendezvous point for its connection. An introduction point 
 
 Descriptor publication is a short operation. Its upload circuit and the continuously available introduction circuits are separate. Closing an upload circuit does not delete the published descriptor.
 
-[Detailed Tor flow and construction](02_paid_hidden_service_implementation_details.md#circuit-construction-inherited-from-spec-one).
+[Detailed Tor flow and construction](onion-services/construction.md#circuit-construction-inherited-from-spec-one).
 
 ## Free discovery and introduction availability
 
@@ -26,7 +26,7 @@ The allowance is not unrestricted bandwidth. Both per-circuit and aggregate traf
 
 All circuits inherit [spec one's shared construction](01_paid_circuits.md#shared-circuit-construction-and-bounded-free-allowance), including uniform encrypted payment fields, padding and dummy values when appropriate. New relays may keep their existing zero-sat paid handshake policy; the free allowance does not introduce a new trial fee.
 
-[Discovery and resource rules](02_paid_hidden_service_implementation_details.md#descriptor-publication-retrieval-and-free-discovery) · [Introduction availability](02_paid_hidden_service_implementation_details.md#bounded-free-allowance-for-introduction-availability).
+[Discovery and resource rules](onion-services/discovery.md#descriptor-publication-retrieval-and-free-discovery) · [Introduction availability](onion-services/introductions.md#bounded-free-allowance-for-introduction-availability).
 
 ## Who pays and how pricing works
 
@@ -36,7 +36,7 @@ The service sends a **Service Circuit Quote (SCQ)** for its side. Relay operator
 
 The service's private relay identities are not disclosed. Its authenticated quote is a price commitment, not independent proof of its relay costs, capacity or performance. Payments are bound to one client-authorized circuit and round, not a reusable session balance.
 
-[SCQ terms and accepted exposure](02_paid_hidden_service_implementation_details.md#service-circuit-quote-scq).
+[SCQ terms and accepted exposure](onion-services/pricing.md#service-circuit-quote-scq).
 
 ## Agreeing before spending
 
@@ -50,7 +50,7 @@ The service's private relay identities are not disclosed. Its authenticated quot
 
 Retries recover the same logical acceptance and payment state with fresh encrypted deliveries. A timeout is not evidence a payment failed and cannot authorize duplicate charges or builds. Descriptor and key updates do not silently change accepted prices, recipients or policies.
 
-[Quote bootstrap](02_paid_hidden_service_implementation_details.md#quote-bootstrap-through-the-introduction-point) · [Payment-policy catalog](02_paid_hidden_service_implementation_details.md#authenticated-payment-policy-catalog-and-reference-resolution) · [Acceptance and invoices](02_paid_hidden_service_implementation_details.md#quote-acceptance-and-round-specific-invoice-acquisition).
+[Quote bootstrap](onion-services/bootstrap.md#quote-bootstrap-through-the-introduction-point) · [Payment-policy catalog](onion-services/catalog.md#authenticated-payment-policy-catalog-and-reference-resolution) · [Acceptance and invoices](onion-services/acceptance.md#quote-acceptance-and-round-specific-invoice-acquisition).
 
 ## After payment: funded, building and connected
 
@@ -62,7 +62,7 @@ The service-side first minute starts when its first paid relay round activates f
 
 After verifying the rendezvous handshake, the client sends an authenticated **READY** over that connection. The service records it and acknowledges it; retries recover the same result without another build or payment. If READY is missing at the setup deadline, new spending stops, but a bounded recovery window may preserve the existing connection using only already-funded time. A valid late READY can complete setup while that window and connection remain live; it cannot reopen a closed circuit or reset paid time. Recovery duration still needs measurement.
 
-[Status, readiness and failure rules](02_paid_hidden_service_implementation_details.md#funded-build-status-client-readiness-and-setup-failure).
+[Status, readiness and failure rules](onion-services/status.md#funded-build-status-client-readiness-and-setup-failure).
 
 ## Payment rounds, renewal and failures
 
@@ -72,7 +72,7 @@ A healthy paid circuit can continue through explicitly agreed renewal, preservin
 
 The design limits exposure but cannot eliminate loss. A peer may fail after payment. Exposure can include the unused current round, the prepaid next round and disclosed setup/routing fees. Refunds are not automatic, uncertain payments must be reconciled, and funds cannot silently be moved to another circuit or round. Standing free circuits retain their bounded replacement policy.
 
-[Timing and funding](02_paid_hidden_service_implementation_details.md#payment-timing-and-circuit-rounds) · [Two-half renewal](02_paid_hidden_service_implementation_details.md#renewing-both-rendezvous-circuit-halves) · [Failures and accounting](02_paid_hidden_service_implementation_details.md#3-specify-failures-retries-and-round-accounting).
+[Timing and funding](onion-services/timing.md#payment-timing-and-circuit-rounds) · [Two-half renewal](onion-services/renewal.md#renewing-both-rendezvous-circuit-halves) · [Failures and accounting](onion-services/authorization.md#3-specify-failures-retries-and-round-accounting).
 
 ## Wallet support and privacy
 
@@ -82,7 +82,7 @@ Keep stable payment/client references and service-path details encrypted, authen
 
 Routine key rotation preserves accepted terms; known compromise requires suspending dependent new authorizations/payments until trusted recovery. The technical document distinguishes signer and decryption keys, cached-descriptor risks and the limits of recipient-key compromise protection.
 
-[Method/privacy policy](02_paid_hidden_service_implementation_details.md#payment-methods-and-receiver-privacy) · [Technical privacy and crypto rules](02_paid_hidden_service_implementation_details.md#quote-reply-authentication-and-encryption).
+[Method/privacy policy](onion-services/wallets.md#payment-methods-and-receiver-privacy) · [Technical privacy and crypto rules](onion-services/keys.md#quote-reply-authentication-and-encryption).
 
 ## Open work and where to resume
 

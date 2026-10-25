@@ -86,12 +86,12 @@ See the [examples/](./examples/) directory for complete usage examples.
 
 Spec
 ----
-- [(00) - El Tor Spec](./spec/00_spec.md)
-- [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
-- [(01a) - Circuit Renewal Wire Draft](./spec/01a_circuit_renewal_wire.md)
-- [(02) - Paid Hidden Service Specification](./spec/02_paid_hidden_service.md)
-- [(02) - Paid Hidden Service Implementation Details](./spec/02_paid_hidden_service_implementation_details.md)
-- [El Tor implementation TODO — deferred protocol work](./TODO.md)
+- [El Tor specification book](./spec/index.md)
+- [Table of contents](./spec/SUMMARY.md)
+- [Control and RPC extensions](./spec/control/index.md)
+- [Implementation gates](./spec/validation/gates.md)
+- [El Tor implementation TODO](./TODO.md)
+- [Local book build and editing](./spec/maintenance.md)
 
 
 eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `torrc` with these additional settings:
