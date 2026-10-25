@@ -1,3 +1,5 @@
+> **Historical report/diagram — not current protocol requirements.** See the [current specification](../index.md). Implementation and compatibility claims reflect the original report, not validation of the revised protocol.
+
 
 
 # El Tor Architecture

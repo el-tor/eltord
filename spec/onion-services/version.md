@@ -1,0 +1,52 @@
+> **Proposed version-one protocol.** Implementation and independent review remain deferred. See the [implementation gates](../validation/gates.md).
+
+# El Tor service version agreement
+
+### Required payment protocol and strict version matching
+
+This protocol is for El Tor clients and El Tor onion services. Payment handling is fundamental, including zero-fee handshakes and traffic within the bounded free allowance, which still use the uniform construction in spec one. A zero charge does not disable payment authorization or remove payment fields. There is no `payment_required=false` negotiation and no requirement to support ordinary Tor clients or previous El Tor versions.
+
+Start with one explicitly implemented **El Tor service protocol version, 1**, on both endpoints. This number identifies the client/service agreement, not an application release, Tor handshake type, BOLT number, or relay command opcode. A version denotes a complete, specified set of quote, authorization, funding, round, and continuation semantics; it must not mean a partially implemented assortment of features. It is a proposed version label, not a claim that those encodings or implementations are complete today.
+
+The service advertises the versions it explicitly supports in its authenticated, encrypted service-descriptor metadata, alongside accepted payment methods and the authenticated quote-bootstrap information already required above. Keep this metadata inside the protected service information; do not add a public service-role or wallet marker to the descriptor's outer wrapper or intermediate relays' payment payloads. Exact descriptor extension encoding remains wire-format work. Missing, malformed, or unknown El Tor metadata is an error, not evidence of optional payment or permission to use ordinary Tor.
+
+For the initial release, both endpoints support version 1 or the attempt fails. There is no backward-compatibility obligation. A future endpoint may deliberately implement and advertise more than one complete service version, but nothing promises that it will. Do not use an application build/version string to decide protocol compatibility.
+
+### Agreement before a payable quote
+
+1. **Read and validate the advertisement.** The client verifies the service descriptor and its normal validity/revision rules on the intended El Tor network. Parse bounded, canonical metadata: explicit supported service versions, required features/subprotocol versions, accepted payment methods, and authenticated quote-bootstrap information. Initial deployments advertise only service version 1. Unknown optional fields may be ignored only under a defined encoding rule; an unknown required feature makes the attempt incompatible.
+2. **Choose locally.** The client selects the highest service version that it implements, the authenticated service advertises, and local policy permits. Initially that can only be 1. Choose a mutually supported payment method under the receiver-choice policy separately. A BOLT version is not a service-protocol version or a privacy guarantee. If no complete permitted match exists, stop before requesting a payable invoice or starting new connection-specific paid work.
+3. **Bind the request.** Through the bounded authenticated bootstrap, send the selected service version, a fresh client nonce, the existing fresh client authorization public key, the chosen payment method, and a digest of the authenticated capability block the client relied on. The digest must cover the canonical versions, required features, methods, and bootstrap delegation/identity, bound to this service and descriptor revision. Do not send the client's complete software/wallet capability list, app build, persistent wallet identity, or a shared transport-hop identifier merely to negotiate.
+4. **Confirm in the SCQ.** The service verifies the request against the advertised snapshot it still accepts and returns the selected version, client nonce, capability-block digest, client-key/method binding, and its normal SCQ terms in the authenticated quote. The client verifies an exact match before accepting the quote or paying. This reuses the SCQ response rather than adding a separate mandatory negotiation round trip. A server response selecting another version is not permission to downgrade.
+5. **Keep the agreement fixed.** Bind quote acceptance, invoice association, access authorization, status/retry requests, round accounting, and SCQ continuation to the accepted service version and quote. Existing circuit/round and replay rules continue to apply. Version/descriptor changes cannot silently reinterpret an accepted circuit, change its price, or move settled funds into a different protocol. A different service version needs a new explicit agreement and the applicable reconciliation rules.
+
+Version agreement is not quote-price acceptance, relay admission, settlement, or a delivery guarantee. Discovery and negotiation must fit the bounded free bootstrap; an incompatible or unpaid requester cannot cause the service to build paid circuits or spend wallet funds. Locally accepted activity on other circuits is not a new authorization for this attempt.
+
+The final bootstrap and SCQ wire formats must define the canonical capability-block bytes, digest domain, nonce length, authentication/delegation, payload limits, and replay handling. The [metadata profile](metadata.md) and [quote wire format](wire.md) define those encodings. Implementation remains deferred under ET-13/14/19; there is no unauthenticated preliminary handshake.
+
+### Required features and hop-level protocols
+
+Service version agreement and per-hop capability/admission checks are separate. The client checks its own relay path; the service checks its private path and commits to compatible construction through its quote/readiness rules. Do not disclose private relay identities or send the end-to-end capability digest, SCQ ID, nonce, or client key to every transport hop as a common renewal token.
+
+A service profile must identify which relay-payment, bounded-free bootstrap, authorization, quote, and continuation subprotocols it requires. A required feature must be supported before paid work relying on it begins. In particular, service version 1 does not magically imply support for the proposed per-hop renewal wire version 1: the requisite relay advertisement and authenticated admission are still needed. If the agreed profile requires renewal, an unsupported hop is a failed path, not permission to silently substitute a forced ten-minute disconnect. Any explicitly allowed finite, non-renewing behavior must be part of the accepted profile/terms, not a downgrade invented after payment. Finalizing the complete version-1 feature profile is an implementation gate.
+
+### Mismatch, stale metadata, and errors
+
+Use clear local outcomes: `ELTOR_VERSION_MISMATCH`, `ELTOR_REQUIRED_FEATURE_UNSUPPORTED`, `ELTOR_PAYMENT_METHOD_UNSUPPORTED`, and `ELTOR_CAPABILITIES_STALE`. These are proposed semantic outcomes, not assigned relay command values or finalized bootstrap error encodings. Explain the mismatch in the app without implying that changing wallet privacy settings or paying anyway will repair an unsupported service version.
+
+An authenticated stale-capability response may cause at most one descriptor refresh and a fresh bounded agreement attempt, within existing setup/rate limits and without a wallet charge. Recompute selection from the verified replacement metadata; never interpret a timeout, missing field, unauthenticated error, or malformed message as an authenticated downgrade request. A peer still incompatible after that attempt fails cleanly. A service may briefly honor a cached advertised snapshot only when its complete semantics, keys, validity, and price commitment remain supported; it must not falsely claim old-version support to accept payment.
+
+There is no automatic fallback to ordinary Tor, an unadvertised older El Tor version, a different payment method, a reusable payment session, or a mode that skips payment handling. The authenticated version advertisement and exact quote binding protect negotiation from simple substitution; they do not prevent a malicious service from lying about what it implements, withholding service, or presenting stale but still valid metadata. Retain the existing payment-exposure and freshness limits.
+
+### Validation and implementation status
+
+Test version-1 matching, no common version, missing/invalid metadata, unknown required features, unsupported wallet methods, manipulated version/digest/nonce/method fields, substituted quotes/invoices, replayed requests, stale descriptors, bounded refresh/retry, and descriptor changes during an accepted circuit. Check that unsupported requests cause no new paid service-side work, no attempted connection-specific payment, no silent fallback, and no cross-circuit funding reuse. Verify per-hop readiness separately and measure negotiation sizes/traffic without exposing a persistent client fingerprint.
+
+Implementation remains deferred. [ET-19 in the El Tor TODO](../../TODO.md#compatibility-app-behavior-and-validation) tracks this agreement, with bootstrap/SCQ encoding in ET-13/14, app behavior in ET-20, and version/renewal testing in ET-21. Documentation checks do not demonstrate a deployed compatible client or service.
+
+## Canonical metadata profile
+
+The [version-one metadata encoding](metadata.md) defines the exact descriptor
+container, capability digest, key delegations/revocation and catalog records.
+Use its concrete schema for the encoding details described as open above;
+implementation, independent review and measurements remain deferred.
