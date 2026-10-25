@@ -4,6 +4,12 @@ El Tor adds incremental Lightning payments to onion-routed bandwidth. Clients
 buy short rounds, can stop renewing, and accept bounded exposure when a peer
 fails after payment. Payments do not guarantee delivery or refunds.
 
+## Riga presentation
+
+Watch the [El Tor presentation in Riga](https://www.youtube.com/watch?v=96n34yZAO1U&t=825s)
+for background on the project. The link starts at **13:45**. The chapters in this
+book define the current proposed protocol; the presentation provides context.
+
 ## Architecture
 
 An origin selects relays and their advertised terms, establishes a circuit with
