@@ -46,3 +46,10 @@ Validate these use cases when sizing the allowance: complete descriptor transfer
 The baseline ten-minute maximum applies to free and paid circuits without negotiated renewal. The renewal draft below proposes extending an established paid circuit in additional ten-round allocations, without replacing its path or active streams. Free-only circuit renewal remains an open decision; introduction and descriptor-upload circuits retain their existing ten-minute policy for now. Early closure remains valid for failure, poor performance, loss of required payment, user choice, or enforced resource limits. Idle periods are also normal. See [spec two](../02_paid_hidden_service.md) for the corresponding onion-service lifecycle.
 
 `BANDWIDTH_QUOTA` below describes a separate proposed quota for paid bandwidth; its legacy zero/unlimited value MUST NOT be interpreted as an unlimited free allowance. The bounded free allowance is also distinct from the initial bandwidth-testing window on a paid circuit. Capability signaling, exact accounting/acceptance rules, and the interactions with payment watchers remain implementation work. Validate identical construction/padding, aggregate bounds, legitimate free discovery, and correct paid-circuit closure before claiming support.
+
+## Candidate accounting profile
+
+The [resource profile](../validation/resource-profile.md) defines the proposed
+capability, cell/byte buckets, aggregate ceilings and measurement plan. These
+parameters make the allowance testable; they do not establish runtime support
+or imply that many small free circuits cannot be abused.

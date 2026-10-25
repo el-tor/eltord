@@ -89,7 +89,7 @@ Each selection is `u8 method || funding_policy_ref32 || issuer_ref32 || acquisit
 It is nonzero and exactly matches selections; one selection per advertised method,
 ascending method order, one or two selections. `supported_features` bit 0 is
 in-place renewal; all other bits zero. Finite positive age and round ceilings
-bound quotations. The resource profile names the common version-one limits,
+bound quotations. The resource profile names the [common version-one limits](../validation/resource-profile.md),
 not arbitrary peer-selected parser sizes. Transport/crypto profile IDs refer to
 the corresponding version-one chapters and cannot change under this version.
 

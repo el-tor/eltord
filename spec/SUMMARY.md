@@ -63,6 +63,7 @@
   - [Protocol design checklist](validation/design-checklist.md)
   - [Existing implementation comparison](validation/source-comparison.md)
   - [Implementation and deployment gates](validation/gates.md)
+  - [Candidate resource and timing profile](validation/resource-profile.md)
   - [Consistency review](validation/review.md)
   - [Implementation backlog](validation/backlog.md)
 
