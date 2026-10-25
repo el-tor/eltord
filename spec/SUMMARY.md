@@ -51,6 +51,7 @@
 
 - [Validation](validation/index.md)
   - [Protocol design checklist](validation/design-checklist.md)
+  - [Existing implementation comparison](validation/source-comparison.md)
   - [Implementation and deployment gates](validation/gates.md)
   - [Consistency review](validation/review.md)
   - [Implementation backlog](validation/backlog.md)

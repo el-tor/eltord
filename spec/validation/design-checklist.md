@@ -11,6 +11,8 @@ section, failure cases and deferred implementation tasks are recorded. If an
 item depends on an unresolved later contract, record that dependency and leave
 its finalization open rather than inventing a default.
 
+Before finalizing each item, reconcile it with the [existing-code comparison](source-comparison.md), including the reliability branch and vendored Tor differences. Source review is not executed conformance testing.
+
 ## Controller foundations
 
 - [ ] **1. Renewal preparation and status query.** Define what eltord submits to
