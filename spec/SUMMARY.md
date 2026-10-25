@@ -22,6 +22,7 @@
   - [Inherited construction](onion-services/construction.md)
   - [Descriptor discovery](onion-services/discovery.md)
   - [Descriptor metadata encoding](onion-services/metadata.md)
+  - [Quote transport commands](onion-services/transport.md)
   - [Introduction availability](onion-services/introductions.md)
   - [Version agreement](onion-services/version.md)
   - [Service Circuit Quote and pricing](onion-services/pricing.md)
