@@ -21,8 +21,8 @@ It is not an independent cryptographic audit or runtime conformance test.
 Concrete proposals now cover initial commitment, lifecycle/recovery, metadata,
 transport, acceptance/invoices, paid introduction, service build, READY, continuation
 and refunds. The [gate matrix](gates.md) separates those designs from remaining
-validation. The final cross-chapter audit and implementation handoff are still in
-progress; no implementation-ready or deployment-ready claim is made.
+validation. The cross-chapter audit and implementation handoff below record proposed-design
+completion; no tested-runtime or deployment-ready claim is made.
 
 Public [service codec fixtures](../vectors/service_codec_v1.json) cover eight
 representative record encodings, domain-separated Ed25519 examples and four
@@ -68,3 +68,78 @@ checked against the revisions named in its introduction.
 These checks establish document structure, retained layouts and local navigation.
 They do not establish runtime payment correctness, independently reviewed crypto,
 current wallet interoperability or measured privacy. Those gates remain explicit.
+
+## Version-one cross-chapter design audit
+
+The following is a document-level state/authority trace, not a runtime test.
+It reviews the concrete profiles introduced after the book reorganization.
+
+| Trace | Required sequence and stopping condition | Authoritative contracts |
+| --- | --- | --- |
+| Successful setup | Verified metadata/capabilities → padded quote → client RP established → immutable SETUP_BIND → acceptance → exact invoice → node settlement/reservation → one BUILD → all-hop commitment/activation → one JOIN → local native handshake → path-bound READY → durable ACK. No earlier stage means delivered service. | metadata, transport, payment-messages, paid-introduction, service-build, initial-profile, readiness-wire |
+| Refusal before payment | Unknown version/method/reference, malformed input, budget/path refusal or missing setup binding yields non-payable refusal/drop. A zero-price quote requires offered status and explicit zero-charge records, not zeroed refusal fields. | version, metadata, wire, payment-messages |
+| Lost quote/acceptance reply | Fresh outer delivery keys/nonces/token, stable logical inquiry/core/operation, bounded attempts. Exact acceptance recovers the existing invoice; changed invoice/native request does not create a replacement. | transport, payment-messages |
+| Lost build or JOIN reply | Query the original Tor instance/operation. Identical resubmission cannot launch another path or native join. UNKNOWN after local tombstone loss is not proof of no side effect. | service-build, recovery |
+| Setup timeout | Original FUNDED deadline expires → no new spend. Retain only already-funded live path for bounded READY recovery; no paid grace subsidy. Expired/closed attempt cannot revive after late funds or READY. | timing, readiness-wire |
+| Lost READY ACK | Client has verified actual handshake; service commits READY before ACK. Duplicate READY is bound to the same path/challenge and does not buy anything. Bounded status recovery can observe persisted READY; it cannot fake local handshake completion. | readiness-wire, status |
+| Daemon restart | Durable ledger plus same Tor instance/handle permits queries; recover original deadlines/counters. If they cannot be recovered conservatively, stop new spend instead of granting fresh time. | recovery, lifecycle, service-build |
+| Tor restart | New instance invalidates live handles and native secrets. Old attempt closes; retain unresolved financial state. No ledger reload reconstructs old traffic keys or silently pays for replacement. | recovery, service-build |
+| Partial renewal | Each half privately prepares its own hops; immutable SCQ extension requires all service-hop admission and client-side checks. One refusal stops future-period funding, not existing purchased service. Payments remain incremental; no six-hop atomic-payment guarantee. | renewal control/wire, continuation |
+| Late/unknown settlement | Keep full reservation until authoritative outcome. Actual recipient-node time and registration window govern authorization, not callback time. Closure prevents activation; accounting/refund remains separate. | recovery, payment-messages, refunds |
+| Cancellation/refund | Atomic no-new-spend/terminal intent races READY under one attempt record. Only reconciled unallocated principal may fund a signed refund invoice; pending payouts retain their reservation. | readiness-wire, refunds |
+| Overload | Shared cell/byte/CPU/memory/storage caps refuse admission before resource growth; no automatic payment, retry-counter reset or deletion of unresolved records. Existing Tor limits also apply. | transport, resource-profile, recovery |
+
+### Conflicts reconciled during this audit
+
+- Registration initially described a round's payment window as ending after the
+  whole purchased minute. The initial profile and registration snapshot now agree:
+  later rounds must be funded by their nominal start plus grace; round one uses
+  its original setup window. Purchased service duration is a different deadline.
+- A full paid introduction/cookie/hs-ntor association was missing between quote and
+  build. SETUP_BIND now precedes invoice issuance; native parse/verification cannot
+  invoke an automatic unpaid rendezvous launch.
+- An existing construction RPC alone was insufficient for lost-reply recovery.
+  Service setup/build/query/join contracts now bind one durable operation to one
+  process-local path and forbid automatic paid relaunch.
+- Policy-1 refunds lacked concrete transport and fee reconciliation. The refund
+  profile now requires explicit receiving capability, client-signed destination,
+  one unresolved payout and disjoint accounting categories.
+- General controller text prohibited proof inputs even though construction must
+  carry the preserved handshake proof. The service-build command documents that
+  privileged input exception explicitly, without permitting proof output/logging.
+- Old overview paragraphs still called schemas, opcodes and lifetime choices open.
+  Their authoritative linked profiles now define them; independent review and
+  runtime measurements remain gates rather than missing wire definitions.
+
+### Observer and privacy audit
+
+A guard/middle receives its own payment fields and sees timing/volume, not a shared
+SCQ/attempt identifier. The introduction endpoint knows local client/service circuit
+associations, the quote-versus-control framing class and slot timing. The service
+knows the accepted client authorization, RP, quote and wallet association. Wallet
+counterparties observe native payment data; blinding is optional and implementation-
+checked. HSDirs store authenticated encrypted descriptors and can observe size,
+publication cadence and blinded storage keys. Local controllers/ledgers hold
+sensitive circuit/payment mappings and must restrict access/redact diagnostics.
+
+Per-hop identifiers remain independent; stable endpoint identities stay inside
+protected payloads. Fresh outer encryption/token/key material prevents intentional
+ciphertext reuse across retries; logical state remains stable to prevent charges
+from duplicating. Fixed request/reply shapes cover success/refusal for each profile,
+but the initial quote and larger control profile are distinguishable. BOLT11 and
+BOLT12 native wallet traffic, missing replies, key trials, congestion and timing
+still differ. Jitter, padding and a common scheduler are not a proof against
+colluding relays or an observer watching both ends. Longer paths-in-use and periodic
+renewal/draining may add correlation opportunities; finite ages do not remove them.
+These limitations are recorded rather than converted into anonymity guarantees.
+
+### Remaining review and deployment gates
+
+No unassigned El Tor command, unspecified message capacity or intentionally
+unbounded deadline is relied on by the traced proposed flow. Exact runtime behavior
+must still be independently checked against these requirements. The ntor exporter,
+HPKE/library validation, native handshake integration, wallet adapters and parser
+implementations require independent review and conformance suites in the handoff.
+Resource/lifetime/timing numbers remain test candidates; honest success rates and
+privacy effects require measurements. Failure of those tests requires an explicit
+spec revision, not an assertion that this draft proved safety or performance.

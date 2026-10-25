@@ -1,8 +1,8 @@
 # Proposed version-one implementation handoff
 
 This is a specification handoff, not a runtime implementation or deployment
-approval. The twelve design workstreams have concrete chapters; final checklist
-signoff requires the cross-chapter audit. Preserve local reliability fixes and
+approval. The twelve design workstreams have concrete chapters; the [cross-chapter audit](review.md#version-one-cross-chapter-design-audit)
+records design signoff. Preserve local reliability fixes and
 implement only under a separate authorization. No live payments are implied.
 
 ## Source baseline and integration order
