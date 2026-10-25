@@ -19,7 +19,7 @@ This requires a new El Tor request/reply extension. Standard Tor `INTRODUCE_ACK`
 
 `SCQ_REQUEST` and `SCQ_REPLY` are proposed logical message names, not assigned relay opcodes or deployed interfaces. Client→intro→service and service→intro→client directions need explicit versioned framing and handler rules. The routing handle is local to this one introduction relay/request; it is not a payment ID, SCQ ID, service identity, or common token distributed to guards/middles/other introduction points. A malicious introduction relay can still drop, delay, or misroute ciphertext; it must not be able to forge a quote the client accepts.
 
-Invoice acquisition may use Lightning-native mechanisms such as a BOLT 12 invoice request. If a supported method needs an additional Tor quote-acceptance/invoice/status exchange, give each logical request its own admitted, expiring reply slot and authenticated SCQ/client binding. Do not turn the slot into an unlimited bidirectional connection. These bounded follow-up message encodings remain wire-design work; obtaining an invoice alone is not funding or permission to spend.
+Invoice acquisition may use Lightning-native mechanisms such as a BOLT 12 invoice request. If a supported method needs an additional Tor quote-acceptance/invoice/status exchange, give each logical request its own admitted, expiring reply slot and authenticated SCQ/client binding. Do not turn the slot into an unlimited bidirectional connection. The service-control wire chapter defines these bounded follow-up messages; obtaining an invoice alone is not funding or permission to spend.
 
 ### Quote request field inventory
 
@@ -43,7 +43,7 @@ Protocol support for both formats does not require every receiver's wallet to im
 
 ### Quote reply field inventory
 
-`SCQ_REPLY` has an authenticated quote or refusal status and the following logical field groups. These refine the SCQ terms below; the initial wire section now drafts the initial binary layout and envelope capacity, while relay opcodes and referenced metadata schemas remain open. The version-one cryptographic profile below fixes the signature/encryption suite. The introduction relay's forwarding acknowledgment is not this reply.
+`SCQ_REPLY` has an authenticated quote or refusal status and the following logical field groups. These refine the SCQ terms below; the initial wire section now drafts the initial binary layout and envelope capacity, with relay opcodes and referenced schemas defined in the transport and metadata chapters. The version-one cryptographic profile below fixes the signature/encryption suite. The introduction relay's forwarding acknowledgment is not this reply.
 
 | Field group | Required information and binding |
 | --- | --- |

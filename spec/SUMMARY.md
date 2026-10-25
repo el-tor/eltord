@@ -66,6 +66,7 @@
   - [Implementation and deployment gates](validation/gates.md)
   - [Candidate resource and timing profile](validation/resource-profile.md)
   - [Consistency review](validation/review.md)
+  - [Implementation handoff](validation/handoff.md)
   - [Implementation backlog](validation/backlog.md)
 
 # Historical material

@@ -41,7 +41,7 @@ Concurrent introductions, duplicate wallet notifications, retries, and restarts 
 
 If rendezvous fails, record setup or relay costs already incurred under the agreed terms and reconcile the unused part of that attempt's reserved funding. An exact retransmission is idempotent and MUST NOT create another paid circuit or charge. A fresh attempt for an unestablished circuit requires an authenticated retry decision, fresh attempt details, and atomic rebinding of only demonstrably unspent funding; the old authorization must become unusable. Replacement of an established or expired circuit starts a new payment sequence. Do not automatically carry unused rounds to another circuit or grant unlimited free rebuilds. A failed attempt may have consumed real relay fees.
 
-The protocol still needs an authenticated status/retry mechanism, a definition of successful connection establishment, and an explicit unused-funding/refund policy. Refunding unused funding is a separate Lightning operation requiring authenticated destination handling and its own fee policy; it does not establish a reusable payment session. Do not interpret introduction delivery acknowledgment as payment acceptance, completed rendezvous, or delivered application data.
+The readiness wire and refund chapters define authenticated status/retry, successful connection establishment and unused-funding policy. Refunding unused funding is a separate Lightning operation requiring authenticated destination handling and its own fee policy; it does not establish a reusable payment session. Do not interpret introduction delivery acknowledgment as payment acceptance, completed rendezvous, or delivered application data.
 
 ### 4. Cap spending and keep wallet work off the handshake path
 
