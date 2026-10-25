@@ -60,6 +60,8 @@ Status updates are authenticated and tied to the same quote, circuit and attempt
 
 The service-side first minute starts when its first paid relay round activates for the authorized build, after funding is verified and reserved. Construction uses part of that minute; completing the client handshake does not restart it. The service authenticates the start and deadlines. The client's own circuit keeps its separately agreed schedule. The draft allows 60 seconds for setup from verified initial funding reservation, without extensions from progress updates. Startup funding is capped at the first round plus at most one prepaid next round and disclosed setup fees, within the client’s approved limits. Expiration stops new spending and requires reconciliation, not an automatic replacement. The 60-second value is a candidate to validate in testing.
 
+After verifying the rendezvous handshake, the client sends an authenticated **READY** over that connection. The service records it and acknowledges it; retries recover the same result without another build or payment. If READY is missing at the setup deadline, new spending stops, but a bounded recovery window may preserve the existing connection using only already-funded time. A valid late READY can complete setup while that window and connection remain live; it cannot reopen a closed circuit or reset paid time. Recovery duration still needs measurement.
+
 [Status, readiness and failure rules](02_paid_hidden_service_implementation_details.md#funded-build-status-client-readiness-and-setup-failure).
 
 ## Payment rounds, renewal and failures
@@ -84,7 +86,7 @@ Routine key rotation preserves accepted terms; known compromise requires suspend
 
 ## Open work and where to resume
 
-The setup deadline and two-round startup cap are now drafted. Next discussion: how setup completion is reported before the deadline without treating a service report as proof of client connectivity. The first service-side minute now starts at its first paid relay-round activation; client and service circuit schedules remain separate. Exact acceptance/invoice/status/continuation wire, descriptor/delegation/catalog schemas, concrete timing/resource budgets, relay price commitments, lifetime policies and independent security review remain open in the technical specification and TODO. Runtime implementation, interoperability and correlated paid-network/privacy measurements remain deferred.
+The setup deadline and two-round startup cap are now drafted. Authenticated READY and bounded recovery are now specified. Next discussion: the concrete recovery window and retry budgets. The first service-side minute now starts at its first paid relay-round activation; client and service circuit schedules remain separate. Exact acceptance/invoice/status/continuation wire, descriptor/delegation/catalog schemas, concrete timing/resource budgets, relay price commitments, lifetime policies and independent security review remain open in the technical specification and TODO. Runtime implementation, interoperability and correlated paid-network/privacy measurements remain deferred.
 
 The separate paid-circuit replay-protection investigation stays deferred. Existing source-review findings, synthetic sizing checks and earlier free-mode tests do not establish support for this proposed protocol.
 
