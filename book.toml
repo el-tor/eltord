@@ -1,0 +1,17 @@
+[book]
+title = "El Tor Specifications"
+authors = ["Eltor Dev"]
+language = "en"
+src = "spec"
+
+[build]
+build-dir = "target/spec-book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[preprocessor.local-links]
+command = "python3 spec/tools/book_links.py"
+renderers = ["html"]
+after = ["links"]

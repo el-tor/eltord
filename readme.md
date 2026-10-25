@@ -86,8 +86,12 @@ See the [examples/](./examples/) directory for complete usage examples.
 
 Spec
 ----
-- [(00) - El Tor Spec](./spec/00_spec.md)
-- [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
+- [El Tor specification book](./spec/index.md)
+- [Table of contents](./spec/SUMMARY.md)
+- [Control and RPC extensions](./spec/control/index.md)
+- [Implementation gates](./spec/validation/gates.md)
+- [El Tor implementation TODO](./TODO.md)
+- [Local book build and editing](./spec/maintenance.md)
 
 
 eltor is very similar to how `tor` and `torrc` works. All of the same settings can be used in the `torrc` with these additional settings:
@@ -262,6 +266,9 @@ In  ~/code/libtor-sys/scripts/copy.sh
 
 TODO
 ----
+
+See the [El Tor implementation TODO](./TODO.md) for deferred specification work, dependencies, and acceptance checks. The existing general items below remain in place.
+
 1. simply read the payments-sent.json in as the same dir as the TOR DataDirectory
 2. simplify the default command:
 ```sh

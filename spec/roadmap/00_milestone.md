@@ -1,3 +1,5 @@
+> **Historical report/diagram — not current protocol requirements.** See the [current specification](../index.md). Implementation and compatibility claims reflect the original report, not validation of the revised protocol.
+
 # El Tor Progress Report 1
 
 ## Summary
@@ -145,7 +147,7 @@ The VPN-like client UI for El Tor has reached a functional design state, providi
   - User-friendly circuit selection and management tools.
   - GUI to help a user run a relay.
 
-![image](https://raw.githubusercontent.com/el-tor/eltor-app/a935db4601fd08c924bad332d5640e95b9f2b4d6/src/renderer/assets/eltor-home.png)
+[Historical app screenshot](https://raw.githubusercontent.com/el-tor/eltor-app/a935db4601fd08c924bad332d5640e95b9f2b4d6/src/renderer/assets/eltor-home.png)
 
 #### Outcome
 
@@ -197,4 +199,3 @@ Significant architectural improvements have been made to the Libtor fork, ensuri
 ## Conclusion
 
 The El Tor project continues to progress across multiple fronts, achieving significant milestones in protocol specification, application development, and architectural refinement. The focus will shift to iterative improvements on the eltord daemon (the core component).
-
