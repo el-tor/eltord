@@ -86,7 +86,7 @@ Routine key rotation preserves accepted terms; known compromise requires suspend
 
 ## Open work and where to resume
 
-The setup deadline and two-round startup cap are now drafted. Authenticated READY and bounded recovery are now specified. Next discussion: the concrete recovery window and retry budgets. The first service-side minute now starts at its first paid relay-round activation; client and service circuit schedules remain separate. Exact acceptance/invoice/status/continuation wire, descriptor/delegation/catalog schemas, concrete timing/resource budgets, relay price commitments, lifetime policies and independent security review remain open in the technical specification and TODO. Runtime implementation, interoperability and correlated paid-network/privacy measurements remain deferred.
+The twelve-item proposed-design checklist is complete. The technical chapters define acceptance/invoice/status/continuation messages, metadata and catalog schemas, relay commitments, candidate timing/resource budgets and lifetime policies. The [implementation handoff](validation/handoff.md) gives dependency order, pinned source baselines and required acceptance tests. Runtime implementation, independent security review, interoperability and correlated paid-network/privacy measurements remain deferred; candidate limits must be measured before deployment.
 
 The separate paid-circuit replay-protection investigation stays deferred. Existing source-review findings, synthetic sizing checks and earlier free-mode tests do not establish support for this proposed protocol.
 

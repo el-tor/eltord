@@ -8,7 +8,7 @@
 `"Secure payments for onion-routed bandwidth"`
 
 
-### Problem Case: 
+### Problem Case:
 Incentivizing Private and Trustless Bandwidth Payments in Tor
 
 <b>Background</b>
@@ -34,7 +34,7 @@ Tor relays (especially exit relays) play a critical role in providing bandwidth 
 
 ### Proposed Solution: The Onion Pay Stream
 
-"The Onion Pay Stream" (TOPS) addresses these challenges by introducing a trust-minimized, privacy-preserving protocol that integrates incremental payment streams into Tor circuits. 
+"The Onion Pay Stream" (TOPS) addresses these challenges by introducing a trust-minimized, privacy-preserving protocol that integrates incremental payment streams into Tor circuits.
 
 <b>Use Case Example:</b>
 
@@ -70,7 +70,7 @@ Key Requirements
 ### (1) Key Features of Onion Pay Stream
 1. Incremental Payments:
     - Payments are divided into small rounds (e.g., 1 sat per minute) to reduce risk for both parties.
-    - The first round has an optional `handshake fee` but can be free to allow clients to evaluate performance without upfront risk. Noobie relays might want to make it free, while mature relays may want to charge a fee after they establish a reputation for providing high bandwidth. 
+    - The first round has an optional `handshake fee` but can be free to allow clients to evaluate performance without upfront risk. Noobie relays might want to make it free, while mature relays may want to charge a fee after they establish a reputation for providing high bandwidth.
 2. Privacy-Preserving:
     - Uses BOLT12 offers (blinded paths) to ensure that payments are unlinkable and do not compromise the anonymity of either the client or the relay.
 3. Trust-Minimized:
@@ -87,7 +87,7 @@ Phase 1: Circuit Establishment
 2. Client Sends Payment Intent:
     - The client acknowledges the relay's terms by sending a unique payment id hash (generated locally) agreeing to use the relay’s static offer.
 3. Handshake in Onion Message:
-    - A handshake onion message is sent from the client to each relay via an onion message in the respective hops. Hop 1 being an Entry Guard, hop 2 being a middle Relay and hop N being an Exit Node. No relay can read another relays onion message because each message is encrypted to the repective hop. 
+    - A handshake onion message is sent from the client to each relay via an onion message in the respective hops. Hop 1 being an Entry Guard, hop 2 being a middle Relay and hop N being an Exit Node. No relay can read another relays onion message because each message is encrypted to the repective hop.
 4. Finally the Circuit is built and the relays begin providing service.
 
 Phase 2: Incremental Payments
@@ -97,7 +97,7 @@ Phase 2: Incremental Payments
 2. Payment Verification:
     - The relay queries its own Lightning node to verify the payment.
     - If the payment is valid, the relay continues providing service.
-    - If the payment is not receieve in the time window, then the relay kills the circuit. 
+    - If the payment is not receieve in the time window, then the relay kills the circuit.
 3. Final Round Payment:
     - After the last round payment then kill the circuit.
 
@@ -177,7 +177,7 @@ For Relays
     - Relays can terminate service if payments are not received.
 
 
-### (7) Model 
+### (7) Model
 
 Here is a model of TOPS rounds. Any given round can be terminated if either party cheats.
 ```

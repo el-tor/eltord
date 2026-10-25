@@ -143,3 +143,37 @@ implementations require independent review and conformance suites in the handoff
 Resource/lifetime/timing numbers remain test candidates; honest success rates and
 privacy effects require measurements. Failure of those tests requires an explicit
 spec revision, not an assertion that this draft proved safety or performance.
+
+## Local handoff and integration preflight
+
+The final local preflight reviewed the handoff, design checklist, deployment gates
+and remaining-work language across the overview and technical chapters. Stale
+statements calling already specified controller, lifecycle, continuation and READY
+contracts unfinished were replaced with authoritative links. Historical chapters
+received whitespace cleanup only; their superseded behavior remains nonnormative.
+
+Executed checks:
+
+- Markdown coverage: 62 files, 59 book chapters and 33 deferred implementation IDs.
+- Service codec fixtures: eight representative records, digest/signature examples
+  and four framing examples reproduced; no runtime or HPKE interoperability test.
+- Local mdBook build and all 62 rendered pages: no broken local references.
+- Full diff against local master: documentation/specification and book tooling only,
+  no runtime source changes; whitespace checks pass, including historical chapters.
+- All branch commits inspected use Eltor Dev as both author and committer with the
+  repository-local development email. No new tracked absolute home paths were found.
+- Local master `8963f4c1bfd711f7138db21b90718abf7895205b` is an ancestor of the
+  specification branch, so that local baseline requires no conflict resolution.
+  No remote fetch, push, merge or publication was performed; remote divergence
+  has not been evaluated. Disabled push configuration and the rejecting hook remain.
+
+This is a prepared proposed-specification handoff, not independent protocol signoff
+or deployment approval. Before any separately authorized publication/integration,
+recheck the target revision and diff, rerun the document checks and review the
+remaining implementation/validation gates. The local-only workspace rule remains
+in force. The implementation backlog stays unchecked.
+
+**Privacy/timing assessment:** these corrections change navigation, status wording
+and historical whitespace only. Wire bytes, state transitions, payment authority,
+privacy assumptions, timing and retry policies are unchanged. No new runtime
+requirement or corresponding implementation task is introduced.

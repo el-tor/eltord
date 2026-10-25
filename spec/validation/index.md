@@ -1,7 +1,7 @@
 # Validation and open work
 
 The architecture and detailed chapters form a proposed version-one specification.
-They are not yet a complete implementation profile. Use the
+They remain unimplemented and require independent review and conformance testing. Use the
 [implementation gates](gates.md), [consistency review](review.md) and
 [deferred task backlog](../../TODO.md) together.
 
@@ -10,4 +10,4 @@ checks, independent protocol/cryptographic review, implementation interoperabili
 and measured runtime privacy/resource behavior. Passing one does not establish
 the others. Existing free-mode Chutney results do not validate these paid features.
 
-For the next planning session, follow the [ordered protocol design checklist](design-checklist.md). Start with renewal preparation and its status query.
+The [ordered protocol design checklist](design-checklist.md) is complete at the proposed-design level. Use the [implementation handoff](handoff.md) for dependency order and acceptance tests before starting separately authorized implementation.
