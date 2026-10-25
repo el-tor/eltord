@@ -62,3 +62,10 @@ The client must verify the full service/request/delivery bindings, expiry, statu
 An authenticated service refusal uses the same padded reply profile and shared response scheduler, with its bounded reason inside encryption. It still binds the intended service, logical inquiry, and current delivery. Its status MUST make all unused quote/payment fields non-actionable under a canonical encoding; padding or zero-valued fields cannot be interpreted as a valid zero-fee quote. Refusal is never authority to issue outgoing payments or bypass version/method/budget checks. Relay admission failures and timeouts remain separate unauthenticated transport outcomes.
 
 **Privacy/timing assessment:** quote/connection identifiers, request references, method, pricing, acquisition instructions, and authentication material remain inside fresh end-to-end encrypted fixed-size replies. Public-key authentication must not introduce a persistent client wallet identity or distribute stable references across transport hops. Cached cores retain idempotency while per-delivery authentication/encryption changes observable ciphertext; fresh/cached/refused responses share the established scheduling rule. Receiver-selected payment methods can still reveal information to wallet counterparties, and intro routing, timing, loss, and congestion remain observable. Test wrong-service/key/digest/nonce/RP/method substitution, altered prices/expiry/fee caps, stale/competing quotes, abandoned-slot replay, invalid refusal padding, invoice/payee substitution, and exposed length/timing across methods. Encoding, crypto/delegation review, wallet integration, and runtime measurements remain deferred under ET-13/14/18/21/23; documentation checks alone do not prove secure implementation.
+
+## Paid introduction wire prerequisite
+
+The [paid introduction binding](paid-introduction.md) carries the exact native
+Tor introduction inside signed encrypted SETUP_BIND before acceptance/invoice
+issuance. Funding gates the single service-side build. The quote reply itself
+does not contain or establish the rendezvous cookie or handshake input.
