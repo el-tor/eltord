@@ -58,7 +58,7 @@ Keep three milestones separate: **funded** means the service verified settlement
 
 Status updates are authenticated and tied to the same quote, circuit and attempt. Asking again recovers progress without restarting the setup deadline or authorizing more spending. If setup fails or reaches its agreed deadline, stop new automatic spending and reconcile settled, spent and uncertain amounts. A replacement circuit needs explicit acceptance; refunds follow the agreed policy.
 
-The exact start of the first paid minute remains the next open decision. A funded/building status does not silently settle that question.
+The service-side first minute starts when its first paid relay round activates for the authorized build, after funding is verified and reserved. Construction uses part of that minute; completing the client handshake does not restart it. The service authenticates the start and deadlines. The client's own circuit keeps its separately agreed schedule. A short, explicitly bounded setup deadline and the accepted failure policy limit setup exposure; exact deadline values still need measurement.
 
 [Status, readiness and failure rules](02_paid_hidden_service_implementation_details.md#funded-build-status-client-readiness-and-setup-failure).
 
@@ -84,8 +84,8 @@ Routine key rotation preserves accepted terms; known compromise requires suspend
 
 ## Open work and where to resume
 
-Next discussion: exactly when the first paid minute starts, and how that relates to setup time and both rendezvous halves. Funded/building status, client-confirmed readiness and post-funding failure rules are now recorded. Exact acceptance/invoice/status/continuation wire, descriptor/delegation/catalog schemas, concrete timing/resource budgets, relay price commitments, lifetime policies and independent security review remain open in the technical specification and TODO. Runtime implementation, interoperability and correlated paid-network/privacy measurements remain deferred.
+Next discussion: the bounded setup deadline and startup funding margin, including whether the next round must be funded while construction is still in progress. The first service-side minute now starts at its first paid relay-round activation; client and service circuit schedules remain separate. Exact acceptance/invoice/status/continuation wire, descriptor/delegation/catalog schemas, concrete timing/resource budgets, relay price commitments, lifetime policies and independent security review remain open in the technical specification and TODO. Runtime implementation, interoperability and correlated paid-network/privacy measurements remain deferred.
 
 The separate paid-circuit replay-protection investigation stays deferred. Existing source-review findings, synthetic sizing checks and earlier free-mode tests do not establish support for this proposed protocol.
 
-**Privacy/timing assessment:** this overview summarizes the agreed behavior; its technical companion owns the exact protocol requirements. Acceptance/invoice and funded-build/status rules retain encrypted authorization, bounded retries and uncertain-payment reconciliation, while readiness/failure timing remains observable and requires measurement. Deferred implementation and validation are tracked under ET-28/29. Follow the [spec workflow](AGENTS.md) for both document layers; documentation checks are not runtime or anonymity evidence.
+**Privacy/timing assessment:** this overview summarizes the agreed behavior; its technical companion owns the exact protocol requirements. Acceptance/invoice and funded-build/status rules retain encrypted authorization, bounded retries and uncertain-payment reconciliation, while readiness/failure timing remains observable and requires measurement. Deferred implementation and validation are tracked under ET-28/29/30. Follow the [spec workflow](AGENTS.md) for both document layers; documentation checks are not runtime or anonymity evidence.
