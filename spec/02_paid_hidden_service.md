@@ -65,6 +65,26 @@ This requires a new El Tor request/reply extension. Standard Tor `INTRODUCE_ACK`
 
 Invoice acquisition may use Lightning-native mechanisms such as a BOLT 12 invoice request. If a supported method needs an additional Tor quote-acceptance/invoice/status exchange, give each logical request its own admitted, expiring reply slot and authenticated SCQ/client binding. Do not turn the slot into an unlimited bidirectional connection. These bounded follow-up message encodings remain wire-design work; obtaining an invoice alone is not funding or permission to spend.
 
+### Quote request field inventory
+
+The initial `SCQ_REQUEST` has the following logical fields. This inventory is not an assigned binary layout; canonical encoding, algorithm identifiers, byte sizes, signatures, and fixed envelope capacities still require specification and review.
+
+| Field group | Required information and binding |
+| --- | --- |
+| Protocol and service | Selected El Tor service version 1, intended service identity, and the authenticated descriptor/capability snapshot relied on by the client. |
+| Logical inquiry | A fresh logical request identifier for this proposed connection, retained inside encryption across permitted retries so the service can return the same quote/result without duplicate work. It is not a reusable balance or public client identity. |
+| Per-delivery binding | A fresh transport nonce and reply-encryption public key for this delivery, bound to the logical inquiry under the authenticated retry rules. |
+| Client authorization | A fresh authorization public key for the proposed circuit and proof of control binding the request fields, including reply key, intended service, method, rendezvous destination, and budget. Keep this authorization consistent across retries of that inquiry; do not reuse it as a wallet/node identity or across unrelated circuits. |
+| Rendezvous destination | The proposed rendezvous relay identity, interpreted against verified El Tor directory information. No service-side relay list or origin IP is needed. |
+| Selected payment method | Exactly one advertised, locally supported method: initially `BOLT11_INVOICE` or `BOLT12_OFFER`. These are logical names, not assigned wire enum values. The complete signed quote and later payment association must confirm the same selection. |
+| Price and fee limits | Maximum acceptable per-round cost, initial setup/handshake charges, and wallet/routing-fee budgets in explicit integer units. Quote calculation must respect these limits; it does not authorize spending. Final encoding must define rounding and representation of any permitted zero amounts. |
+
+The El Tor method model MUST support both **BOLT 11 invoice payments** and **BOLT 12 offer-based invoice acquisition/payments**. BOLT 11 supplies the payable invoice; it is not itself a reusable offer format. For BOLT 11, the service issues a fresh round-bound invoice through the authenticated bounded mechanism. For BOLT 12, an advertised offer can obtain a fresh bound invoice for each new round. Retrying the same unresolved payment must first reconcile its existing invoice/transaction rather than blindly generating and paying another one. An offer, invoice request, or quote is not payment or authorization for additional rounds.
+
+Protocol support for both formats does not require every receiver's wallet to implement both. The receiver advertises its actual methods; the client selects their supported intersection before payment. No silent method change is allowed after quote acceptance. BOLT 12 with receiver-hiding blinded paths remains preferred where supported, while BOLT 11 and other explicitly integrated methods follow the existing optional receiver-privacy policy. Neither the BOLT number nor the existence of an offer proves privacy or recipient settlement.
+
+**Privacy/timing assessment:** all request fields above, including method, logical ID, public keys, destination, and price limits, stay inside the authenticated end-to-end encrypted fixed-size envelope. Intermediate routing uses only its independently bound local handle; a request needs no client IP, persistent wallet identity, software inventory, or shared payment ID across hops. Both method selections use the same quote-envelope and response/retry scheduling rules. Invoice acquisition/settlement can have separate size, latency, and counterparty disclosures and must be assessed in its own bounded exchange, rather than silently expanding the quote or claiming identical Lightning traces. Codec sizes, invoice binding, wallet interoperability, and privacy/timing measurements remain deferred under ET-13/14/18/21/23; only documentation checks are performed for this change.
+
 ### Slot lifetime, abuse bounds, and failures
 
 Limit pending slots per client circuit, service registration, connection, and across the relay. Enforce aggregate request/response bandwidth, setup, CPU, queue, and memory ceilings because new circuits or identities can bypass a per-client limit. The service independently caps decrypt/verify work, candidate selection, outstanding quotes/invoices, nonce/replay records, and queues. Use the smaller of applicable path, relay, and service budgets. A legitimate quote can still fail under overload; these bounds do not promise absence of DoS.
@@ -500,6 +520,7 @@ Remaining design work includes security/privacy review of the quote return path,
 
 **References:**
 
+- [BOLT 11](https://github.com/lightning/bolts/blob/master/11-payment-encoding.md) defines the Lightning invoice format; the fresh circuit/round/client association above is an El Tor requirement.
 - [Tor onion-service overview](https://community.torproject.org/onion-services/overview/) describes descriptor publication, introduction points, and rendezvous.
 - [Tor introduction protocol](https://spec.torproject.org/rend-spec/introduction-protocol.html) defines introduction forwarding, delivery acknowledgments, payload constraints, and introduction rate controls.
 - [Tor rendezvous protocol](https://spec.torproject.org/rend-spec/rendezvous-protocol.html) defines circuit establishment and rendezvous cookies.
