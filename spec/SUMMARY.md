@@ -53,6 +53,7 @@
   - [Events and errors](control/events.md)
   - [Initial operations and lifecycle](control/lifecycle.md)
   - [Durable authorization and recovery](control/recovery.md)
+  - [Recoverable service build](control/service-build.md)
   - [Daemon helpers and proposed interfaces](control/daemon.md)
 
 # Validation and open work

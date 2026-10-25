@@ -11,7 +11,9 @@ Use an authenticated local Tor control connection. This profile treats authorize
 control peers as one privileged daemon authority, as Tor control access already
 permits circuit management; it does not promise per-wallet multi-tenant isolation.
 The deployment MUST restrict control access to that authority. Wallet credentials,
-preimages and exporter/MAC keys are never command arguments or status outputs.
+preimages and exporter/MAC keys are never arguments or outputs of the commands
+in this chapter. The separate service-build construction command documents its
+required private proof input explicitly; no command logs or echoes those proofs.
 
 Commands are ASCII, one line terminated by CRLF, with one space between positional
 arguments. No optional positional arguments, quoting, duplicate keys or extra

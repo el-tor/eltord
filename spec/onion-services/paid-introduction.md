@@ -130,8 +130,9 @@ Eltord supplies quote/funding authorization through authenticated local control;
 it must not manufacture native handshake secrets from a ledger row. A recoverable
 build operation needs the exact setup_digest, durable attempt ID and process-bound
 local circuit handles. Existing EXTENDPAIDCIRCUIT alone does not implement this
-service launch gate. The implementation handoff must define the local service-build
-operation/query contract before declaring the profile implementation-ready.
+service launch gate. The [service-build controller contract](../control/service-build.md) defines
+registration, one path launch, query, activation-gated join and process loss.
+Its implementation and recovery tests remain prerequisites to deployment.
 No runtime implementation is authorized by this document.
 
 ## Privacy and validation
