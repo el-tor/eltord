@@ -11,6 +11,20 @@ Distinguish draft design, implemented behavior, and executed validation. Leave
 implementation deferred until requested; creating or updating a TODO does not
 authorize starting it. Preserve the separate deferred replay-protection task.
 
+## Architecture and technical document layers
+
+Keep each specification's high-level architecture separate from its technical
+protocol/implementation design. For paid hidden services, use
+[spec two](02_paid_hidden_service.md) for purpose, roles, payment flow, decisions,
+tradeoffs and open topics; put exact schemas/bytes, cryptography, key/state
+machines, retry/timing algorithms, resource ceilings and validation details in
+[the technical companion](02a_quote_bootstrap_wire.md). Preserve cross-links and
+one authoritative location for detailed requirements; avoid copying the full
+technical rules into the overview. Apply this split to future specification
+work using an appropriate companion, and preserve existing requirements when
+reorganizing. Neither document implies implemented support. Both layers still
+need matching TODO updates and the privacy/timing assessment below.
+
 ## Privacy and timing review for every spec change
 
 Every new specification and every edit to an existing specification must

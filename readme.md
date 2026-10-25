@@ -89,7 +89,8 @@ Spec
 - [(00) - El Tor Spec](./spec/00_spec.md)
 - [(01) - Paid Circuit Protocol](./spec/01_paid_circuits.md)
 - [(01a) - Circuit Renewal Wire Draft](./spec/01a_circuit_renewal_wire.md)
-- [(02) - Paid Hidden Services](./spec/02_paid_hidden_service.md)
+- [(02) - Paid Hidden Services: Architecture](./spec/02_paid_hidden_service.md)
+- [(02a) - Paid Hidden Services: Technical Protocol](./spec/02a_quote_bootstrap_wire.md)
 - [El Tor implementation TODO — deferred protocol work](./TODO.md)
 
 
