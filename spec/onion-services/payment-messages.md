@@ -87,6 +87,7 @@ Messages: 1 ACCEPT_ROUND, 2 ROUND_INVOICE, 3 ROUND_QUERY.
 and response status 8 STATE; [paid introduction](paid-introduction.md) adds
 6 SETUP_BIND and response status 9 SETUP_BOUND.
 [Continuation](continuation.md) adds messages 7–9 and response status 10.
+[Refunds](refunds.md) adds messages 10–11 and response status 11.
 Other values are reserved.
 ACCEPT_ROUND requires the validated setup binding specified by paid introduction,
 then round 1 and durably accepts the exact offered core before

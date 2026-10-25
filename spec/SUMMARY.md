@@ -27,6 +27,7 @@
   - [Status and readiness wire](onion-services/readiness-wire.md)
   - [Paid introduction binding](onion-services/paid-introduction.md)
   - [Continuation and lifetime profile](onion-services/continuation.md)
+  - [Reconciliation and refunds](onion-services/refunds.md)
   - [Introduction availability](onion-services/introductions.md)
   - [Version agreement](onion-services/version.md)
   - [Service Circuit Quote and pricing](onion-services/pricing.md)

@@ -35,7 +35,7 @@ Authenticate the SCQ as belonging to the onion service through its descriptor-au
 
 ### Fixed price and acceptance sequence
 
-Once accepted within its validity window, the per-minute price is fixed for that circuit's agreed lifetime. Paying incrementally does not permit repricing each minute. Changed relay descriptors or service metadata cannot alter an accepted SCQ. The renewal draft preserves the accepted per-minute price for the continuing circuit; changing prices at renewal boundaries remains an open decision. The client may reject the quote, or stop renewing an accepted circuit under the existing performance/payment rules; acceptance does not commit the client to purchasing all ten rounds.
+Once accepted within its validity window, the per-minute price is fixed for that circuit's agreed lifetime. Paying incrementally does not permit repricing each minute. Changed relay descriptors or service metadata cannot alter an accepted SCQ. The renewal draft preserves the accepted per-minute price for the continuing circuit; the version-one continuation profile forbids repricing at renewal boundaries. The client may reject the quote, or stop renewing an accepted circuit under the existing performance/payment rules; acceptance does not commit the client to purchasing all ten rounds.
 
 The proposed sequence is: request SCQ, select candidate relays and calculate cost, authenticate and deliver the quote, client accepts or declines, obtain and settle initial funding, then construct/pay the service-side circuit. The client may prepare its own rendezvous circuit independently. The service MUST NOT incur paid work until the agreed initial funding is settled and reserved. Before requesting payment, decline if no workable candidate path fits the quoted price.
 
@@ -63,7 +63,7 @@ Rate-limit quote requests, candidate selection, invoice issuance, and outstandin
 
 A client receiving a quote for a private path cannot independently verify its component relay prices without additional disclosure or a separate reviewed proof mechanism. Treat the total as a service-authenticated price offer which the client may reject. Do not claim that the quote proves honest pricing, relay performance, successful delivery, or automatic fair exchange.
 
-Keep uncertain in-flight payments reserved until reconciled, including after circuit closure or a request to re-quote. Refund/unused-funding claims require client authorization bound to the original quote, confirmed remaining funds, and bounded refund fees; a retry or refund request must not redirect someone else's funds. Detailed refund mechanics remain open, and the SCQ does not promise an unconditional refund of already incurred agreed costs.
+Keep uncertain in-flight payments reserved until reconciled, including after circuit closure or a request to re-quote. Refund/unused-funding claims require client authorization bound to the original quote, confirmed remaining funds, and bounded refund fees; a retry or refund request must not redirect someone else's funds. The [refund profile](refunds.md) specifies the bounded authenticated mechanism, and the SCQ does not promise an unconditional refund of already incurred agreed costs.
 
 ### Shared construction and validation
 

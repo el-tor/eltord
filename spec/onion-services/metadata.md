@@ -191,8 +191,10 @@ unspent service-side reserved principal after reconciliation, excluding disclose
 incurred setup/application/routing costs. Neither refunds unknown or spent money
 as if it were unspent, nor authorizes a new circuit. Refund dispatch requires a
 separate authenticated recipient instruction and idempotent outgoing intent;
-its transport is part of the later accounting protocol. Unknown rules fail.
-Rule 1 cannot be advertised until that refund mechanism is implemented and tested.
+its [transport and accounting contract](refunds.md) are specified separately. Unknown rules fail.
+Rule 1 explicitly requires client BOLT11 receive support for refunds, including
+when the original payment uses BOLT12; check and disclose this before acceptance.
+It cannot be advertised until that refund mechanism is implemented and tested.
 These policy codes do not guarantee delivery or recovery from a dishonest peer.
 
 ### Type 2: payment issuer
