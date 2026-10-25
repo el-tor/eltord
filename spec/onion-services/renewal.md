@@ -25,3 +25,10 @@ This is coordinated preparation, not atomic settlement across the client, servic
 The per-hop wire draft specifies exact batch acknowledgment, replay/conflict handling, conservative timing, and bounded pending-state rules. The authenticated client/service continuation/readiness/status encodings, relay-to-end-to-end round mappings, and cumulative age/renewal defaults remain separate design tasks. SCQ extensions cannot override relay limits or send a common SCQ identifier to transport relays as a renewal token. Free introduction-circuit renewal remains undecided; retain its existing bounded-free replacement policy, and do not indefinitely renew an idle descriptor-upload circuit under this paid extension. All design/implementation/validation work is tracked in the [El Tor TODO](../../TODO.md), including separate deferred replay protection.
 
 Test continuous transfers across multiple allocation boundaries without changing either rendezvous circuit or stream. Test each side declining, one hop refusing, stale/duplicate extension acceptance, unequal boundary times, partial settlement, missing service readiness, payment delay, budget exhaustion, and a relay actually dropping. Verify no unfunded service spending, no unauthorized eleventh round, no duplicate setup fee or quota reset, bounded pending state, and correct closure/reconciliation. This section defines draft acceptance criteria; no renewal implementation or executed end-to-end test is claimed.
+
+## Version-one continuation profile
+
+The [continuation/lifetime contract](continuation.md) resolves the draft policy choices
+above: fixed prices throughout, finite candidate one-hour default/24-hour ceiling,
+ten-minute new-stream draining, free-only replacement and exact SCQ continuation
+records. These are proposed test policies, not measured runtime support.

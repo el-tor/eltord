@@ -85,7 +85,9 @@ policy fields, including funding_policy_ref; do not resolve a new catalog on ret
 Messages: 1 ACCEPT_ROUND, 2 ROUND_INVOICE, 3 ROUND_QUERY.
 [Status/readiness](readiness-wire.md) adds 4 STATUS_GET and 5 CANCEL_ATTEMPT
 and response status 8 STATE; [paid introduction](paid-introduction.md) adds
-6 SETUP_BIND and response status 9 SETUP_BOUND. Other values are reserved.
+6 SETUP_BIND and response status 9 SETUP_BOUND.
+[Continuation](continuation.md) adds messages 7–9 and response status 10.
+Other values are reserved.
 ACCEPT_ROUND requires the validated setup binding specified by paid introduction,
 then round 1 and durably accepts the exact offered core before
 invoice creation. ROUND_INVOICE requires existing acceptance and a currently

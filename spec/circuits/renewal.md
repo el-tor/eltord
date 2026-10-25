@@ -64,3 +64,10 @@ The companion wire draft now records proposed capability/version negotiation, pr
 Test a continuous transfer across rounds 10→11 and 20→21, retaining the same circuit and established stream. Test refusal at any hop, missing/duplicate/reordered acknowledgments, partial admission and settlement, late payment, stale messages and circuit-ID reuse, replay, crash/restart, budget exhaustion, quota-reset attempts, bounded state under floods, and genuine relay failure. Verify no round beyond the accepted allocation is charged and no new ten-round lump payment is introduced. These are future acceptance tests, not executed results. Onion connections add the two-half coordination requirements in [spec two's technical companion](../onion-services/renewal.md#renewing-both-rendezvous-circuit-halves).
 
 References: [Tor relay-cell format](https://spec.torproject.org/tor-spec/relay-cells.html) defines circuit-control stream IDs, framing, and digests; [relay-cell routing](https://spec.torproject.org/tor-spec/routing-relay-cells.html) describes addressing an existing hop through layered encryption; [setting circuit keys](https://spec.torproject.org/tor-spec/setting-circuit-keys.html) describes handshake-specific key derivation. [Tor stream attachment rules](https://spec.torproject.org/control-spec/commands.html#attachstream) restrict attaching already open streams; [HTTP range requests](https://www.rfc-editor.org/rfc/rfc9110.html#section-14) provide optional application-level partial retrieval after interruption.
+
+## Version-one continuation profile
+
+The [continuation/lifetime contract](../onion-services/continuation.md) resolves the draft policy choices
+above: fixed prices throughout, finite candidate one-hour default/24-hour ceiling,
+ten-minute new-stream draining, free-only replacement and exact SCQ continuation
+records. These are proposed test policies, not measured runtime support.
