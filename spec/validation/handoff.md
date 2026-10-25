@@ -14,6 +14,7 @@ eltord `18935e2f9b4bd7b297620f538e6186520b234117`, standalone Tor
 `90dd176b6c5cf1052842fbe574e9320aedf2ebe4`. These are inspected source baselines,
 not proof of the current executable's embedded revision. The spec branch was
 based on master and must not silently replace the reliability branch at build time.
+The [reliability integration preflight](source-comparison.md#reliability-branch-integration-preflight) records a conflict-free local virtual merge and the app/SOCKS/wallet fixes to preserve; no actual merge or runtime validation was performed.
 Record commit IDs, local changes, dependency lockfiles, build flags and executable
 digests for each implementation test. Preserve the standalone/vendored testing-only
 unpaid bootstrap distinction; do not confuse it with bounded-free conformance.

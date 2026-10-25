@@ -11,10 +11,11 @@ Paths below are relative to the named repository, not to the spec book.
 | Repository | Revision | Scope |
 | --- | --- | --- |
 | eltord | `18935e2f9b4bd7b297620f538e6186520b234117` (`intermitted-fix`) | Client construction/scheduling, relay watcher/ledger, RPC helpers and database |
-| eltord | `78cffb4` (`hidden-service-spec-revision`) | Current documentation branch; runtime does not include the reliability branch changes |
+| eltord | `20cc246` (`hidden-service-spec-revision`) | Documentation preflight baseline; runtime does not include the reliability branch changes |
 | tor | `2f05d0452d0cfc1393e8d7d2e0dbf781e5230e33` (`intermitted-fix`) | Control handlers, payment events and testing-network exception |
 | libeltor-sys | `543241cda3b12fff3833b6b8b52cc997a494ac4d` | Vendored Tor under `libtor-src/tor-src`; this directory is part of libeltor-sys, not an independent Git revision |
 | lni | `90dd176b6c5cf1052842fbe574e9320aedf2ebe4` | Phoenixd lookup and invoice polling |
+| eltor-app | `c0c0e2a894e534eadf68e553f0341c6fe520bbd2` (`intermitted-fix`) | SOCKS framing, startup/readiness, log recovery, Arti configuration and local Phoenix binaries |
 
 The standalone and vendored `control_extendpaidcircuit.c` files compare equal.
 Their `circuitbuild_relay.c` files differ: the standalone fork allows missing
@@ -87,3 +88,49 @@ are reproduced here. Validation performed: source reads, branch diffs, symbol
 searches and comparison of the two vendored/standalone control handlers. No
 wallet payment, runtime feature test or exploit was executed. Deferred checks
 remain ET-01, ET-08–10, ET-18, ET-21 and ET-33 in the [backlog](../../TODO.md).
+
+## Reliability branch integration preflight
+
+The local `intermitted-fix` work spans eltord, tor, libeltor-sys, lni and
+eltor-app. A Git merge-tree simulation against the eltord specification preflight
+baseline `20cc246` completed without conflicts. The resulting virtual tree's
+runtime source, lockfile, tests, tools and investigation documents exactly matched
+the reliability branch; its spec, TODO, book configuration and readme exactly
+matched the specification branch. No checkout, branch ref or working file was
+merged. This establishes local textual compatibility, not a compiled integration
+or remote merge result. Standalone Tor's baseline branch is `main`; the other
+repositories retain their own histories and must be integrated separately.
+
+Additional preservation requirements from that review:
+
+- Preserve eltord's distinct relay selection, proper command-status parsing,
+  bounded RPC calls, one stream monitor per generation and shutdown cleanup.
+  New durable operation/instance contracts extend these fixes; successful control
+  authentication alone must not become command or payment success.
+- Preserve both Tor copies' initialized error-path pointers, actual serialization
+  capacity checks and failed-new-circuit cleanup. New control handlers need the
+  same failure-path regression coverage. The standalone testing-only unpaid
+  exception remains distinct from the vendored behavior and from bounded free use.
+- Preserve app SOCKS fragmented-frame handling and forwarding of remaining bytes,
+  launch error propagation, replaced-log recovery and loopback Arti configuration.
+  Existing bootstrap progress is process readiness, not paid-service READY. The
+  new UI must retain that distinction rather than reuse a bootstrap completion
+  callback as proof of rendezvous or settlement.
+- Preserve the local Phoenix binaries and configurable embedded-wallet startup.
+  Those binaries are not part of the specification branch. Their versions and
+  actual invoice capabilities need separate validation before claiming support
+  for invoice-before-payment, either payment method or refund receiving.
+- Preserve LNI's transient-error-as-pending behavior. New durable uncertainty,
+  authoritative settlement checks and single-use accounting remain required;
+  the polling fix alone does not implement them.
+
+The previously recorded mock, C error-path and free-network results are historical
+evidence, not tests rerun in this preflight. No new runtime feature or protocol
+change is introduced. Existing ET-01, ET-08–10, ET-18, ET-20–22 and ET-33 cover
+implementation and regression validation. Retain and rerun the reliability tests
+when implementation is separately authorized, then add paid-protocol conformance.
+
+**Privacy/timing assessment:** this comparison records existing behavior only.
+It adds no identifiers, message fields, logging, timers or payment authority.
+Local source/diff and virtual merge checks were executed; no wallet payments,
+network soak, binary rebuild or independent privacy validation was performed.
