@@ -16,14 +16,19 @@ It is not an independent cryptographic audit or runtime conformance test.
 | Retry the “exact READY” | Same logical signed authorization, fresh encrypted delivery as required; no repeated ciphertext or reused AEAD nonce. |
 | Fixed ten-minute path versus ongoing downloads | Ten-round allocations can renew only with negotiated support and accepted finite lifetime limits. Backup circuits do not migrate streams. |
 
-## Remaining interoperability decisions
+## Current review status
 
-The [gate matrix](gates.md) owns the outstanding list. Particularly significant:
-initial relay term/start authentication; exact catalog/delegation and acceptance/
-invoice/status/READY/continuation schemas; control RPC recovery; relay command
-allocation; finite lifetime and free-only renewal; measured free traffic, retry,
-clock and resource budgets. No chapter may label these complete because an
-architecture decision or initial quote layout exists.
+Concrete proposals now cover initial commitment, lifecycle/recovery, metadata,
+transport, acceptance/invoices, paid introduction, service build, READY, continuation
+and refunds. The [gate matrix](gates.md) separates those designs from remaining
+validation. The final cross-chapter audit and implementation handoff are still in
+progress; no implementation-ready or deployment-ready claim is made.
+
+Public [service codec fixtures](../vectors/service_codec_v1.json) cover eight
+representative record encodings, domain-separated Ed25519 examples and four
+framing sizes. The checker reproduces exact bytes/digests/signatures. It does not
+exercise native wallets, runtime parsers, hs-ntor or HPKE, and the listed negative
+tests remain implementation acceptance requirements.
 
 ## Readiness and spending invariant
 

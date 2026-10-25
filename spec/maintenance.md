@@ -29,3 +29,9 @@ its maintained source. Run `python3 spec/tools/check_docs.py` before building.
 Run `python3 spec/tools/check_book.py` after `mdbook build` to validate all rendered
 local links, images and anchors, including the generated backlog. The historical
 service-flow image is retained locally for an offline book preview.
+
+Run `python3 spec/tools/check_codec_vectors.py` with Python cryptography installed
+(validated with 46.0.5) to reproduce the public service codec/digest/signature
+fixtures. `--write` regenerates them only after an intentional reviewed schema
+change. These checks do not exercise runtime parsers, HPKE or native Lightning
+messages. The vectors explicitly identify those limitations.
