@@ -21,6 +21,7 @@
 - [Paid hidden service architecture](02_paid_hidden_service.md)
   - [Inherited construction](onion-services/construction.md)
   - [Descriptor discovery](onion-services/discovery.md)
+  - [Descriptor metadata encoding](onion-services/metadata.md)
   - [Introduction availability](onion-services/introductions.md)
   - [Version agreement](onion-services/version.md)
   - [Service Circuit Quote and pricing](onion-services/pricing.md)

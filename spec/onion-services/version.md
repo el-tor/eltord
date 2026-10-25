@@ -22,7 +22,7 @@ For the initial release, both endpoints support version 1 or the attempt fails. 
 
 Version agreement is not quote-price acceptance, relay admission, settlement, or a delivery guarantee. Discovery and negotiation must fit the bounded free bootstrap; an incompatible or unpaid requester cannot cause the service to build paid circuits or spend wallet funds. Locally accepted activity on other circuits is not a new authorization for this attempt.
 
-The final bootstrap and SCQ wire formats must define the canonical capability-block bytes, digest domain, nonce length, authentication/delegation, payload limits, and replay handling. Those encodings remain deferred design work in ET-13/14/19; this section defines their required semantics without inventing an unauthenticated preliminary handshake.
+The final bootstrap and SCQ wire formats must define the canonical capability-block bytes, digest domain, nonce length, authentication/delegation, payload limits, and replay handling. The [metadata profile](metadata.md) and [quote wire format](wire.md) define those encodings. Implementation remains deferred under ET-13/14/19; there is no unauthenticated preliminary handshake.
 
 ### Required features and hop-level protocols
 
@@ -43,3 +43,10 @@ There is no automatic fallback to ordinary Tor, an unadvertised older El Tor ver
 Test version-1 matching, no common version, missing/invalid metadata, unknown required features, unsupported wallet methods, manipulated version/digest/nonce/method fields, substituted quotes/invoices, replayed requests, stale descriptors, bounded refresh/retry, and descriptor changes during an accepted circuit. Check that unsupported requests cause no new paid service-side work, no attempted connection-specific payment, no silent fallback, and no cross-circuit funding reuse. Verify per-hop readiness separately and measure negotiation sizes/traffic without exposing a persistent client fingerprint.
 
 Implementation remains deferred. [ET-19 in the El Tor TODO](../../TODO.md#compatibility-app-behavior-and-validation) tracks this agreement, with bootstrap/SCQ encoding in ET-13/14, app behavior in ET-20, and version/renewal testing in ET-21. Documentation checks do not demonstrate a deployed compatible client or service.
+
+## Canonical metadata profile
+
+The [version-one metadata encoding](metadata.md) defines the exact descriptor
+container, capability digest, key delegations/revocation and catalog records.
+Use its concrete schema for the encoding details described as open above;
+implementation, independent review and measurements remain deferred.
