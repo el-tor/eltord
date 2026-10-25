@@ -32,6 +32,13 @@ circuit/issuer/acquisition and cap bindings, round=0. Allocate messages
 10 REFUND_REQUEST and 11 REFUND_QUERY; common response status 11 REFUND_STATE.
 These are endpoint record values, not new relay commands.
 
+The attempt ID must equal the agreement's retained attempt ID. Zero is valid
+only for an accepted agreement cancelled before FUNDED that never allocated an
+attempt. The signed service/client/core/circuit bindings still select exactly one
+agreement. Late settlement can become refundable after reconciliation under policy
+1 without allocating a circuit or attempt. A zero ID cannot select another
+agreement or bypass the terminal-accounting and eligibility rules.
+
 REFUND_REQUEST payload is:
 
 ```text

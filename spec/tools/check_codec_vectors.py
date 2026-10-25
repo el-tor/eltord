@@ -70,6 +70,23 @@ def generate():
     assert 10000 == 3000+0+0+2000+4000+1000
     refund = fixture('refund_state','32s32sBH32sQQQ',
         [blob('attempt'),blob('refund'),4,0,blob('payment hash'),1000,100,20],123)
+    setup = fixture('preaccept_setup_bound_body', 'HBBB'+'32s'*8+'IQ32sQ32s32sI32s',
+        [1,6,9,1,*refs,0,0,blob('setup request delivery'),1,
+         blob('setup nonce'),blob('setup reply'),32,blob('setup digest')],
+        413,'eltor/scq/v1/control-reply')
+    cancel_payload = struct.pack('!32sH', z, 1)
+    cancel = fixture('agreement_cancel_body', 'HBB'+'32s'*8+'IQQQQQ32s32sI34s',
+        [1,5,1,*refs,0,100000,20000,1000,2000000100,1,
+         blob('cancel nonce'),blob('cancel reply'),34,cancel_payload],
+        406,'eltor/scq/v1/control-request',seed_label='control_accept_body')
+    # Assert the review cases at their shared-prefix offsets as well as total size.
+    setup_bytes = bytes.fromhex(setup['body_hex'])
+    cancel_bytes = bytes.fromhex(cancel['body_hex'])
+    assert setup_bytes[2:4] == bytes([6,9])
+    assert setup_bytes[265:273] == bytes(8)  # pre-acceptance agreement revision
+    assert struct.unpack('!I',setup_bytes[377:381])[0] == 32
+    assert cancel_bytes[2] == 5 and cancel_bytes[260:264] == bytes(4)
+    assert cancel_bytes[372:] == bytes(32) + bytes([0,1])
     frames = []
     for kind, count in [(1,1),(2,2),(3,8),(4,8)]:
         # Not HPKE ciphertext: deterministic byte fixture checks slice/framing only.
@@ -85,11 +102,14 @@ def generate():
                        'envelope_hex':envelope.hex(),'fragments_hex':payloads})
     return {'profile':'El Tor v1 public synthetic service codec fixtures',
         'limitations':'Serialization, digest and Ed25519 examples only. Not valid native invoices, descriptors, hs-ntor handshakes or HPKE ciphertext. Not runtime interoperability or independent crypto review.',
-        'records':[request,response,ready,delegation,funding,continuation,status,refund],
+        'records':[request,response,ready,delegation,funding,continuation,status,refund,setup,cancel],
         'framing':frames,
         'deferred_negative_tests':['wrong signature domain/command','nonzero padding','unknown enum',
           'oversize/truncated payload','changed logical retry bytes','wrong circuit READY',
-          'duplicate/changed invoice','accounting partition overlap','expired key or deadline']}
+          'duplicate/changed invoice','accounting partition overlap','expired key or deadline',
+          'specialized status with financial payload length','wrong message/status pair',
+          'zero revision after acceptance','cancel-first late settlement launches a build',
+          'funding-first zero-selector cancellation fails','refund no-attempt agreement mismatch']}
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--write',action='store_true');args=parser.parse_args()
@@ -98,5 +118,5 @@ def main():
         DEST.write_text(json.dumps(data,indent=2)+'\n')
     else:
         assert json.loads(DEST.read_text()) == data, 'fixture differs; review schema changes before regeneration'
-    print('Verified 8 canonical record fixtures, signature/digest examples and 4 framing examples; no runtime/HPKE validation.')
+    print(f"Verified {len(data['records'])} canonical record fixtures, signature/digest examples and 4 framing examples; no runtime/HPKE validation.")
 if __name__=='__main__':main()

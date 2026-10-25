@@ -122,8 +122,12 @@ L(payload)
 
 The prefix is 377 bytes; payload at most 2800; append service signature, then pad
 and encrypt. Echo message, bindings, nonce/reply key and exact request delivery
-digest. Revision is a positive durable agreement counter after acceptance; zero
-only for refusals before any agreement exists. Counters never wrap. Clients retain
+digest. Revision is a positive durable agreement counter after acceptance. Before
+acceptance, revision zero is permitted only for REFUSED (5) or successful
+SETUP_BOUND (9); SETUP_BOUND validates the setup without creating an accepted
+agreement. All other statuses require an existing agreement and positive revision.
+Once acceptance exists, even refusals and repeated SETUP_BOUND use its current
+positive revision; never roll an accepted agreement back to revision zero. Counters never wrap. Clients retain
 a high-water revision but an event is never proof of their own wallet outcome.
 
 Statuses: 1 INVOICE, 2 PENDING, 3 SETTLED_RESERVED, 4 ZERO_AUTHORIZED,
@@ -135,7 +139,7 @@ REFUSED/CLOSED_UNRESOLVED never authorize wallet dispatch. Missing replies chang
 no financial state. New valid observations can refine UNKNOWN but cannot reopen
 closure, reset expiry or duplicate a purchase.
 
-For non-INVOICE replies, payload is exactly
+For financial response statuses 2–7 only, payload is exactly
 `u16 reason || u64 expected_amount_msat || payment_hash32` (42 bytes).
 Reason 0 means no error; 1 capacity, 2 expired, 3 bad binding/terms, 4 unsupported
 method, 5 wallet pending, 6 uncertain outcome, 7 closed, 8 terminal wallet failure,
@@ -144,6 +148,29 @@ PENDING (5/6), CLOSED_UNRESOLVED (6/7) and FAILED_FINAL (8). Unknown enums fail.
 Payment hash is zero if unavailable or zero-priced, never invented. Expected
 amount is the retained calculation, zero for pre-acceptance refusal. An unsigned
 transport error cannot become one of these authenticated service outcomes.
+
+## Response schema dispatch
+
+After authenticated decryption, dispatch by both echoed request message and
+response status. Status is not a generic success flag. Validate the matching
+payload length and semantics before exposing the response to a caller:
+
+| Status | Allowed request messages | Payload |
+| --- | --- | --- |
+| 1 INVOICE | 1–3 | Variable invoice endorsement defined below |
+| 2–4, 6–7 financial states | 1–3 | Exactly 42 bytes as above |
+| 5 REFUSED | 1–11 | Exactly 42 bytes as above |
+| 8 STATE | 4–5 | Exactly 132 bytes, [attempt state](readiness-wire.md) |
+| 9 SETUP_BOUND | 6 | Exactly 32 bytes, [setup digest](paid-introduction.md) |
+| 10 CONTINUATION | 7–9 | Exactly 150 bytes, [continuation](continuation.md) |
+| 11 REFUND_STATE | 10–11 | Exactly 123 bytes, [refund state](refunds.md) |
+
+Reject every other message/status pairing, unknown status, incorrect length or
+trailing data. A specialized pending/refusal state uses its chapter's payload;
+it must not be decoded as the 42-byte financial record. Common REFUSED remains
+available for a request whose agreement, binding or schema cannot be admitted.
+ROUND_QUERY may return the existing invoice but may not create one. All records
+retain the same 3472-byte encrypted envelope, independent of payload schema.
 
 ## Acquisition payload and invoice endorsement
 

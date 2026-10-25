@@ -74,6 +74,12 @@ The design limits exposure but cannot eliminate loss. A peer may fail after paym
 
 [Timing and funding](onion-services/timing.md#payment-timing-and-circuit-rounds) · [Two-half renewal](onion-services/renewal.md#renewing-both-rendezvous-circuit-halves) · [Failures and accounting](onion-services/authorization.md#3-specify-failures-retries-and-round-accounting).
 
+Clients can cancel an accepted agreement while the first payment is still pending,
+before a circuit attempt ID exists. Once the service records cancellation, later
+settlement is reconciled under the original policy and cannot start a paid build.
+Cancellation cannot undo work already dispatched; a lost reply requires recovery
+of the same agreement rather than assuming cancellation succeeded.
+
 ## Wallet support and privacy
 
 Support the protocol's BOLT 11 invoice and BOLT 12 offer-based flows through actual wallet integrations. Each receiver advertises what it supports, and the client chooses a mutually supported method. Receiver privacy is the receiver's choice; blinded BOLT 12 paths are preferred where supported, not mandatory.

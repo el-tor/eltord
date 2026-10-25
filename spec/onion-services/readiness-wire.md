@@ -12,9 +12,13 @@ All existing service/client/core/quote/circuit/issuer/acquisition bindings remai
 mandatory. `round=0` selects whole-attempt state; the exact accepted caps are
 retained. STATUS_GET payload is `attempt_id32`: zero requests the sole attempt
 for this circuit authorization, while a nonzero value must match it exactly.
-CANCEL_ATTEMPT payload is `attempt_id32 || u16 reason=1`; cancellation requires
-a known nonzero attempt. Persist the same logical mutation/operation across
-retries. The query never accepts a quote, creates an invoice, starts a build,
+CANCEL_ATTEMPT payload is `attempt_id32 || u16 reason=1`. A zero attempt ID
+cancels the exact accepted agreement identified by the common signed service,
+client, quote-core and circuit-authorization bindings, including while initial
+funding is pending. If that agreement already has an attempt, zero selects that
+sole attempt; it is not a wildcard across agreements. A nonzero ID must match
+the existing attempt. Persist the same logical mutation/operation across retries;
+do not replace a zero selector with a newly learned ID on the same operation. The query never accepts a quote, creates an invoice, starts a build,
 renews a round, changes a deadline or invokes a wallet payment.
 
 For these two messages, common response status 8 STATE uses the payload below.
@@ -44,7 +48,12 @@ all fields are read atomically from that revision. State values:
 The last five are terminal for connectivity, even if accounting later changes.
 ACCEPTED has zero attempt ID until funds are reserved. FUNDED allocates the one
 fresh random attempt ID and starts the original setup deadline atomically.
-Repeated settlement cannot allocate another attempt. FAILED/EXPIRED/CANCELLED
+Repeated settlement cannot allocate another attempt. Cancellation before FUNDED
+retains attempt_id=zero and current_round=0 in all later terminal snapshots;
+it never allocates a build attempt just to reconcile funds. Such terminal records
+have positive agreement revisions and absent setup/recovery/elapsed/funded time
+bits, not invented clocks. A terminal agreement with no attempt remains queryable
+with the zero selector. FAILED/EXPIRED/CANCELLED
 may become CLOSED_UNRESOLVED or CLOSED after reconciliation without reconnecting.
 
 Reason 0 none; 1 client cancellation; 2 setup timeout; 3 relay/path failure;
@@ -84,6 +93,32 @@ from the client's own wallet ledger. Never subtract unknown outcomes as failed.
 No negative residual, double-counted reservation or arithmetic overflow is valid.
 The client treats the signed snapshot as the service's accounting claim, not proof
 that the private path spent honestly or that its own outgoing wallet payment failed.
+
+Cancellation is admitted only for an already accepted agreement. Unknown or
+unaccepted agreements return REFUSED reason 3 without allocating durable state.
+For an accepted agreement, serialize cancellation, settlement/reservation and
+paid-dispatch authorization through the same durable agreement record:
+
+- If cancellation commits first, record CANCELLED/reason 1 with no-new-spend.
+  Later settlement updates accounting only: do not enter FUNDED, allocate an
+  attempt, start a setup timer, dispatch relay payments or launch a build.
+- If funding commits first, cancel its sole attempt even if the client has not
+  received its ID. Block all not-yet-dispatched work and close any existing path.
+  Work already dispatched may have side effects and must be reconciled; it cannot
+  be undone by cancellation or retried as a replacement.
+- Exact retries recover the terminal state without resetting deadlines or
+  creating another cancellation. A new operation for the same cancelled agreement
+  also observes terminal state. Replayed acceptance, invoices, zero-charge
+  authorization or callbacks cannot revive it.
+
+Retain cancellation tombstones with the durable agreement/payment retention rules,
+including unresolved incoming payments and invoice-creation operations. No pending
+wallet result is treated as failed. Late received principal is recorded under the
+original refund policy and may be reconciled/refunded without a constructed
+attempt; zero remains the exact agreement's no-attempt value. Polling/cancellation
+use the existing bounded control envelope, transport retries and shared limits.
+Loss of a cancellation reply is uncertainty, not proof the service stopped; the
+client stops new local dispatch and queries/retries the same signed operation.
 
 Cancellation atomically records no-new-spend and terminal connectivity intent,
 then closes the exact existing path. It cannot undo dispatched payments or refund

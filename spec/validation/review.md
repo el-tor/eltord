@@ -24,7 +24,7 @@ and refunds. The [gate matrix](gates.md) separates those designs from remaining
 validation. The cross-chapter audit and implementation handoff below record proposed-design
 completion; no tested-runtime or deployment-ready claim is made.
 
-Public [service codec fixtures](../vectors/service_codec_v1.json) cover eight
+Public [service codec fixtures](../vectors/service_codec_v1.json) cover ten
 representative record encodings, domain-separated Ed25519 examples and four
 framing sizes. The checker reproduces exact bytes/digests/signatures. It does not
 exercise native wallets, runtime parsers, hs-ntor or HPKE, and the listed negative
@@ -177,3 +177,34 @@ in force. The implementation backlog stays unchecked.
 and historical whitespace only. Wire bytes, state transitions, payment authority,
 privacy assumptions, timing and retry policies are unchanged. No new runtime
 requirement or corresponding implementation task is introduced.
+
+## PR review corrections: shared responses and early cancellation
+
+Three review findings are addressed in the proposed contract:
+
+1. Financial payload length 42 now applies only to response statuses 2–7.
+   A message/status dispatch table identifies the specialized setup, attempt,
+   continuation and refund schemas and rejects invalid pairings.
+2. Pre-acceptance SETUP_BOUND explicitly permits revision zero, alongside
+   pre-acceptance refusal. Every response for an accepted agreement retains a
+   positive revision. Setup-before-acceptance no longer contradicts the wrapper.
+3. CANCEL_ATTEMPT with zero attempt ID selects the exact signed accepted agreement,
+   including while initial funding is pending. Cancellation and paid dispatch are
+   serialized against settlement. Cancellation-first prevents future construction;
+   funding-first closes the sole attempt and reconciles already-dispatched work.
+   No-attempt terminal accounting/refunds retain zero rather than inventing a build.
+
+The ten public codec fixtures now include a revision-zero SETUP_BOUND response
+with its 32-byte payload and a signed zero-selector cancellation request. Exact
+length/offset, digest/signature reproduction and document/book link checks pass.
+State-machine races and parser rejection cases are required in ET-28/29, not
+claimed executed runtime tests. The high-level overview and refund rules are
+aligned; no runtime implementation is included.
+
+**Privacy/timing assessment:** all new cancellation selection remains inside the
+existing signed, encrypted control envelope, bound to one service/client/quote/
+circuit authorization. No public routing fields or stable cross-hop identifiers
+are added. Envelope capacity, response scheduling, retry budgets and deadlines
+are unchanged. Cancellation response timing can reveal state to the authorized
+client; fixed padding does not hide correlation from observing relays. Durable
+terminal records prevent late callbacks and retries from authorizing new spending.
