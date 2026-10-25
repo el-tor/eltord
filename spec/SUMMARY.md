@@ -43,6 +43,7 @@
 
 - [Control protocol extensions](control/index.md)
   - [Commands](control/commands.md)
+  - [Proposed renewal controller protocol](control/renewal.md)
   - [Events and errors](control/events.md)
   - [Daemon helpers and proposed interfaces](control/daemon.md)
 

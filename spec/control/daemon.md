@@ -30,3 +30,5 @@ state must not cause new financial effects or reset expiry.
 
 These definitions remain deferred in ET-08/29–32 and the control documentation
 conformance task. No runtime controller implementation is added by this rewrite.
+
+The [proposed renewal controller protocol](renewal.md) now defines binding, preparation and read-only status commands. Initial commitment, events and durable financial recovery remain coordinated design dependencies.

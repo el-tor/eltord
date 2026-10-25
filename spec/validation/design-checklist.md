@@ -5,7 +5,7 @@ completion; the [implementation backlog](../../TODO.md) separately tracks code
 and tests. All boxes begin unchecked because these detailed contracts still need
 completion. Existing architecture decisions remain in force.
 
-**Resume here: item 1, renewal preparation and its status query.**
+**Current work: item 1 has a [concrete controller draft](../control/renewal.md); finalize its dependencies through items 2–4 before checking it complete. Next: item 2, initial terms and round activation.**
 Discuss one item at a time. Check it only when its decisions, authoritative spec
 section, failure cases and deferred implementation tasks are recorded. If an
 item depends on an unresolved later contract, record that dependency and leave
