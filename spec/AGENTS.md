@@ -18,10 +18,11 @@ protocol/implementation design. For paid hidden services, use
 [spec two](02_paid_hidden_service.md) for purpose, roles, payment flow, decisions,
 tradeoffs and open topics; put exact schemas/bytes, cryptography, key/state
 machines, retry/timing algorithms, resource ceilings and validation details in
-[the technical companion](02a_quote_bootstrap_wire.md). Preserve cross-links and
+[the technical companion](02_paid_hidden_service_implementation_details.md). Preserve cross-links and
 one authoritative location for detailed requirements; avoid copying the full
 technical rules into the overview. Apply this split to future specification
-work using an appropriate companion, and preserve existing requirements when
+work using a descriptive `<spec>_implementation_details.md` companion, and
+preserve existing requirements when
 reorganizing. Neither document implies implemented support. Both layers still
 need matching TODO updates and the privacy/timing assessment below.
 

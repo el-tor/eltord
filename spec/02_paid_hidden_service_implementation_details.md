@@ -1,4 +1,4 @@
-# Paid hidden services: technical protocol specification
+# Paid Hidden Service Specification — Implementation Details
 
 Read the [architecture specification](02_paid_hidden_service.md) first. This companion contains the detailed protocol requirements, byte layouts, cryptographic profile, key lifecycle, payment/round state, retry/timing rules, resource limits, and validation/deployment gates. All are design drafts unless explicitly identified as implemented; the [implementation TODO](../TODO.md) remains deferred. The reorganization changes document ownership, not the agreed protocol behavior.
 

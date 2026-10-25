@@ -1,6 +1,6 @@
-# Paid hidden services: architecture
+# Paid Hidden Service Specification
 
-**Design status:** proposed El Tor protocol, with implementation deferred. This document explains the architecture, decisions and tradeoffs. The [technical protocol specification](02a_quote_bootstrap_wire.md) contains exact messages, byte layouts, cryptography, key management, state transitions, timing/retry policies and validation criteria. Pending work is tracked in the [El Tor TODO](../TODO.md).
+**Design status:** proposed El Tor protocol, with implementation deferred. This document explains the architecture, decisions and tradeoffs. The [technical protocol specification](02_paid_hidden_service_implementation_details.md) contains exact messages, byte layouts, cryptography, key management, state transitions, timing/retry policies and validation criteria. Pending work is tracked in the [El Tor TODO](../TODO.md).
 
 ## Purpose and scope
 
@@ -16,7 +16,7 @@ The client chooses a rendezvous point for its connection. An introduction point 
 
 Descriptor publication is a short operation. Its upload circuit and the continuously available introduction circuits are separate. Closing an upload circuit does not delete the published descriptor.
 
-[Detailed Tor flow and construction](02a_quote_bootstrap_wire.md#circuit-construction-inherited-from-spec-one).
+[Detailed Tor flow and construction](02_paid_hidden_service_implementation_details.md#circuit-construction-inherited-from-spec-one).
 
 ## Free discovery and introduction availability
 
@@ -26,7 +26,7 @@ The allowance is not unrestricted bandwidth. Both per-circuit and aggregate traf
 
 All circuits inherit [spec one's shared construction](01_paid_circuits.md#shared-circuit-construction-and-bounded-free-allowance), including uniform encrypted payment fields, padding and dummy values when appropriate. New relays may keep their existing zero-sat paid handshake policy; the free allowance does not introduce a new trial fee.
 
-[Discovery and resource rules](02a_quote_bootstrap_wire.md#descriptor-publication-retrieval-and-free-discovery) · [Introduction availability](02a_quote_bootstrap_wire.md#bounded-free-allowance-for-introduction-availability).
+[Discovery and resource rules](02_paid_hidden_service_implementation_details.md#descriptor-publication-retrieval-and-free-discovery) · [Introduction availability](02_paid_hidden_service_implementation_details.md#bounded-free-allowance-for-introduction-availability).
 
 ## Who pays and how pricing works
 
@@ -36,7 +36,7 @@ The service sends a **Service Circuit Quote (SCQ)** for its side. Relay operator
 
 The service's private relay identities are not disclosed. Its authenticated quote is a price commitment, not independent proof of its relay costs, capacity or performance. Payments are bound to one client-authorized circuit and round, not a reusable session balance.
 
-[SCQ terms and accepted exposure](02a_quote_bootstrap_wire.md#service-circuit-quote-scq).
+[SCQ terms and accepted exposure](02_paid_hidden_service_implementation_details.md#service-circuit-quote-scq).
 
 ## Agreeing before spending
 
@@ -50,7 +50,7 @@ The service's private relay identities are not disclosed. Its authenticated quot
 
 Retries recover the same logical acceptance and payment state with fresh encrypted deliveries. A timeout is not evidence a payment failed and cannot authorize duplicate charges or builds. Descriptor and key updates do not silently change accepted prices, recipients or policies.
 
-[Quote bootstrap](02a_quote_bootstrap_wire.md#quote-bootstrap-through-the-introduction-point) · [Payment-policy catalog](02a_quote_bootstrap_wire.md#authenticated-payment-policy-catalog-and-reference-resolution) · [Acceptance and invoices](02a_quote_bootstrap_wire.md#quote-acceptance-and-round-specific-invoice-acquisition).
+[Quote bootstrap](02_paid_hidden_service_implementation_details.md#quote-bootstrap-through-the-introduction-point) · [Payment-policy catalog](02_paid_hidden_service_implementation_details.md#authenticated-payment-policy-catalog-and-reference-resolution) · [Acceptance and invoices](02_paid_hidden_service_implementation_details.md#quote-acceptance-and-round-specific-invoice-acquisition).
 
 ## Payment rounds, renewal and failures
 
@@ -60,7 +60,7 @@ A healthy paid circuit can continue through explicitly agreed renewal, preservin
 
 The design limits exposure but cannot eliminate loss. A peer may fail after payment. Exposure can include the unused current round, the prepaid next round and disclosed setup/routing fees. Refunds are not automatic, uncertain payments must be reconciled, and funds cannot silently be moved to another circuit or round. Standing free circuits retain their bounded replacement policy.
 
-[Timing and funding](02a_quote_bootstrap_wire.md#payment-timing-and-circuit-rounds) · [Two-half renewal](02a_quote_bootstrap_wire.md#renewing-both-rendezvous-circuit-halves) · [Failures and accounting](02a_quote_bootstrap_wire.md#3-specify-failures-retries-and-round-accounting).
+[Timing and funding](02_paid_hidden_service_implementation_details.md#payment-timing-and-circuit-rounds) · [Two-half renewal](02_paid_hidden_service_implementation_details.md#renewing-both-rendezvous-circuit-halves) · [Failures and accounting](02_paid_hidden_service_implementation_details.md#3-specify-failures-retries-and-round-accounting).
 
 ## Wallet support and privacy
 
@@ -70,7 +70,7 @@ Keep stable payment/client references and service-path details encrypted, authen
 
 Routine key rotation preserves accepted terms; known compromise requires suspending dependent new authorizations/payments until trusted recovery. The technical document distinguishes signer and decryption keys, cached-descriptor risks and the limits of recipient-key compromise protection.
 
-[Method/privacy policy](02a_quote_bootstrap_wire.md#payment-methods-and-receiver-privacy) · [Technical privacy and crypto rules](02a_quote_bootstrap_wire.md#quote-reply-authentication-and-encryption).
+[Method/privacy policy](02_paid_hidden_service_implementation_details.md#payment-methods-and-receiver-privacy) · [Technical privacy and crypto rules](02_paid_hidden_service_implementation_details.md#quote-reply-authentication-and-encryption).
 
 ## Open work and where to resume
 
