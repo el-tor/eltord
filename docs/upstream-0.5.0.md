@@ -41,8 +41,10 @@ install -m 755 target/debug/eltor eltor-app/backend/bin/eltord
 ./desktop.sh build
 ```
 
-The desktop's optimized development profile builds the C data plane separately
-from the ordinary daemon development profile. Allow enough disk space for both.
+Both daemon and desktop development profiles keep the embedded C data plane at
+optimization level 2 while the Rust application remains debuggable. This avoids
+deploying an unoptimized Tor daemon from a debug source build. Different Cargo
+feature graphs can still require separate artifacts; allow enough disk space.
 Keep local wallet executables and configuration intact.
 
 ## Protocol and test boundaries
@@ -61,3 +63,38 @@ Use `test004r` for public DNS: other synthetic Chutney exits may intentionally
 have DNS disabled. See the workspace `AGENTS.md` runbook for startup, listener
 addresses, log locations, and shutdown. A free-mode Chutney smoke test does not
 validate Lightning settlement or interoperability with the public Tor network.
+
+## Acceptance results, 2026-10-28
+
+- Standalone Tor: upstream ancestry verified; complete unit binary passes;
+  functional suite has 32 passing groups, two environment skips, zero failures.
+- Payment controls: 15 malformed commands rejected while Tor stays responsive.
+- Eltord: source build succeeds; all 45 library tests pass, including prior
+  payment-loop and bandwidth-test reliability regressions.
+- LNI: both Phoenixd HTTP polling regressions pass. Its test fixture now
+  supplies the current optional transaction date fields; production wallet
+  behavior is unchanged by that fixture adjustment.
+- Source parity: all 2256 tracked Tor files are present in the vendor tree;
+  only the intended build helper and standalone testing-policy differences
+  remain. Existing style diagnostics decrease from 361 to 343, with no new
+  diagnostic content. The aggregate style gate remains an inherited backlog.
+- Native desktop: frontend and Tauri builds succeed; app starts and Activate
+  reaches a green Client indicator and Connected dialog on port 18048.
+- Chutney: all nine running nodes report 0.5.0.0-alpha-dev and 100% bootstrap;
+  transmission succeeds. Select the DNS-capable exit for external requests.
+- Embedded Tor: control reports 0.5.0.0-alpha-dev, 100% bootstrap, and an
+  established circuit. Running daemon bytes match the optimized build and both
+  source and copied native resources; C compile flags contain `-O2`.
+- Browser and data: Firefox renders the Tor Project website; socket inspection
+  confirms its connections to the app's SOCKS router. Six repeated HTTPS page
+  requests plus one 337736-byte transfer have zero failures over approximately
+  76 seconds. The larger file's SHA-256 equals the direct reference. This
+  measures completed HTTP requests, not packet loss or long-term reliability.
+
+Raw local results, source parity checks, style comparison, build logs, and the
+Firefox screenshot are under the workspace's `.runtime/upstream-0.5.0/` and
+adjacent `.runtime/upstream-*` files. Keep raw logs private. The app, Firefox,
+and testnet are left running for inspection. All work remains local; no changes
+are pushed or published. Before using a remote-only source build, explicitly
+publish the paired branches and update dependent source pins in a separate,
+authorized step.

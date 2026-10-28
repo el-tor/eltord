@@ -57,3 +57,7 @@ vendored-openssl = ["libtor/vendored-openssl"]
 # vendored-zstd = ["libtor/vendored-zstd"]
 # with-lzma = ["libtor/with-lzma"]
 # with-zstd = ["libtor/with-zstd"]
+
+# Keep the embedded C data plane optimized in source-built debug daemons too.
+[profile.dev.package.libtor-sys]
+opt-level = 2
