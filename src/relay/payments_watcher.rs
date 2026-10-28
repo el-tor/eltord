@@ -209,7 +209,7 @@ impl EventCallback for OnTorEventPaymentIdHashReceivedCallback {
                     
                     // Start the invoice event watcher
                     tokio::select! {
-                        _ = wallet_clone.on_invoice_events(params, Box::new(callback)) => {},
+                        _ = wallet_clone.on_invoice_events(params, Arc::new(callback)) => {},
                         _ = cancellation_receiver_clone.recv() => return,
                     }
 
@@ -367,6 +367,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl LightningNode for MockLightningNode {
+        async fn get_permissions(&self) -> Result<lni::Permissions, ApiError> {
+            Ok(lni::Permissions::default())
+        }
+
         async fn get_info(&self) -> Result<NodeInfo, ApiError> {
             Ok(NodeInfo::default())
         }
@@ -386,6 +390,9 @@ mod tests {
                 settled_at: 0,
                 created_at: 0,
                 expires_at: 0,
+                settlement_type: None,
+                settlement_state: None,
+                txid: None,
             })
         }
 
@@ -448,6 +455,9 @@ mod tests {
                 settled_at: 0,
                 created_at: 0,
                 expires_at: 0,
+                settlement_type: None,
+                settlement_state: None,
+                txid: None,
             })
         }
 
@@ -459,7 +469,11 @@ mod tests {
             Ok("decoded".to_string())
         }
 
-        async fn on_invoice_events(&self, _params: OnInvoiceEventParams, _callback: Box<dyn OnInvoiceEventCallback>) {
+        async fn decode_offer(&self, _offer: String) -> Result<String, ApiError> {
+            Ok("decoded".to_string())
+        }
+
+        async fn on_invoice_events(&self, _params: OnInvoiceEventParams, _callback: Arc<dyn OnInvoiceEventCallback>) {
             // Mock implementation - do nothing
         }
     }    // Helper function to create a test callback with a specific start time
@@ -495,6 +509,9 @@ mod tests {
             settled_at: 0,
             created_at: 0,
             expires_at: 0,
+            settlement_type: None,
+            settlement_state: None,
+            txid: None,
         }
     }
     
