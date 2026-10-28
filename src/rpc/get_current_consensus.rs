@@ -13,6 +13,10 @@ pub async fn get_current_consensus(
     })
     .await?;
 
+    parse_consensus(&rpc)
+}
+
+fn parse_consensus(rpc: &str) -> Result<Vec<ConsensusRelay>, Box<dyn Error>> {
     let mut relays = Vec::new();
     let mut current_relay: Option<ConsensusRelay> = None;
 
@@ -30,14 +34,14 @@ pub async fn get_current_consensus(
                 let fp: &str = fp.as_str();
                 // TODO this might be slow if it has to parse thousands of descriptors. Maybe in the future just compute after
                 // the 3 relay are selected in the simple_relay_selection_algo
-                let fingerprint = microdesc_to_fingerprint(fp).unwrap();
+                let fingerprint = microdesc_to_fingerprint(fp).ok_or("Invalid consensus relay identity")?;
                 current_relay = Some(ConsensusRelay {
                     nickname: parts[1].to_string(),
                     fingerprint,
                     contact: None,
                     bandwidth: None,
-                    ip: Some(parts[5].to_string()),
-                    port: parts[6].parse().ok(),
+                    ip: Some(parts[6].to_string()),
+                    port: parts[7].parse().ok(),
                     tags: Vec::new(),
                     policy: None,
                 });
@@ -62,7 +66,7 @@ pub async fn get_current_consensus(
             }
         } else if line.starts_with("w Bandwidth=") {
             if let Some(relay) = &mut current_relay {
-                if let Ok(bw) = line[11..].parse::<u32>() {
+                if let Some(bw) = line.split_whitespace().find_map(|part| part.strip_prefix("Bandwidth=")?.parse::<u32>().ok()) {
                     relay.bandwidth = Some(bw);
                 }
             }
@@ -118,3 +122,16 @@ pub async fn get_current_consensus(
 // p reject 1-65535
 // .
 // 250 OK
+
+#[cfg(test)]
+mod stability_tests {
+    use super::*;
+    #[test]
+    fn parses_consensus_address_ports_and_bandwidth() {
+        let text = "r test AQEBAQEBAQEBAQEBAQEBAQEBAQE x 2026-10-20 23:00:00 127.0.0.1 5055 7055\ns Running Guard Exit\nw Bandwidth=42 Unmeasured=1\n";
+        let relays=parse_consensus(text).unwrap();
+        assert_eq!(relays[0].ip.as_deref(),Some("127.0.0.1"));
+        assert_eq!(relays[0].port,Some(5055));
+        assert_eq!(relays[0].bandwidth,Some(42));
+    }
+}

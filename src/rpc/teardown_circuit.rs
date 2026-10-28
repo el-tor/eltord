@@ -27,7 +27,7 @@ pub async fn teardown_circuit(
             );
 
             // Check if response contains "250 OK" which indicates success
-            if response.contains("250 OK") {
+            if super::command_response(&response).is_ok() {
                 info!("✅ Successfully tore down circuit {}", circuit_id);
                 Ok(true)
             } else {

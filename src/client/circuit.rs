@@ -57,8 +57,7 @@ pub async fn build_circuit(
     command.push_str(".");
     info!("EXTENDPAIDCIRCUIT Command: {}", command);
     let circuit_id = rpc::extend_paid_circuit(&rpc_config, command)
-        .await
-        .unwrap();
+        .await.map_err(|e| e.to_string())?;
     let event_data = serde_json::json!({
         "event": "CIRCUIT_BUILT",
         "circuit_id": circuit_id,

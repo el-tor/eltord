@@ -1,0 +1,67 @@
+# Local stability tests
+
+Run from the workspace containing sibling `eltord`, `eltor-app`, `tor`, and
+`chutney` checkouts. Python 3 and curl are required. Results are private local
+artifacts under `.runtime/circuit-audit`; raw logs are not suitable for publishing.
+Scripts discover the workspace from their location and app data from the home
+directory. The app uses SOCKS router 18048, client 18058, control 9992, and the
+Chutney client uses 9060. Override `APP_ELTOR_TOR_CONTROL_PASSWORD` if required.
+
+These scripts exercise the existing free-mode Chutney setup; they are not a
+production payment or anonymity validation. Use separate output directories for
+each run. Do not run fault injection concurrently with a performance baseline.
+
+```sh
+python3 eltord/tools/stability/test_harness.py
+python3 eltord/tools/stability/soak.py --seconds 480 --out .runtime/circuit-audit/new-run
+python3 eltord/tools/stability/protocol_probes.py
+python3 eltord/tools/stability/c_control_probes.py
+python3 eltord/tools/stability/paid_format_probe.py
+python3 eltord/tools/stability/fault_tests.py
+```
+
+`firefox_soak.py` runs actual Firefox downloads alongside the same curl routes.
+Start a local geckodriver session with a disposable Firefox profile, configure
+SOCKS5 at `127.0.0.1:18048`, enable proxy DNS and
+`network.proxy.allow_hijacking_localhost`, clear proxy exclusions, disable direct
+proxy fallback and browser caches, then pass its WebDriver session ID:
+
+```sh
+python3 eltord/tools/stability/firefox_soak.py --seconds 1200 \
+  --session SESSION_ID --out .runtime/circuit-audit/firefox-run
+python3 eltord/tools/stability/daemon_lifecycle.py eltor-app/backend/bin/eltord \
+  --out .runtime/circuit-audit/lifecycle-run
+```
+
+The Firefox origin uses port 18881 so its SOCKS streams can be identified
+separately from curl traffic on 18880. Each browser payload is checked by size and
+SHA256; public HTTPS page loads are recorded separately. Ensure only one daemon
+controls the app client before starting a measurement. The lifecycle regression
+uses disposable network-disabled Tor instances and checks process exit after
+SIGTERM and controller shutdown, including during startup.
+
+`protocol_probes.py` requires the soak's HTTP origin on 18880 to be running.
+It compares intact, split-greeting, split-request, and bytewise-request SOCKS
+frames across the router, direct embedded Tor, and standalone Chutney client.
+
+The soak verifies payload length and SHA256 for each request, records origin
+request IDs, captures control events from the app client and all relay control
+sockets, and tails client and relay logs with shared UTC epoch timestamps.
+Its slow stream lasts about 32 seconds; it does not cross a full payment period.
+The eight-minute repeated-request phase crosses multiple nominal periods, but
+free mode does not exercise payment renewal.
+
+The paid-format probe sends traffic for 100 seconds, closes one paid-format
+circuit after 25 seconds, and requires the original monitor to survive across
+renewal rounds. It starts an isolated daemon and an informational fake wallet
+on 19741 that rejects all POSTs. It uses zero-fee local relays and does not access
+the real wallet. The fault test closes an active circuit, then pauses exit 004r
+for eight seconds and resumes it in a finally block. An intentionally interrupted
+transfer is an expected result; subsequent requests must recover.
+
+Portable malformed-command regressions also live in both Tor source trees:
+
+```sh
+python3 tor/src/test/test_eltor_control_errors.py tor/src/app/tor
+python3 libeltor-sys/libtor-src/tor-src/src/test/test_eltor_control_errors.py eltor-app/backend/bin/eltord --eltord
+```

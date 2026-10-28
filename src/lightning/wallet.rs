@@ -22,18 +22,13 @@ pub async fn load_wallet(
 pub async fn lookup_default_lightning_node_from_torrc(
     rpc_config: &RpcConfig,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    info!(
-        "Looking up default lightning node from torrc with config: {:?}",
-        rpc_config
-    );
-    let lightning_conf_str = get_conf(rpc_config, "PaymentLightningNodeConfig".to_string())
-        .await
-        .map_err(|e| format!("Failed to get PaymentLightningNodeConfig from torrc: {}", e))?;
-    info!("Lightning config string: {}", lightning_conf_str);
-    // parse the string "PaymentLightningNodeConfig type=phoenixd url=http://url.com password=pass1234 default=true"
-    // TODO handle mutliple configs for PaymentLightningNodeConfig and choose default
-    let node_type = get_default_value(lightning_conf_str.clone(), "type".to_string())
-        .ok_or("No 'type' found in PaymentLightningNodeConfig")?;
+    info!("Looking up default lightning node from torrc");
+    let entry = crate::rpc::get_torrc_default_value(rpc_config, "PaymentLightningNodeConfig")
+        .await.ok_or("No default Lightning wallet configured")?;
+    let lightning_conf_str = entry.value;
+    let node_type = entry.data.iter().find(|kv| kv.key == "type")
+        .map(|kv| kv.value.clone()).ok_or("No wallet type configured")?;
+
     Ok((node_type.to_string(), lightning_conf_str))
 }
 
@@ -121,14 +116,14 @@ pub async fn get_lightning_node(
 }
 
 fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> {
-    let config_array = lightning_conf_str.split("\r\n").collect::<Vec<&str>>();
+    let config_array = lightning_conf_str.lines().collect::<Vec<&str>>();
 
     for config in config_array {
         if config.contains("default=true") {
             let binding =
                 config.replace(&"PaymentLightningNodeConfig=".to_string(), &"".to_string());
             let parts: Vec<&str> = binding.split_whitespace().collect();
-            info!("Config parts: {:?}", parts);
+
             let mut val: Option<&str> = None;
             for part in parts {
                 let formatted_key = format!("{}=", key);
@@ -141,7 +136,7 @@ fn get_default_value(lightning_conf_str: String, key: String) -> Option<String> 
                     }
                 }
             }
-            info!("Extracted value: {:?}", val);
+
             return Some(val.unwrap_or_default().to_string());
         }
     }

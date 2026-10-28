@@ -8,8 +8,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
         rpc_password: config.clone().rpc_password,
         command: "GETINFO desc/all-recent".into(),
     })
-    .await
-    .unwrap();
+    .await?;
 
     let mut relays = Vec::new();
     let mut current_relay: Option<Relay> = None;
@@ -24,6 +23,7 @@ pub async fn get_relay_descriptors(config: &RpcConfig) -> Result<Vec<Relay>, Box
 
             // Parse 'router' line: router <nickname> <address> <orport> <socksport> <dirport>
             let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 6 { return Err("Incomplete router descriptor".into()); }
             if let Ok(port) = parts[3].parse::<u16>() {
                 current_relay = Some(Relay {
                     nickname: parts[1].to_string(),
