@@ -10,10 +10,12 @@ use serde::Deserialize;
 use std::{
     convert::TryInto,
     io::{self, Read},
+    net::SocketAddr,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 const MAX_CONFIG: usize = 8192;
+const MAX_CONTROL_PASSWORD: usize = 1024;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
@@ -181,6 +183,71 @@ async fn run(rpc: &crate::types::RpcConfig) -> Result<bool, Box<dyn std::error::
     )
     .await
 }
+fn read_control_password(path: &Path) -> io::Result<String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_CONTROL_PASSWORD as u64 {
+        return Err(invalid());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if metadata.permissions().mode() & 0o077 != 0
+            || metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(invalid());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_CONTROL_PASSWORD + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_CONTROL_PASSWORD {
+        return Err(invalid());
+    }
+    if bytes.last() == Some(&b'\n') {
+        bytes.pop();
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+    }
+    if bytes.is_empty() || !bytes.iter().all(|b| (32..=126).contains(b)) {
+        return Err(invalid());
+    }
+    String::from_utf8(bytes).map_err(|_| invalid())
+}
+/// Attach one controller to an already-running Tor relay. This entry point
+/// never initializes embedded Tor, provisions storage, or chooses legacy mode.
+/// The caller supplies both private files explicitly; no environment fallback
+/// can substitute another account or authentication method.
+pub async fn run_foundation_relay_controller(
+    control_address: SocketAddr,
+    password_file: &Path,
+    foundation_config: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !control_address.ip().is_loopback()
+        || control_address.port() == 0
+        || foundation_config.as_os_str().is_empty()
+    {
+        return Err(invalid().into());
+    }
+    let password = read_control_password(password_file)?;
+    let rpc = crate::types::RpcConfig {
+        addr: control_address.to_string(),
+        rpc_password: Some(password),
+        command: String::new(),
+    };
+    match run_with_path(&rpc, Some(foundation_config.to_path_buf())).await? {
+        true => Ok(()),
+        false => Err(invalid().into()),
+    }
+}
 async fn run_with_path(
     rpc: &crate::types::RpcConfig,
     configured: Option<PathBuf>,
@@ -235,6 +302,47 @@ async fn run_with_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn private_control_password_is_bounded_and_refuses_unsafe_files() {
+        let base =
+            std::env::temp_dir().join(format!("eltor-control-password-{}", rand::random::<u128>()));
+        std::fs::create_dir(&base).unwrap();
+        let path = base.join("password");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        use std::io::Write;
+        options
+            .open(&path)
+            .unwrap()
+            .write_all(b"synthetic-password\r\n")
+            .unwrap();
+        assert_eq!(read_control_password(&path).unwrap(), "synthetic-password");
+        for value in [
+            Vec::new(),
+            b"two\nlines".to_vec(),
+            vec![b'x'; MAX_CONTROL_PASSWORD + 1],
+        ] {
+            std::fs::write(&path, value).unwrap();
+            assert!(read_control_password(&path).is_err());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            std::fs::write(&path, b"synthetic-password").unwrap();
+            let alias = base.join("alias");
+            symlink(&path, &alias).unwrap();
+            assert!(read_control_password(&alias).is_err());
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(read_control_password(&path).is_err());
+        }
+        assert!(read_control_password(&base).is_err());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
     fn input() -> serde_json::Value {
         serde_json::json!({"ledger_path":"account.sqlite","node_id":"0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798","chain":"regtest","cln_url":"http://127.0.0.1:1","cln_rune":"fixture","clock_uncertainty_ms":1000})
     }

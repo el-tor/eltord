@@ -65,18 +65,23 @@ command requires the existing authoritative file and the same pinned account:
 
 A read-only preflight checks the file, application ID, supported schema, account,
 SQLite health, references, and rollback-journal mode before native verification.
-The existing transactional migration dispatcher supports schema versions 1–5
-to current schema 6, preserving records and uniqueness tombstones. An already
+The existing transactional migration dispatcher supports schema versions 1–6
+to current schema 7, preserving records and uniqueness tombstones. An already
 current ledger is explicitly verified without resetting anything. Unsupported,
 missing, corrupt, wrong-account, or symlink storage is refused. Native identity
 or receiving-capability failure also prevents migration.
 
-Schema 6 also retains private bounded origin-construction/accepted-plan journals
+Schema 7 retains the bounded origin-construction/accepted-plan journals
 and exact native outgoing invoice artifacts for lookup-only recovery. Constructor
 and renewal dispatch claims are single-use. The migration widens the database's
 legacy round-counter constraint while the ledger still requires typed, immutable
 all-hop admission before funding any renewed allocation. Existing unknown costs,
 per-hop prices, aggregate financial caps, and hash/ID uniqueness remain intact.
+It additionally retains preconstruction handshake-fee scopes, exact invoices and
+one-shot invoice-request/payment dispatch claims. These upfront costs share the
+account/path exposure limits with recurring round payments and remain reserved
+when an outcome is uncertain. Binding the scope to the constructed native path
+does not create another fee allowance. Payment preimages are never journaled.
 
 Migration cannot invent historical payment evidence, discarded records, original
 clock uncertainty, or missing invoice associations. Preserved legacy point-only
@@ -88,6 +93,46 @@ After explicit maintenance, configure the daemon with
 Tor foundation profile. Startup still checks mode, existing ledger, account, and
 capabilities independently. These commands do not enable foundation mode or
 prove a paid circuit works.
+
+## Attach to an existing relay process
+
+`eltor-foundation-relay` runs only the foundation controller. Use it for an
+already-running standalone Tor relay, including a generated local Chutney node.
+It never starts embedded Tor or changes Tor configuration. Start only one
+controller for each relay process; check existing controllers before launching.
+
+Prepare the explicit account JSON and provision or migrate its ledger using the
+commands above. Configure the existing Tor process with a matching hashed
+control password through the local operator procedure. Cookie authentication
+may remain enabled. Store the plaintext password in a separate private regular
+file owned by the current user, with mode 0600 or 0400 on Unix. The file accepts
+one printable ASCII password, optionally followed by one newline, with at most
+1024 bytes total. Empty, oversized, multiline, symlink and group/world-readable
+files are refused. Do not put the password in argv, environment variables,
+tracked Tor configs or logs.
+
+From the workspace root, after the combined daemon build:
+
+```sh
+target/debug/eltor-foundation-relay \
+  --control 127.0.0.1:8061 \
+  --password-file .runtime/foundation/relay-control-password \
+  --foundation-config .runtime/foundation/relay.json
+```
+
+Replace the endpoint and private paths with those of the existing relay. The
+endpoint must be a numeric loopback address with a nonzero port. Authentication
+and an exact `ElTorFoundation=1` response are required before opening the existing
+ledger and checking the pinned receiving wallet. Explicit configuration prevents
+legacy fallback even when Tor reports foundation mode disabled. Startup failure
+returns a nonzero exit status with a redacted diagnostic. Once attached, the
+existing coordinator recovers its original process/handle state after control
+connection failures and never interprets a lost response as permission to pay.
+Stopping this foreground controller leaves the existing Tor process running.
+
+Keep temporary Chutney configuration backups and restore them after the live
+fixture run. This attachment command does not provision missing ledgers, launch
+another wallet, or prove settlement using a real funded account.
 
 ## Executed validation
 
