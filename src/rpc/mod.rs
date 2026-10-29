@@ -28,3 +28,6 @@ pub use payment_event::*;
 
 mod payment_inventory;
 pub use payment_inventory::*;
+
+mod payment_control;
+pub use payment_control::*;
