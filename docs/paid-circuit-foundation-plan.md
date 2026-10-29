@@ -439,3 +439,29 @@ budget, and HTTP success therefore do not establish all-hop paid activation.
 The closed plan and all failed observer results remain retained. The observer
 also now decodes quoted targets and single-line GETINFO framing correctly.
 Diagnose the initial coordinator failure before authorizing another test scope.
+
+### Warm receiving-controller scheduling diagnosis
+
+The next deployed-source attempt also failed before all-hop activation, with
+receiving controllers already running before construction. Native COMMIT replies
+arrived six to nine seconds after construction, followed by START/status replies;
+the original setup timeout then closed the path. It did not close through CBT,
+quota exhaustion or FIFO expiry. The activation gate observed only round 1 and
+sent no HTTP request. The previous backpressure regression passing is therefore
+not sufficient evidence of live activation.
+
+Read-only live inventories contained roughly forty to sixty relay bindings. The
+receiving coordinator processed one binding per 250 ms supervisor tick, making
+a complete pass take more than ten seconds before control I/O. A registration
+query immediately after admission can hit the shared per-binding read floor and
+defer financial authorization until another complete pass. Source review also
+found that historical closed hints were reinserted into the live work map on
+every drain. The fix must prioritize bounded actionable work while treating
+events only as query hints, retain fair background reconciliation, and exclude
+durably closed bindings without deleting their accounting history. Original
+payment deadlines, control limits and wallet verification remain unchanged.
+
+This diagnosis is not a successful renewal or transport result. Closed scopes,
+claims and failed supervisor logs remain retained; no replacement scope is
+created automatically. A narrow scheduling regression and rebuilt live run are
+still required.
