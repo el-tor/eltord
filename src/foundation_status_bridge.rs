@@ -8,6 +8,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::{Arc, Condvar, LazyLock, Mutex},
 };
 use tokio::time::Instant;
 
@@ -16,7 +17,7 @@ pub const STATUS_GENERATION_ENV: &str = "ELTOR_PRIVATE_STATUS_GENERATION";
 const LIMIT: usize = 512;
 const RECORD: &str = "observation.json";
 const NEXT: &str = "next";
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u8,
@@ -249,40 +250,196 @@ fn active_expiry(expires: Instant) -> io::Result<u64> {
         )
         .ok_or_else(invalid)
 }
-pub(crate) fn publish(phase: FoundationClientStatus, expires: Option<Instant>) {
-    // Best effort only: a missing/private/full/invalid artifact must never stop
-    // or change the financial controller. The parent will show recovering.
-    let _ = (|| -> io::Result<()> {
-        let directory = std::env::var_os(STATUS_DIRECTORY_ENV).ok_or_else(invalid)?;
-        let generation = std::env::var(STATUS_GENERATION_ENV).map_err(|_| invalid())?;
-        if !generation_valid(&generation) {
-            return Err(invalid());
+struct Pending {
+    latest: Option<Record>,
+    closed: bool,
+}
+struct LatestWriter {
+    pending: Arc<(Mutex<Pending>, Condvar)>,
+}
+impl LatestWriter {
+    fn start(mut sink: impl FnMut(&Record) -> io::Result<()> + Send + 'static) -> io::Result<Self> {
+        let pending = Arc::new((
+            Mutex::new(Pending {
+                latest: None,
+                closed: false,
+            }),
+            Condvar::new(),
+        ));
+        let worker = pending.clone();
+        std::thread::Builder::new()
+            .name("foundation-status".into())
+            .spawn(move || loop {
+                let record = {
+                    let (lock, ready) = &*worker;
+                    let Ok(mut state) = lock.lock() else {
+                        return;
+                    };
+                    while state.latest.is_none() && !state.closed {
+                        let Ok(next) = ready.wait(state) else {
+                            return;
+                        };
+                        state = next;
+                    }
+                    if state.closed {
+                        return;
+                    }
+                    state.latest.take().expect("pending observation")
+                };
+                // Never hold the queue/registry lock during serialization or I/O.
+                // One serial worker cannot overwrite a newer written observation
+                // with an older one. Failures have no retries or financial effect.
+                let _ = sink(&record);
+            })?;
+        Ok(Self { pending })
+    }
+    fn submit(&self, record: Record) {
+        let (lock, ready) = &*self.pending;
+        if let Ok(mut state) = lock.lock() {
+            if !state.closed {
+                state.latest = Some(record);
+                ready.notify_one();
+            }
         }
-        // Sample OS time before Tokio time. Flooring the remaining duration
-        // gives a conservative absolute deadline, even on cached publication.
-        let expires_mono_ms = if phase == FoundationClientStatus::LastVerifiedActive {
-            Some(active_expiry(expires.ok_or_else(invalid)?)?)
-        } else {
-            None
+    }
+}
+impl Drop for LatestWriter {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.pending;
+        if let Ok(mut state) = lock.lock() {
+            state.closed = true;
+            state.latest = None;
+            ready.notify_one();
+        }
+        // A blocked observational filesystem operation must never delay drop.
+    }
+}
+struct Exporter {
+    generation: String,
+    writer: LatestWriter,
+}
+static EXPORTER: LazyLock<Option<Exporter>> = LazyLock::new(|| {
+    let directory = PathBuf::from(std::env::var_os(STATUS_DIRECTORY_ENV)?);
+    let generation = std::env::var(STATUS_GENERATION_ENV).ok()?;
+    if !generation_valid(&generation) || monotonic_ms().is_err() {
+        return None;
+    }
+    let writer = LatestWriter::start(move |record| write_record(&directory, record)).ok()?;
+    Some(Exporter { generation, writer })
+});
+pub(crate) fn publish(phase: FoundationClientStatus, expires: Option<Instant>) {
+    let Some(exporter) = &*EXPORTER else {
+        return;
+    };
+    // Freeze the original absolute deadline before queueing. Neither a stalled
+    // sink nor a delayed publication can grant fresh time to an ACTIVE record.
+    let expires_mono_ms = if phase == FoundationClientStatus::LastVerifiedActive {
+        let Some(deadline) = expires.and_then(|end| active_expiry(end).ok()) else {
+            return;
         };
-        let directory = Path::new(&directory);
-        let result = write_record(
-            directory,
-            &Record {
-                version: 1,
-                pid: std::process::id(),
-                generation,
-                phase,
-                expires_mono_ms,
-            },
-        );
-        result
-    })();
+        Some(deadline)
+    } else {
+        None
+    };
+    // The registry serializes generation-checked publications. Only the newest
+    // pending record survives; an already in-flight record retains its expiry.
+    exporter.writer.submit(Record {
+        version: 1,
+        pid: std::process::id(),
+        generation: exporter.generation.clone(),
+        phase,
+        expires_mono_ms,
+    });
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    #[test]
+    fn latest_writer_coalesces_without_blocking_or_extending_original_deadline() {
+        use std::{sync::mpsc, time::Duration};
+        let bridge = FoundationStatusBridge::create(&std::env::temp_dir()).unwrap();
+        let directory = bridge.directory.clone();
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+        let writer = Arc::new(
+            LatestWriter::start(move |record| {
+                seen_tx.send(record.clone()).unwrap();
+                // Deterministically hold filesystem work while producers publish.
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                write_record(&directory, record)?;
+                written_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap(),
+        );
+        let mut record = Record {
+            version: 1,
+            pid: 12345,
+            generation: bridge.generation.clone(),
+            phase: FoundationClientStatus::Starting,
+            expires_mono_ms: None,
+        };
+        writer.submit(record.clone());
+        assert_eq!(
+            seen_rx.recv_timeout(Duration::from_secs(1)).unwrap().phase,
+            FoundationClientStatus::Starting
+        );
+        let producer = writer.clone();
+        let mut superseded = record.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            superseded.phase = FoundationClientStatus::LastVerifiedActive;
+            superseded.expires_mono_ms = Some(monotonic_ms().unwrap() + 1000);
+            for _ in 0..256 {
+                producer.submit(superseded.clone());
+            }
+            superseded.phase = FoundationClientStatus::Closed;
+            superseded.expires_mono_ms = None;
+            producer.submit(superseded.clone());
+            // A successive registry owner replaces the old pending ACTIVE.
+            superseded.phase = FoundationClientStatus::Starting;
+            producer.submit(superseded);
+            done_tx.send(()).unwrap();
+        });
+        // Must finish even though the sink is still blocked.
+        done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        release_tx.send(()).unwrap();
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            seen_rx.recv_timeout(Duration::from_secs(1)).unwrap().phase,
+            FoundationClientStatus::Starting
+        );
+
+        let original_deadline = active_expiry(Instant::now() + Duration::from_millis(5)).unwrap();
+        record.phase = FoundationClientStatus::LastVerifiedActive;
+        record.expires_mono_ms = Some(original_deadline);
+        writer.submit(record.clone());
+        std::thread::sleep(Duration::from_millis(10));
+        release_tx.send(()).unwrap();
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let delayed = seen_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(delayed.phase, FoundationClientStatus::LastVerifiedActive);
+        assert_eq!(delayed.expires_mono_ms, Some(original_deadline));
+        release_tx.send(()).unwrap();
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(bridge.read(12345), FoundationClientStatus::Recovering);
+
+        record.phase = FoundationClientStatus::Closed;
+        record.expires_mono_ms = None;
+        writer.submit(record);
+        assert_eq!(
+            seen_rx.recv_timeout(Duration::from_secs(1)).unwrap().phase,
+            FoundationClientStatus::Closed
+        );
+        release_tx.send(()).unwrap();
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(bridge.read(12345), FoundationClientStatus::Closed);
+        drop(writer);
+        // No superseded observation can later overwrite the newer phase.
+        assert!(seen_rx.recv_timeout(Duration::from_millis(50)).is_err());
+    }
     #[test]
     fn bridge_rejects_wrong_owner_stale_generation_and_expired_original_lease() {
         use std::os::unix::fs::PermissionsExt;

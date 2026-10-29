@@ -240,6 +240,9 @@ ET-33 native status acceptance: distinguish the Tauri OS sidecar from the manage
 in-process backend. Bind the bounded private phase observation to the parent's
 exact owned child and fresh local generation; reject stale/wrong-owner/malformed
 records and expire ACTIVE at its original authenticated monotonic deadline.
+Bound export to one writer and one replaceable pending observation, keep filesystem
+work outside financial publication locks, and verify delayed writes retain the
+original deadline while superseded generations cannot overwrite newer phases.
 Process/bootstrap readiness must never substitute for that observation. Keep
 unknown, exited and externally adopted PID-only processes fail-closed, retain
 financial history, and verify the rebuilt native UI without additional Tor or
