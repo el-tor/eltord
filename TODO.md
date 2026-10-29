@@ -27,6 +27,15 @@ on uncertainty. These tasks remain unchecked until integrated and validated.
 Snapshots must include the per-hop C binding required by the recovery ledger;
 test missing/duplicate/changed `BINDING` rows and reject substitutes based on
 numeric circuit IDs. Keep C confined to the privileged local verifier and ledger.
+ET-08/33 must also validate ACTIVE status when the accepted hard lifetime ends
+inside a round: enforcement may be shorter than its nominal remaining time, but
+never exceed the pinned lifetime or extend deadlines through a query/retry.
+ET-08/33 must test the [transition-pending read contract](spec/control/renewal.md#query-a-hop-and-operation)
+in `tor`, `eltord`, and bindings: pause the independent lifecycle timer across a
+round boundary, require `551 STATE_TRANSITION_PENDING` without revision changes,
+activation, payment consumption, or timer scheduling by GET, then verify a coherent
+snapshot after normal timer progress. Retry only within existing local query
+budgets; this error grants no spending authority.
 
 - [ ] **ET-01 — Recipient-backed payment validation and single redemption.** Projects: `eltord`, `tor`, `lni`. Spec: [payment authorization](spec/onion-services/authorization.md#1-bind-payment-authorization-to-the-client), [renewal admission](spec/01a_circuit_renewal_wire.md#6-timing-retransmission-and-state-transitions). Preserve the already saved Codex task **“Deferred: paid circuit replay protection”** as the detailed investigation; do not create a duplicate or start it. Earlier source review found incomplete handshake validation, observation-time windows, and no demonstrated atomic used-by-circuit enforcement. These are source findings, not a proven replay exploit. Acceptance: recipient-node settlement/amount/time verification, durable atomic circuit/round consumption, duplicate callbacks, old settled-payment reuse on a fresh circuit, concurrent attempts, and restart tests. New payment/renewal features depend on this work.
 

@@ -6,6 +6,15 @@ require the same privileged local daemon authority. Wallet verification remains
 in the daemon; Tor owns live circuits, authenticated hop observations and clocks.
 Neither controller success nor an event proves service delivery.
 
+All read-only lifecycle snapshots follow the
+[transition-pending rule](renewal.md#query-a-hop-and-operation): when a due timer transition
+would make the stored state inconsistent with the reported clock, return
+`551 STATE_TRANSITION_PENDING`. Observation cannot apply activation, consumption,
+or expiry transitions itself. This preserves coherent revisions and leaves
+progress to the independent lifecycle timer. The local error does not change
+relay-wire sizes or reveal new identifiers; its scheduler timing remains subject
+to the existing bounded query policy.
+
 ## Origin initial operations
 
 ```text

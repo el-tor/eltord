@@ -129,6 +129,14 @@ an unavailable/not-applicable value, never numeric zero. For GET with `operation
 the entire OP line after its prefix is `- - - - - - -`. An unconfirmed initial
 profile returns `551 INITIAL_STATE_UNCONFIRMED` instead of invented timing.
 
+If elapsed time requires an independently scheduled lifecycle transition that
+has not yet been applied, GET returns `551 STATE_TRANSITION_PENDING` instead of
+combining a new round number with the previous round's activation or payment
+state. GET MUST NOT run or schedule that transition, consume a payment, or
+report projected activation as completed. A subsequent bounded query may observe
+the result after the normal lifecycle timer runs; retries retain the same
+operation and never extend its deadlines.
+
 `state` is exactly QUEUED, SENT, ADMITTED, ACTIVE, REFUSED, UNCERTAIN or CLOSED.
 `request_digest` becomes available when the immutable authenticated request is
 formed; `allocation_digest` is present only after validated success. `relay_status`
@@ -155,6 +163,7 @@ all hops share one schedule.
 | --- | --- |
 | `512 BAD_ARGUMENT` | Framing/width/enum/arithmetic failure; no mutation |
 | `551 INITIAL_STATE_UNCONFIRMED` | Initial paid contract/start is unavailable; no renewal |
+| `551 STATE_TRANSITION_PENDING` | Lifecycle transition due but not yet applied; bounded read-only retry, no payment authority |
 | `551 UNSUPPORTED_PROFILE` | Required hop capability absent; no fallback |
 | `552 UNKNOWN_CIRCUIT` | Handle not live; never bind by a replacement numeric ID |
 | `552 STALE_INSTANCE` | Different Tor process; old circuits cannot be restored |
@@ -205,3 +214,10 @@ Implementation remains deferred under ET-08/09/33. Initial terms and activation 
 [initial operations and lifecycle events](lifecycle.md) and
 [durable recovery](recovery.md) define the related controller contracts.
 Whole-profile clock, parser and restart conformance remains part of final review.
+
+Privacy/timing assessment for transition-pending reads: this error is confined
+to the authenticated local controller. It exposes local scheduler lag without
+new relay-wire fields, identifiers, or padding changes. Queries cannot accelerate
+activation or authorize spending. Tests must delay the lifecycle timer across a
+round boundary and verify unchanged state/revision until that timer runs, with
+bounded retries under the existing query budget.

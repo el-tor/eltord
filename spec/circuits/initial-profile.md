@@ -194,6 +194,18 @@ entire unpaid minute. EXPIRED/CLOSED expose zero remaining budgets; retained
 current_round and elapsed values describe the final observation. Before T0,
 current_round and elapsed are zero and round/enforcement remaining are zero.
 
+The accepted finite `max_age_ms` is an additional upper bound on enforcement.
+An ACTIVE reply can therefore report enforcement remaining smaller than nominal
+round remaining when hard expiry falls inside that round. The structural codec
+must permit this; the origin must check the reported bound against its pinned
+policy and authenticated elapsed time, never extend a deadline based on it.
+Hard expiry still closes the circuit even when that round was paid.
+
+Privacy/timing assessment: this clarifies existing finite-lifetime behavior;
+message size, payment bindings and retry rules are unchanged. Test nonaligned
+hard expiry inside ACTIVE, reject budgets beyond the accepted cap, and ensure
+status queries do not restart clocks or activate a round.
+
 For accounting, a round's latest settlement acceptance time is its nominal start
 plus grace, except round one, whose initial acceptance is bounded by setup.
 The advance window opens one round before the nominal start, clamped at T0.
