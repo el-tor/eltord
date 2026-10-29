@@ -352,8 +352,13 @@ def run(args):
                     and control.config("__LeaveStreamsUnattached") == "1"
                     and control.config("__DisablePredictedCircuits") == "1",
                     "Origins must be dedicated controlled-stream foundation clients")
-            require("PROGRESS=100" in " ".join(control.info("status/bootstrap-phase")),
-                    "Dedicated origin has not reached bootstrap")
+            phase = " ".join(control.info("status/bootstrap-phase"))
+            progress = re.search(r"(?:^| )PROGRESS=([0-9]+)(?: |$)", phase)
+            # Predicted circuits are deliberately disabled. Tor reaches 100%
+            # only after our first explicit circuit; full descriptors are checked
+            # below before this runner is permitted to dispatch it.
+            require(progress is not None and 75 <= int(progress.group(1)) <= 100,
+                    "Dedicated origin has not reached descriptor-ready bootstrap")
             pid = int(control.info("process/pid")[0])
             require(pid not in pids, "Origins must be independent native processes")
             pids.add(pid)
@@ -393,6 +398,8 @@ def run(args):
         require(wait_built(controls[0], honest, time.monotonic() + 15),
                 "Baseline honest base circuit failed")
         prove_base(controls[0], honest, len(manifest["path"]))
+        require("PROGRESS=100" in " ".join(controls[0].info("status/bootstrap-phase")),
+                "Honest origin did not complete bootstrap on its explicit circuit")
         latencies.append(echo_probe(controls[0], honest, sink))
         summary["stage"] = "saturation"
 

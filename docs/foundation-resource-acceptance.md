@@ -50,7 +50,9 @@ Before running, the operator must:
 2. Launch each generated `origin-N/torrc` with the pinned native binary through
    the existing supervised-process workflow, using one process per directory.
    No daemon/payment controller is required for these native base-only clients.
-   Wait for current 100% bootstrap and full signed descriptors.
+   Wait for descriptor-ready bootstrap (at least 75%) and full signed descriptors.
+   With predicted circuits disabled, the first explicit circuit brings the
+   honest client to 100%; the runner checks that transition before stress.
 3. Ensure the approved exit permits the temporary loopback echo sink, as the
    existing free Chutney verification exit does. All listeners stay on loopback
    or private UNIX sockets. No public network endpoint is contacted.
