@@ -274,15 +274,20 @@ def echo_probe(control, circuit, sink):
 def scenario_limits(scenario, max_circuits, traffic_profile="small-v1"):
     limits = {"ElTorFoundationMaxCircuits": max_circuits}
     if scenario == "traffic":
-        require(traffic_profile in ("small-v1", "startup-v2", "retry-paced-v3"),
+        require(traffic_profile in ("small-v1", "startup-v2", "retry-paced-v3", "process-v4"),
                 "Unknown reviewed traffic profile")
         rate, burst = ((2053, 16424) if traffic_profile == "small-v1" else
                        (16384, 65536))
+        if traffic_profile == "process-v4":
+            rate, burst = 65536, 524288
         limits.update(ElTorFoundationByteRate=rate,
                       ElTorFoundationByteBurst=burst,
                       ElTorFoundationConnByteRate=8192,
                       ElTorFoundationConnByteBurst=32768,
                       ElTorFoundationQueueBytes=65536)
+        if traffic_profile == "process-v4":
+            limits.update(ElTorFoundationConnByteRate=131072,
+                          ElTorFoundationConnByteBurst=1048576)
     elif scenario == "setup":
         limits.update(ElTorFoundationCryptoRate=1,
                       ElTorFoundationCryptoBurst=4,
@@ -293,7 +298,7 @@ def scenario_limits(scenario, max_circuits, traffic_profile="small-v1"):
 
 def scenario_isolation_options(scenario, traffic_profile="small-v1"):
     """Reviewed fixture scheduling only; never changes resource/traffic gates."""
-    if scenario == "traffic" and traffic_profile == "retry-paced-v3":
+    if scenario == "traffic" and traffic_profile in ("retry-paced-v3", "process-v4"):
         return ({"TestingServerConsensusDownloadInitialDelay": 10,
                  "TestingClientConsensusDownloadInitialDelay": 10,
                  "__DisablePredictedCircuits": 1},
@@ -304,6 +309,9 @@ def scenario_isolation_options(scenario, traffic_profile="small-v1"):
 def reviewed_fixture_options(manifest):
     scenario = manifest.get("scenario", "admission")
     profile = manifest.get("traffic_profile", "small-v1")
+    if profile == "process-v4":
+        require(len(manifest["origins"]) == 4 and manifest["per_origin"] == 2,
+                "Process pressure requires exactly six owned pressure circuits per phase")
     require(scenario == "traffic" or profile == "small-v1",
             "A traffic profile is only valid for the traffic scenario")
     limits = scenario_limits(scenario, manifest["max_circuits"], profile)
@@ -320,6 +328,30 @@ def reviewed_fixture_options(manifest):
 LOAD_BYTES = 48 * 1024
 LOAD_PAYLOAD = (b"bounded-native-free-traffic:" *
                 (1 + LOAD_BYTES // len(b"bounded-native-free-traffic:")))[:LOAD_BYTES]
+
+
+PROCESS_LOAD_BYTES = 104 * 1024
+# The 2048-byte TOR1/V0 build has 2037 DATA bytes, with up to 20 bytes
+# reserved for SENDME randomness. TCP may still fragment an application write.
+PROCESS_CHUNK_BYTES = 2017
+PROCESS_CHUNK_INTERVAL = 0.005
+PROCESS_PAYLOAD = (b"bounded-process-byte-pressure:" *
+                   (1 + PROCESS_LOAD_BYTES // len(b"bounded-process-byte-pressure:")))[:PROCESS_LOAD_BYTES]
+
+
+def send_paced(sock, payload, deadline, marker=b""):
+    data = marker + payload
+    last_send = None
+    for offset in range(0, len(data), PROCESS_CHUNK_BYTES):
+        if last_send is not None:
+            delay = PROCESS_CHUNK_INTERVAL - (time.monotonic() - last_send)
+            if delay > 0:
+                time.sleep(delay)
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "Paced pressure transfer deadline elapsed")
+        sock.settimeout(remaining)
+        last_send = time.monotonic()
+        sock.sendall(data[offset:offset + PROCESS_CHUNK_BYTES])
 
 
 class TrafficSink:
@@ -391,6 +423,74 @@ class TrafficSink:
                 client.close()
         self.thread.join(1)
         self.pool.shutdown(wait=True)
+
+
+class ProcessTrafficSink(TrafficSink):
+    """Six bounded streams; controls are never used by transfer threads."""
+    def __init__(self):
+        self.download_barrier = threading.Barrier(6)
+        super().__init__()
+
+    def transfer(self, client):
+        try:
+            client.settimeout(8)
+            deadline = time.monotonic() + 8
+            operation = read_exact(client, 1)
+            if operation == b"U":
+                received = bytearray()
+                while len(received) < PROCESS_LOAD_BYTES:
+                    remaining = deadline - time.monotonic()
+                    require(remaining > 0, "Pressure sink deadline elapsed")
+                    client.settimeout(remaining)
+                    chunk = client.recv(min(4096, PROCESS_LOAD_BYTES - len(received)))
+                    require(bool(chunk), "Pressure upload ended early")
+                    received.extend(chunk)
+                    with self.lock:
+                        self.upload_received += len(chunk)
+                client.sendall(hashlib.sha256(received).digest())
+            elif operation == b"D":
+                self.download_barrier.wait(timeout=max(0.001, deadline-time.monotonic()))
+                with self.lock:
+                    self.download_offered += PROCESS_LOAD_BYTES
+                send_paced(client, PROCESS_PAYLOAD, deadline)
+        except (OSError, RuntimeError, threading.BrokenBarrierError):
+            pass
+        finally:
+            client.close()
+
+
+def process_socket_transfer(sock, direction, barrier):
+    result = {"checksum_complete": False, "checksum_mismatch": False,
+              "payload_offered": 0, "payload_received": 0}
+    try:
+        deadline = time.monotonic() + 8
+        barrier.wait(timeout=8)
+        with sock:
+            if direction == "upload":
+                result["payload_offered"] = PROCESS_LOAD_BYTES
+                # The marker shares the first bounded write with payload.
+                send_paced(sock, PROCESS_PAYLOAD, deadline, b"U")
+                sock.settimeout(max(0.001, deadline-time.monotonic()))
+                result["checksum_mismatch"] = (read_exact(sock, 32) !=
+                    hashlib.sha256(PROCESS_PAYLOAD).digest())
+            else:
+                sock.settimeout(max(0.001, deadline-time.monotonic()))
+                sock.sendall(b"D")
+                received = bytearray()
+                while len(received) < PROCESS_LOAD_BYTES:
+                    remaining = deadline - time.monotonic()
+                    require(remaining > 0, "Pressure download deadline elapsed")
+                    sock.settimeout(remaining)
+                    chunk = sock.recv(min(4096, PROCESS_LOAD_BYTES-len(received)))
+                    require(bool(chunk), "Pressure download ended early")
+                    received.extend(chunk)
+                    result["payload_received"] += len(chunk)
+                result["checksum_mismatch"] = received != PROCESS_PAYLOAD
+            require(not result["checksum_mismatch"], "Pressure checksum mismatch")
+            result["checksum_complete"] = True
+    except (OSError, RuntimeError, threading.BrokenBarrierError):
+        sock.close()
+    return result
 
 
 def traffic_transfer(control, circuit, sink, direction):
@@ -533,6 +633,113 @@ def traffic_workload(manifest, controls, owned, target, sink, samples,
                    recovery_after_each_pressure_phase=True)
 
 
+def process_credit_exhausted(before, observations):
+    """A stored-credit transition in this pressure window, not inherited zero.
+
+    Snapshots never refill tokens. A positive-to-low transition with a newer
+    serialized counter proves an actual intervening debit, but cannot attribute
+    every byte to this fixture instead of other traffic sharing the owner.
+    """
+    cell_cost_milli = 2053 * 1000
+    return before["TRAFFIC"][0] >= cell_cost_milli and any(
+        s["TRAFFIC"][0] < cell_cost_milli and
+        sum(s["LINK_BYTES"]) > sum(before["LINK_BYTES"])
+        for s in observations)
+
+
+def process_traffic_workload(manifest, controls, owned, target, sink, samples,
+                             latencies, summary, deadline):
+    require(len(controls) == 4 and manifest["target"].endswith("/004r") and
+            manifest["per_origin"] == 2,
+            "Process pressure needs three stress origins/two circuits each")
+    phases = []
+    summary["traffic_phases"] = phases
+    for direction in ("upload", "download"):
+        require(time.monotonic() + 43 < deadline,
+                "Insufficient original experiment budget for a process-pressure phase")
+        summary["stage"] = "traffic-" + direction + "-build"
+        for index in range(1, len(controls)):
+            for _ in range(2):
+                time.sleep(3)
+                circuit = controls[index].build(manifest["path"])
+                owned[index].append(circuit)
+                require(wait_built(controls[index], circuit, min(deadline, time.monotonic()+15)),
+                        "Pressure circuit failed before loading")
+                prove_base(controls[index], circuit, len(manifest["path"]))
+        time.sleep(8)
+        # Normal honest traffic advances lazy refill before a real observation.
+        latencies.append(echo_probe(controls[0], owned[0][-1], sink))
+        source, streams = ProcessTrafficSink(), []
+        try:
+            summary["stage"] = "traffic-" + direction + "-attach"
+            for index in range(1, len(controls)):
+                # Exactly one thread uses each control; both streams are ready
+                # before any pressure marker/payload is sent.
+                for circuit in owned[index]:
+                    sock, stream = open_owned_stream(controls[index], circuit, source.port)
+                    streams.append((index, circuit, sock))
+                    require(owned_stream_succeeded(controls[index], stream, circuit),
+                            "Pressure stream did not attach to its exact receipt")
+            require(len(streams) == 6, "Expected six owned pressure streams")
+            summary["stage"] = "traffic-" + direction
+            started = time.monotonic()
+            before = snapshot(target)
+            require(before["TRAFFIC"][0] >= 2053*1000,
+                    "No usable process credit before pressure")
+            first_sample = len(samples)
+            barrier = threading.Barrier(6)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+                results = list(pool.map(lambda entry: process_socket_transfer(
+                    entry[2], direction, barrier), streams))
+            source.close()
+            time.sleep(0.3)
+            after = snapshot(target)
+            elapsed = time.monotonic()-started
+            sent = after["LINK_BYTES"][1]-before["LINK_BYTES"][1]
+            received = after["LINK_BYTES"][0]-before["LINK_BYTES"][0]
+            observations = samples[first_sample:] + [after]
+            completed = sum(r["checksum_complete"] for r in results)
+            payload_seen = (source.upload_received if direction == "upload" else
+                            sum(r["payload_received"] for r in results))
+            native_closed = sum(controls[i].circuits().get(circuit) != "BUILT"
+                                for i, circuit, _ in streams)
+            exhausted = process_credit_exhausted(before, observations)
+            # Retain measured pressure evidence even if a mandatory gate fails.
+            phases.append({"direction": direction, "payload_bytes_per_stream": PROCESS_LOAD_BYTES,
+                "streams": len(streams), "attached_streams": len(streams),
+                "checksum_complete": completed, "pressure_failures": len(results)-completed,
+                "actual_payload_received_bytes": payload_seen,
+                "payload_offered_bytes": (sum(r["payload_offered"] for r in results)
+                    if direction == "upload" else source.download_offered),
+                "native_closed_circuits": native_closed, "serialized_received_bytes": received,
+                "serialized_sent_bytes": sent, "elapsed_ms": round(elapsed*1000),
+                "sampled_queued_bytes": max((s["FREE"][2] for s in observations), default=0),
+                "process_credit_before_milli": before["TRAFFIC"][0],
+                "process_credit_min_milli": min(s["TRAFFIC"][0] for s in observations),
+                "observed_process_credit_exhaustion": exhausted,
+                "chunk_bytes": PROCESS_CHUNK_BYTES, "chunk_interval_ms": 5})
+            require(sent <= before["TRAFFIC"][2] + math.ceil(before["TRAFFIC"][1]*elapsed),
+                    "Outbound traffic exceeded its process token envelope")
+            require(sent > 0 and received > 0, "Both serialized directions must progress")
+            require(exhausted, "No observed positive-to-insufficient process credit transition")
+            require(not any(r["checksum_mismatch"] for r in results),
+                    "Complete pressure payload failed checksum validation")
+            require(payload_seen > 0 and completed < len(results),
+                    "Actual payload and bounded pressure failure are required")
+            require(native_closed > 0, "No independently observed native circuit closure")
+        finally:
+            for _, _, sock in streams:
+                sock.close()
+            source.close()
+        close_stress(controls, owned)
+        summary["stage"] = "traffic-" + direction + "-recovery"
+        recover_honest(manifest, controls, owned, sink, latencies, deadline)
+    require(any(p["sampled_queued_bytes"] > 0 for p in phases),
+            "No bounded native queue pressure observed")
+    summary.update(passed=True, stage="complete", honest_echoes=len(latencies),
+                   honest_echo_ms=latencies, recovery_after_each_pressure_phase=True)
+
+
 def setup_workload(manifest, controls, owned, target, sink,
                    latencies, summary, deadline):
     require(3 <= len(controls) <= 4 and manifest["per_origin"] <= 8,
@@ -651,6 +858,9 @@ def prepare(args):
     limits = scenario_limits(args.scenario, args.max_circuits, args.traffic_profile)
     target_isolation, origin_isolation = scenario_isolation_options(
         args.scenario, args.traffic_profile)
+    require(args.traffic_profile != "process-v4" or
+            (args.origins == 4 and args.per_origin == 2),
+            "Process pressure requires four origins/two circuits per stress origin")
     nodes = args.nodes.resolve()
     names = args.path.split(",")
     require(args.scenario == "admission" or
@@ -708,7 +918,9 @@ def prepare(args):
     maximum_attempts = ((args.origins - 1) * args.per_origin + 3
                         if args.scenario == "admission" else
                         (args.origins - 1) * args.per_origin + 2
-                        if args.scenario == "setup" else 2 * (args.origins - 1) + 3)
+                        if args.scenario == "setup" else
+                        4 * (args.origins - 1) + 3 if args.traffic_profile == "process-v4" else
+                        2 * (args.origins - 1) + 3)
     print(json.dumps({"prepared_origins": args.origins, "scenario": args.scenario,
                       "maximum_attempts": maximum_attempts,
                       "target_cap": args.max_circuits, "processes_started": 0}))
@@ -842,6 +1054,9 @@ def run(args):
         if scenario == "admission":
             admission_workload(manifest, controls, owned, target, sink, samples,
                                monitor_errors, latencies, summary)
+        elif scenario == "traffic" and manifest.get("traffic_profile") == "process-v4":
+            process_traffic_workload(manifest, controls, owned, target, sink, samples,
+                                     latencies, summary, deadline)
         elif scenario == "traffic":
             traffic_workload(manifest, controls, owned, target, sink, samples,
                              latencies, summary, deadline)
@@ -900,7 +1115,7 @@ def main():
     prep.add_argument("--scenario", choices=("admission", "traffic", "setup"),
                       default="admission")
     prep.add_argument("--traffic-profile",
-                      choices=("small-v1", "startup-v2", "retry-paced-v3"),
+                      choices=("small-v1", "startup-v2", "retry-paced-v3", "process-v4"),
                       default="small-v1")
     prep.add_argument("--origins", type=int, default=4)
     prep.add_argument("--per-origin", type=int, default=16)

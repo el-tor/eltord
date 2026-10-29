@@ -142,6 +142,7 @@ apply the fragment, reset counters, consult wallets, or send payment commands.
 | Traffic `small-v1` at exit `004r` | byte rate 2053 B/s, burst 16424 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
 | Traffic `startup-v2` at exit `004r` | byte rate 16384 B/s, burst 65536 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
 | Traffic `retry-paced-v3` at exit `004r` | exactly the `startup-v2` resource limits, with the separately recorded retry/prediction options below | 9 |
+| Traffic `process-v4` at exit `004r` | process rate 65536 B/s, burst 524288 B; connection rate 131072 B/s, burst 1048576 B; shared outgoing queue 65536 B; same retry isolation as v3 | 15 |
 | Setup at first hop `006m` | attempted work rate 1/s, burst 4; running 1, waiting 2 | 26 |
 
 The `traffic_profile` manifest field names the reviewed traffic limits. Older
@@ -211,12 +212,103 @@ or enforcement changes are part of this candidate. It is a limited isolation
 hypothesis, not a guarantee that the remaining background work fits the caps.
 If its unchanged honest baseline or later gates fail, retain that failure.
 
-The private `retry-v3-20261029` directory was prepared without a run claim,
-result, process launch or deployment. This candidate has no live acceptance
-result. Do not deploy
-or dispatch it during the sustained paid-stream run. Descriptor-ready target
-status of at least 75% permits dispatch after operator release, but does not
-establish full target reachability or substitute for a real honest echo.
+The `retry-v3-20261029` fixture was subsequently dispatched once and failed its
+mandatory baseline build before pressure. The full retry isolation was verified,
+but its initial snapshot still had zero process byte credit, 1010076 received
+and 260731 sent serialized-link bytes. The retained 48-second log window had
+four consensus-download launches and one HTTP 304, plus remaining descriptor
+and relay self-test activity. Thus reducing that retry path did not make the
+unchanged baseline fit these limits. Its claim and failure are retained; all
+four owned origins were stopped and the target configuration was restored
+byte-for-byte and verified at 100%. Descriptor-ready target status of at least
+75% permits a reviewed later dispatch, but never substitutes for real honest
+forwarding or proves full target reachability.
+
+### Reviewed process-pressure candidate
+
+`process-v4` is separately named because it changes both the resource limits
+and the finite workload. It retains v3's exact retry isolation and the 64 KiB
+shared queue, but uses a 64 KiB/s process rate with a 512 KiB burst, and a
+128 KiB/s connection rate with a 1 MiB burst. Every link debit also debits the
+same process bucket (`src/feature/payment/free_capacity.c`): with these larger
+connection rate/burst values, a connection bucket cannot be the first byte
+constraint when the process bucket can afford that same debit. Per-circuit
+cell and queue constraints still apply independently.
+
+Use exactly four origins and `--per-origin 2`. The three stress origins each
+build two explicitly owned ordinary circuits per direction, spaced three
+seconds apart, with no retry after an uncertain constructor. Each carries one
+104 KiB stream. The six streams are pre-attached sequentially over their
+respective origin controller, and verified against their exact circuit
+receipts. Only after all six attachments succeed do socket-only workers run
+concurrently; no two workers read/write one `Control` connection. A new sink is
+used for each direction, with at most six pressure connections.
+
+```sh
+python3 eltord/tools/foundation_resource_acceptance.py prepare \
+  --scenario traffic --traffic-profile process-v4 --nodes chutney/net/nodes \
+  --template chutney/net/nodes/005c/torrc \
+  --directory .runtime/foundation-resource/PROCESS-V4 \
+  --path 006m,007m,004r --target 004r \
+  --origins 4 --per-origin 2 --max-circuits 64
+```
+
+Native `src/core/or/or.h` fixes this build's cell body at 2048 bytes and disables
+upstream CGO/V1. Its V0 DATA payload is 2037 bytes, not 2032. The packager in
+`src/core/or/relay.c` can reserve another 20 bytes for SENDME randomness.
+Pressure senders therefore write at most 2017 bytes every five milliseconds;
+the upload marker shares its first bounded write with payload. A 104 KiB stream
+nominally needs 53 such writes. At a middle hop every forwarded cell consumes
+both a receive and a send token from the **same** 128-cell circuit burst
+(`free_capacity.c`, also `test_free_capacity.c`'s `refill` and `two_links`
+cases). About 106 DATA token debits leave room for setup/control traffic;
+three 224 KiB streams would instead exceed the middle-hop burst before reaching
+the proposed process pressure and are not this profile.
+
+Nominal six-cell waves occupy 12672 packed-cell bytes on the current x86_64
+build, below the 64 KiB shared queue. Across six streams, 318 nominal DATA cells
+represent 652854 serialized-link bytes. Over approximately 265 ms, the 512 KiB
+process burst plus refill plus the entire 64 KiB queue hold about 607191 bytes,
+less than that offered DATA alone. Once process credit runs out, roughly
+9–11 unsent cells per circuit can remain below each 32-cell queue while the
+shared queue fills. These are design estimates, not observations or hard TCP
+packetization bounds. Partial socket reads, native scheduling, background work,
+cell padding and control cells can change actual counts or cause an earlier
+per-circuit refusal. A refusal alone does not pass process-pressure acceptance.
+
+The native hook debits incoming serialized bytes before dispatch and closes on
+insufficient capacity; already received excess is counted. Outgoing packed
+cells are checked/debited before queue pop, wait without spending on refusal,
+and are not charged again by the writer (`free_capacity_hooks.c`,
+`connection_or.c`, `relay.c`, `channeltls.c`). Queue reservation happens before
+packing, independently of send debit; this is why one large `sendall` could
+otherwise test only early enqueue refusal.
+
+For **each** direction this profile adds a mandatory observed credit transition.
+`TRAFFIC[0]` is stored milli-byte credit copied by
+`payment_resources_snapshot` without refill. After normal refill and a real
+honest echo, followed by stream attachment, pressure must start with enough
+stored credit for one 2053-byte cell. During its pressure window an observation
+must then show credit below that cost and increased serialized-link counters.
+An inherited zero, unchanged counters or a mere timeout fails. The reported
+minimum is stored debit credit, not a continuously refilled estimate at query
+time. Other native traffic shares the owner, so the result cannot attribute
+every byte to this fixture. If a short exhaustion transition is missed by the
+unchanged 100 ms sampler, the observation requirement fails rather than being
+assumed from the nominal math.
+
+All existing mandatory honest baseline, complete-payload checksum checks,
+actual transferred payload, native closure, byte envelope, bounded snapshots,
+positive queue observation and fresh recovery after **each** direction remain.
+Phase evidence is saved even when a later gate fails. Total pressure payload is
+1248 KiB (1277952 bytes), below 1.5 MiB, with at most fifteen constructors
+including baseline and two recoveries. The original 120-second experiment
+deadline is unchanged: nominal setup spacing, refill, transfer deadlines and
+recovery consume 84 seconds, leaving 36 seconds for construction/control/echo.
+A phase requires 43 seconds of remaining original budget before starting;
+slower actual work fails rather than extending the deadline. Preparation only
+writes a new private directory. No `process-v4` deployment or live result is
+claimed here; previous profiles, claims and failures retain their meaning.
 
 The earlier `small-v1` deployment reached only target 95%, and a separate fresh
 unchanged runner failed its baseline build before pressure. Those private
