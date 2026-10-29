@@ -123,3 +123,16 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   survives renewal. Full ten-round renewal allocations must fit the accepted
   lifetime, matching the existing wire validator. Live handlers, durable
   consumption events and transport acceptance remain to be integrated.
+- Tor commit `0996e6dcf0` parses and serializes exact signed payment capability
+  terms, retains them in full-descriptor path metadata, and permits hard-lifetime
+  truncation of an active round's enforcement interval. Thirteen profile and
+  signed-descriptor tests passed independently. Runtime advertisement remains
+  disabled pending complete admission and resource enforcement.
+- Tor commit `f179acfb63` adds relay admission/activation/renewal state and the
+  bounded privileged control registry, queries, decisions, authorization and
+  events. The agent's combined suite passed 109 tests; an independent rerun of
+  the six relay-state and seven control tests passed. These exercise real local
+  control-to-state calls but not a live three-hop paid connection. Origin
+  construction/activation, shared resource accounting and daemon orchestration
+  remain outstanding. Embedded source mirrors are committed as `ac51be3` and
+  `b80f0e2`; a new embedded build is still required before transport acceptance.
