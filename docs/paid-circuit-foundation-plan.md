@@ -215,3 +215,16 @@ provisions, migrates, replaces, or resets it. Operator provisioning and final
 acceptance configuration remain to be integrated. The supervisor bounds polling
 and reconnect backoff and retains durable accounting across control loss.
 This remains an integration path, not evidence of completed paid acceptance.
+
+### Client startup integration checkpoint
+
+The client now requires an authenticated `GETCONF ElTorFoundation` result before
+loading a legacy wallet. Only an explicit disabled profile, with no foundation
+configuration requested, reaches the legacy loop. Unknown replies, lost control
+connections, and conflicting configuration stop wallet activity. The enabled
+profile currently stops at this boundary until the durable origin coordinator
+is connected; this is an intermediate safeguard, not completed activation.
+The socket regression covers disabled/enabled/unknown/rejected modes and checks
+that mode selection sends no activation or wallet command. Constructor and
+signed-descriptor preflight helpers are tested, but live construction, recovery,
+renewal, and end-to-end acceptance remain required.
