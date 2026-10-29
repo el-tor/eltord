@@ -14,3 +14,5 @@ mod foundation_startup;
 
 mod foundation_operator;
 pub use foundation_operator::{operate_foundation_ledger, LedgerOperation, LedgerOperationReport, OperatorError};
+
+pub(crate) use foundation_startup::{FoundationConfig, observe_clock};

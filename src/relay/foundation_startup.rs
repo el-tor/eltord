@@ -124,6 +124,17 @@ impl FoundationConfig {
     }
     /// Opening precedes wallet access. A missing ledger never causes provisioning
     /// and credentials never appear in returned diagnostics from this module.
+    /// Client startup requires the outgoing native capability profile. Reopen
+    /// durable state before any wallet RPC; do not upgrade a receiving-only
+    /// adapter implicitly during dispatch.
+    pub async fn open_outgoing(
+        self,
+    ) -> Result<(PaymentLedger, ClnFoundation, u64), Box<dyn std::error::Error>> {
+        let ledger =
+            PaymentLedger::reopen(&self.ledger_path, AccountId(self.account.fingerprint()))?;
+        let wallet = ClnFoundation::connect(self.wallet, self.account).await?;
+        Ok((ledger, wallet, self.clock_uncertainty_ms))
+    }
     pub async fn open(
         self,
     ) -> Result<(PaymentLedger, ClnFoundation, u64), Box<dyn std::error::Error>> {
@@ -297,6 +308,24 @@ mod tests {
         let cfg = FoundationConfig::parse(&serde_json::to_vec(&input()).unwrap(), &base).unwrap();
         assert!(cfg.open().await.is_err());
         assert!(!base.join("account.sqlite").exists());
+        std::fs::remove_dir(base).unwrap();
+    }
+    #[tokio::test]
+    async fn outgoing_startup_requires_existing_state_before_native_access() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base =
+            std::env::temp_dir().join(format!("eltor-outgoing-config-{}", rand::random::<u128>()));
+        std::fs::create_dir(&base).unwrap();
+        let mut value = input();
+        value["cln_url"] = serde_json::json!(format!("http://{}", listener.local_addr().unwrap()));
+        let cfg = FoundationConfig::parse(&serde_json::to_vec(&value).unwrap(), &base).unwrap();
+        assert!(cfg.open_outgoing().await.is_err());
+        assert!(!base.join("account.sqlite").exists());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
         std::fs::remove_dir(base).unwrap();
     }
 }
