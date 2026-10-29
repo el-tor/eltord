@@ -52,3 +52,6 @@ pub use payment_descriptor::*;
 
 mod payment_policy;
 pub use payment_policy::*;
+
+mod payment_renewal_origin;
+pub use payment_renewal_origin::*;
