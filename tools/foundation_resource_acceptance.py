@@ -271,11 +271,15 @@ def echo_probe(control, circuit, sink):
     return round((time.monotonic() - started) * 1000, 3)
 
 
-def scenario_limits(scenario, max_circuits):
+def scenario_limits(scenario, max_circuits, traffic_profile="small-v1"):
     limits = {"ElTorFoundationMaxCircuits": max_circuits}
     if scenario == "traffic":
-        limits.update(ElTorFoundationByteRate=2053,
-                      ElTorFoundationByteBurst=16424,
+        require(traffic_profile in ("small-v1", "startup-v2"),
+                "Unknown reviewed traffic profile")
+        rate, burst = ((2053, 16424) if traffic_profile == "small-v1" else
+                       (16384, 65536))
+        limits.update(ElTorFoundationByteRate=rate,
+                      ElTorFoundationByteBurst=burst,
                       ElTorFoundationConnByteRate=8192,
                       ElTorFoundationConnByteBurst=32768,
                       ElTorFoundationQueueBytes=65536)
@@ -610,6 +614,8 @@ def admission_workload(manifest, controls, owned, target, sink, samples,
 
 
 def prepare(args):
+    require(args.scenario == "traffic" or args.traffic_profile == "small-v1",
+            "A traffic profile is only valid for the traffic scenario")
     require(args.scenario == "admission" or (args.origins <= 4 and
             (args.scenario != "setup" or args.per_origin <= 8)),
             "Traffic/setup use at most four origins; setup permits eight requests each")
@@ -656,11 +662,13 @@ def prepare(args):
         ]) + "\n"
         private_write(node / "torrc", config)
         origins.append(str(node))
-    limits = scenario_limits(args.scenario, args.max_circuits)
+    limits = scenario_limits(args.scenario, args.max_circuits, args.traffic_profile)
     manifest = {"version": 1, "scenario": args.scenario,
                 "resource_limits": limits, "target": str(nodes / args.target),
                 "path": fingerprints, "origins": origins,
                 "per_origin": args.per_origin, "max_circuits": args.max_circuits}
+    if args.scenario == "traffic":
+        manifest["traffic_profile"] = args.traffic_profile
     private_write(directory / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     private_write(directory / "target-overload.fragment",
                   "# Operator deployment only; never applied by this runner.\n" +
@@ -752,13 +760,16 @@ def run(args):
         limits = manifest.get("resource_limits", {
             "ElTorFoundationMaxCircuits": manifest["max_circuits"]})
         expected_limits = scenario_limits(manifest.get("scenario", "admission"),
-                                          manifest["max_circuits"])
+                                          manifest["max_circuits"],
+                                          manifest.get("traffic_profile", "small-v1"))
         require(limits == expected_limits, "Fixture lower limits differ from the reviewed scenario")
         for name, value in limits.items():
             require(int(target.config(name)) == value,
                     "Operator must deploy every exact immutable scenario limit")
         summary["scenario"] = manifest.get("scenario", "admission")
         summary["configured_limits"] = limits
+        if summary["scenario"] == "traffic":
+            summary["traffic_profile"] = manifest.get("traffic_profile", "small-v1")
         summary["origins"] = len(controls)
         summary["target_cap"] = manifest["max_circuits"]
         summary["baseline"] = before
@@ -855,6 +866,8 @@ def main():
     prep.add_argument("--target", default="006m")
     prep.add_argument("--scenario", choices=("admission", "traffic", "setup"),
                       default="admission")
+    prep.add_argument("--traffic-profile", choices=("small-v1", "startup-v2"),
+                      default="small-v1")
     prep.add_argument("--origins", type=int, default=4)
     prep.add_argument("--per-origin", type=int, default=16)
     prep.add_argument("--max-circuits", type=int, default=24)

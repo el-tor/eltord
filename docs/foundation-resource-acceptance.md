@@ -100,8 +100,9 @@ It never resets a ledger or erases histories to regain capacity.
 
 ## Separate traffic and setup scenarios
 
-The additional scenarios are executable acceptance candidates, not recorded
-results. Run them only after the sustained app/paid-stream experiment finishes
+The additional scenario definitions are executable acceptance candidates. The
+local record below distinguishes passed and failed executions. Run them only
+after the sustained app/paid-stream experiment finishes
 and the matching final native binaries are deployed. Each needs a new private
 runtime directory, its own one-time claim, explicit lower-cap relay deployment,
 and dedicated origins. Do not reuse an earlier claimed directory, change an app
@@ -113,7 +114,7 @@ The following preparation commands are alternatives, performed separately:
 
 ```sh
 python3 eltord/tools/foundation_resource_acceptance.py prepare \
-  --scenario traffic --nodes chutney/net/nodes \
+  --scenario traffic --traffic-profile startup-v2 --nodes chutney/net/nodes \
   --template chutney/net/nodes/005c/torrc \
   --directory .runtime/foundation-resource/TRAFFIC-RUN \
   --path 006m,007m,004r --target 004r \
@@ -138,10 +139,27 @@ apply the fragment, reset counters, consult wallets, or send payment commands.
 
 | Scenario | Additional immutable target limits | Maximum constructor attempts with four origins |
 | --- | --- | ---: |
-| Traffic at exit `004r` | byte rate 2053 B/s, burst 16424 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
+| Traffic `small-v1` at exit `004r` | byte rate 2053 B/s, burst 16424 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
+| Traffic `startup-v2` at exit `004r` | byte rate 16384 B/s, burst 65536 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
 | Setup at first hop `006m` | attempted work rate 1/s, burst 4; running 1, waiting 2 | 26 |
 
-Both fragments set the explicitly selected live-circuit cap, 64 in these
+The `traffic_profile` manifest field names the reviewed traffic limits. Older
+manifests without it retain the exact `small-v1` interpretation. The later
+`startup-v2` candidate increases only the process byte rate/burst to cover native
+startup/constructor overhead. It keeps the 48 KiB payloads, connection/queue
+limits and every acceptance assertion unchanged. The three stress paths share
+one predecessor-to-exit OR link, whose 8 KiB/s and 32 KiB burst are tighter than
+the process limits in `startup-v2`: results must identify shared-link/queue
+pressure and must not claim isolated process-bucket saturation.
+
+The earlier `small-v1` deployment reached only target 95%, and a separate fresh
+unchanged runner failed its baseline build before pressure. Those private
+failures are retained. Target descriptor-ready status of at least 75% permits a
+new experiment; it does not prove full target reachability. The mandatory actual
+honest circuit/echo proves forwarding separately. A named profile or readiness
+observation never replaces that baseline or the later recovery checks.
+
+Both scenario fragments set the explicitly selected live-circuit cap, 64 in these
 examples. The signed per-circuit 2-cell/s, 128-cell burst and 600000 ms lifetime
 remain unchanged. Other relay limits remain in force. These deliberately small
 local caps are experiment controls, not proposed production defaults. Traffic
@@ -210,3 +228,40 @@ and sampled packed-cell queue are specific native counters. Preserve failed
 results and logs. A candidate that cannot produce the required observations or
 honest recovery needs an explicit reviewed fixture/profile change and a new
 run directory; weakening a check or removing a claim is not recovery.
+
+
+## Local execution record, 2026-10-29
+
+The setup fixture `final-setup-20261029T0646` passed on the final native image
+SHA-256 `77135566706968a6bc710c89494fdc61f8e7d73841759245f669ec5ffcab3a09`.
+Twelve stress requests from three independent processes produced two built
+circuits and ten refusals/closures. The target started two setup operations in a
+1139 ms measured window, within its 1/s and burst-4 envelope. Across 133 samples,
+waiting work reached 2/2, slot usage reached two and arena usage reached
+1621944 bytes. Running work finished between observations, so its sampled peak
+was zero. Three honest echoes passed: baseline, the same existing circuit under
+setup pressure, and a new circuit after normal refill. The target was initially
+95% descriptor-ready; actual forwarding acceptance is distinct from its own
+reachability status. All fixture origins were stopped and its exact original
+configuration was restored, after which it reached 100% bootstrap.
+
+Traffic acceptance remains **failed/incomplete**. The original `small-v1`
+deployment did not meet an operator-added target-100% gate; it did not run the
+workload. A fresh `traffic-fwd-20261029T0702` fixture used descriptor-ready target
+status and the unchanged runner, but genuinely failed its mandatory baseline
+build. The named `startup-v2` fixture `traffic-v2-20261029T0715` also failed that
+baseline before pressure. Neither result proves a traffic-pressure/recovery
+pass. The final target snapshot already had zero process byte credit before
+the planned workload, and safe log counts showed native directory and self-test
+activity during the lowered-cap interval. A ten-second observation with the
+original target limits and no fixture origins had zero serialized-link-byte
+delta, so that quiet baseline must not be confused with the startup/rebuild
+interval. Investigate and explicitly isolate unrelated fixture work before
+another experiment; do not keep enlarging limits or weakening acceptance gates.
+
+All claims, results, operator receipts and private logs remain under the
+workspace's `.runtime/foundation-resource/` directories. Both affected relay
+configurations were restored byte-for-byte and reached 100%; all twelve origins
+from the setup and two executed traffic fixtures were stopped. No wallet or
+financial payment commands were used. This local evidence is not production,
+whole-host memory, privacy, or Lightning-settlement acceptance.
