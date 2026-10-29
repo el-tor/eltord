@@ -274,7 +274,7 @@ def echo_probe(control, circuit, sink):
 def scenario_limits(scenario, max_circuits, traffic_profile="small-v1"):
     limits = {"ElTorFoundationMaxCircuits": max_circuits}
     if scenario == "traffic":
-        require(traffic_profile in ("small-v1", "startup-v2"),
+        require(traffic_profile in ("small-v1", "startup-v2", "retry-paced-v3"),
                 "Unknown reviewed traffic profile")
         rate, burst = ((2053, 16424) if traffic_profile == "small-v1" else
                        (16384, 65536))
@@ -289,6 +289,32 @@ def scenario_limits(scenario, max_circuits, traffic_profile="small-v1"):
                       ElTorFoundationMaxRunning=1,
                       ElTorFoundationMaxWaiting=2)
     return limits
+
+
+def scenario_isolation_options(scenario, traffic_profile="small-v1"):
+    """Reviewed fixture scheduling only; never changes resource/traffic gates."""
+    if scenario == "traffic" and traffic_profile == "retry-paced-v3":
+        return ({"TestingServerConsensusDownloadInitialDelay": 10,
+                 "TestingClientConsensusDownloadInitialDelay": 10,
+                 "__DisablePredictedCircuits": 1},
+                {"TestingClientConsensusDownloadInitialDelay": 10})
+    return {}, {}
+
+
+def reviewed_fixture_options(manifest):
+    scenario = manifest.get("scenario", "admission")
+    profile = manifest.get("traffic_profile", "small-v1")
+    require(scenario == "traffic" or profile == "small-v1",
+            "A traffic profile is only valid for the traffic scenario")
+    limits = scenario_limits(scenario, manifest["max_circuits"], profile)
+    require(manifest.get("resource_limits", {
+                "ElTorFoundationMaxCircuits": manifest["max_circuits"]}) == limits,
+            "Fixture lower limits differ from the reviewed scenario")
+    target, origins = scenario_isolation_options(scenario, profile)
+    require(manifest.get("target_isolation_options", {}) == target and
+            manifest.get("origin_isolation_options", {}) == origins,
+            "Fixture isolation options differ from the reviewed profile")
+    return limits, target, origins
 
 
 LOAD_BYTES = 48 * 1024
@@ -622,6 +648,9 @@ def prepare(args):
     require(3 <= args.origins <= 8 and 1 <= args.per_origin <= 24
             and (args.origins - 1) * args.per_origin <= 128
             and 2 <= args.max_circuits <= 64, "Fixture bounds exceeded")
+    limits = scenario_limits(args.scenario, args.max_circuits, args.traffic_profile)
+    target_isolation, origin_isolation = scenario_isolation_options(
+        args.scenario, args.traffic_profile)
     nodes = args.nodes.resolve()
     names = args.path.split(",")
     require(args.scenario == "admission" or
@@ -659,20 +688,23 @@ def prepare(args):
             "ClientRejectInternalAddresses 0", "ClientDNSRejectInternalAddresses 0",
             "MaxClientCircuitsPending 16", "LearnCircuitBuildTimeout 0",
             "CircuitBuildTimeout 15", "ExitNodes $" + fingerprints[-1], "StrictNodes 1",
-        ]) + "\n"
+        ] + [f"{name} {value}" for name, value in origin_isolation.items()]) + "\n"
         private_write(node / "torrc", config)
         origins.append(str(node))
-    limits = scenario_limits(args.scenario, args.max_circuits, args.traffic_profile)
     manifest = {"version": 1, "scenario": args.scenario,
                 "resource_limits": limits, "target": str(nodes / args.target),
                 "path": fingerprints, "origins": origins,
                 "per_origin": args.per_origin, "max_circuits": args.max_circuits}
     if args.scenario == "traffic":
         manifest["traffic_profile"] = args.traffic_profile
+    if target_isolation or origin_isolation:
+        manifest["target_isolation_options"] = target_isolation
+        manifest["origin_isolation_options"] = origin_isolation
     private_write(directory / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     private_write(directory / "target-overload.fragment",
                   "# Operator deployment only; never applied by this runner.\n" +
-                  "".join(f"{name} {value}\n" for name, value in limits.items()))
+                  "".join(f"{name} {value}\n" for name, value in
+                          {**limits, **target_isolation}.items()))
     maximum_attempts = ((args.origins - 1) * args.per_origin + 3
                         if args.scenario == "admission" else
                         (args.origins - 1) * args.per_origin + 2
@@ -697,6 +729,7 @@ def run(args):
             and all(re.fullmatch(r"[A-F0-9]{40}", fp) for fp in manifest["path"])
             and all(Path(node).resolve().parent == directory for node in manifest["origins"]),
             "Invalid explicit fixture path or dedicated origin directory")
+    limits, target_isolation, origin_isolation = reviewed_fixture_options(manifest)
     # One attempt per fixture, including ambiguous constructors. Preserve every
     # result/config/log; another invocation must not replace or erase history.
     private_write(directory / "run.claim", "claimed\n")
@@ -737,6 +770,9 @@ def run(args):
                     and control.config("__LeaveStreamsUnattached") == "1"
                     and control.config("__DisablePredictedCircuits") == "1",
                     "Origins must be dedicated controlled-stream foundation clients")
+            for name, value in origin_isolation.items():
+                require(int(control.config(name)) == value,
+                        "Origin isolation options differ from the reviewed profile")
             phase = " ".join(control.info("status/bootstrap-phase"))
             progress = re.search(r"(?:^| )PROGRESS=([0-9]+)(?: |$)", phase)
             # Predicted circuits are deliberately disabled. Tor reaches 100%
@@ -757,17 +793,14 @@ def run(args):
         require(target_pid not in pids and hashlib.sha256(
             Path(f"/proc/{target_pid}/exe").read_bytes()).hexdigest() == args.binary_sha256,
             "Actual target process/binary provenance mismatch")
-        limits = manifest.get("resource_limits", {
-            "ElTorFoundationMaxCircuits": manifest["max_circuits"]})
-        expected_limits = scenario_limits(manifest.get("scenario", "admission"),
-                                          manifest["max_circuits"],
-                                          manifest.get("traffic_profile", "small-v1"))
-        require(limits == expected_limits, "Fixture lower limits differ from the reviewed scenario")
-        for name, value in limits.items():
+        for name, value in {**limits, **target_isolation}.items():
             require(int(target.config(name)) == value,
                     "Operator must deploy every exact immutable scenario limit")
         summary["scenario"] = manifest.get("scenario", "admission")
         summary["configured_limits"] = limits
+        if target_isolation or origin_isolation:
+            summary["target_isolation_options"] = target_isolation
+            summary["origin_isolation_options"] = origin_isolation
         if summary["scenario"] == "traffic":
             summary["traffic_profile"] = manifest.get("traffic_profile", "small-v1")
         summary["origins"] = len(controls)
@@ -866,7 +899,8 @@ def main():
     prep.add_argument("--target", default="006m")
     prep.add_argument("--scenario", choices=("admission", "traffic", "setup"),
                       default="admission")
-    prep.add_argument("--traffic-profile", choices=("small-v1", "startup-v2"),
+    prep.add_argument("--traffic-profile",
+                      choices=("small-v1", "startup-v2", "retry-paced-v3"),
                       default="small-v1")
     prep.add_argument("--origins", type=int, default=4)
     prep.add_argument("--per-origin", type=int, default=16)

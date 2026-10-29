@@ -141,6 +141,7 @@ apply the fragment, reset counters, consult wallets, or send payment commands.
 | --- | --- | ---: |
 | Traffic `small-v1` at exit `004r` | byte rate 2053 B/s, burst 16424 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
 | Traffic `startup-v2` at exit `004r` | byte rate 16384 B/s, burst 65536 B; connection rate 8192 B/s, burst 32768 B; shared outgoing queue 65536 B | 9 |
+| Traffic `retry-paced-v3` at exit `004r` | exactly the `startup-v2` resource limits, with the separately recorded retry/prediction options below | 9 |
 | Setup at first hop `006m` | attempted work rate 1/s, burst 4; running 1, waiting 2 | 26 |
 
 The `traffic_profile` manifest field names the reviewed traffic limits. Older
@@ -151,6 +152,71 @@ limits and every acceptance assertion unchanged. The three stress paths share
 one predecessor-to-exit OR link, whose 8 KiB/s and 32 KiB burst are tighter than
 the process limits in `startup-v2`: results must identify shared-link/queue
 pressure and must not claim isolated process-bucket saturation.
+
+### Reviewed retry isolation candidate
+
+`retry-paced-v3` retains every `startup-v2` byte, connection, live-state and queue
+limit, the same 48 KiB payloads, and all baseline, pressure, native-closure,
+checksum and fresh-recovery assertions. It adds only these target fixture options:
+
+```text
+TestingServerConsensusDownloadInitialDelay 10
+TestingClientConsensusDownloadInitialDelay 10
+__DisablePredictedCircuits 1
+```
+
+New dedicated origins additionally set
+`TestingClientConsensusDownloadInitialDelay 10`; their existing
+`__DisablePredictedCircuits 1` remains unchanged. Preparation records exact
+`target_isolation_options` and `origin_isolation_options` separately from
+`resource_limits`. The generated target fragment includes both sets of target
+options, and authenticated preflight checks their exact values on each relevant
+process. An operator deployment helper that applies only `resource_limits` must
+be updated to apply the complete reviewed fragment before this profile can run.
+Older manifests/profile names acquire no implicit isolation options.
+
+Prepare this candidate in a new short private directory, without deployment:
+
+```sh
+python3 eltord/tools/foundation_resource_acceptance.py prepare \
+  --scenario traffic --traffic-profile retry-paced-v3 --nodes chutney/net/nodes \
+  --template chutney/net/nodes/005c/torrc \
+  --directory .runtime/foundation-resource/TRAFFIC-V3 \
+  --path 006m,007m,004r --target 004r \
+  --origins 4 --per-origin 1 --max-circuits 64
+```
+
+Source scope matters. `src/app/config/config.c` and `testnet.inc` in the native
+Tor tree default both consensus delay options to zero, including the
+`TestingTorNetwork` defaults. `src/feature/dirclient/dlstatus.c` uses the server
+option for a public relay's consensus schedule reset and failure backoff.
+`src/feature/dirclient/dirclient.c` treats HTTP 304 as a failed consensus fetch;
+`src/feature/nodelist/networkstatus.c` checks that schedule before retrying.
+Thus the server option addresses a concrete observed retry path: the retained
+`startup-v2` logs counted 48 HTTP 304 replies among 81 consensus-download
+launches. The matching client option affects a client/bridge with a reasonably
+live consensus; bootstrapping clients still use their distinct
+`ClientBootstrapConsensus*DownloadInitialDelay` schedules. These settings do not
+cap all successful fresh-consensus fetches, descriptor/certificate downloads,
+or aggregate directory traffic.
+
+`src/core/or/circuituse.c` checks `__DisablePredictedCircuits` only before
+prediction. It does not suppress relay reachability/bandwidth-test construction
+from `src/feature/relay/relay_periodic.c`, `src/core/mainloop/mainloop.c` and
+`src/feature/relay/selftest.c`. Ten such construction launches were observed in
+the failed `startup-v2` window, but no bandwidth-test DROP dump was observed;
+there is no evidence to attribute its byte consumption to such a dump. No
+`ExcludeNodes`, `AssumeReachable`, directory-cache, forwarding, advertised-profile
+or enforcement changes are part of this candidate. It is a limited isolation
+hypothesis, not a guarantee that the remaining background work fits the caps.
+If its unchanged honest baseline or later gates fail, retain that failure.
+
+The private `retry-v3-20261029` directory was prepared without a run claim,
+result, process launch or deployment. This candidate has no live acceptance
+result. Do not deploy
+or dispatch it during the sustained paid-stream run. Descriptor-ready target
+status of at least 75% permits dispatch after operator release, but does not
+establish full target reachability or substitute for a real honest echo.
 
 The earlier `small-v1` deployment reached only target 95%, and a separate fresh
 unchanged runner failed its baseline build before pressure. Those private
