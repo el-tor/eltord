@@ -34,8 +34,8 @@ pub mod wallet;
 
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
-const APPLICATION_ID: i64 = 0x454c5452;
-const VERSION: i64 = 5;
+pub(crate) const APPLICATION_ID: i64 = 0x454c5452;
+pub(crate) const VERSION: i64 = 5;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {

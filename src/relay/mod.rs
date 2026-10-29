@@ -11,3 +11,6 @@ mod foundation;
 pub use foundation::{RelayFoundation, RelayStep};
 
 mod foundation_startup;
+
+mod foundation_operator;
+pub use foundation_operator::{operate_foundation_ledger, LedgerOperation, LedgerOperationReport, OperatorError};

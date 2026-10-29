@@ -1,5 +1,6 @@
 [package]
 name = "eltor"
+default-run = "eltor"
 version = "0.0.2"
 edition = "2018"
 description = "Tor network fork with paid relay functionality and Lightning Network integration"

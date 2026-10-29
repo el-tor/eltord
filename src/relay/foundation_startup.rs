@@ -107,6 +107,21 @@ impl FoundationConfig {
             clock_uncertainty_ms: value.clock_uncertainty_ms,
         })
     }
+    // Operator-only access preserves a single bounded private config parser.
+    // Runtime startup still calls open(), which never creates or migrates.
+    pub(super) fn ledger_path(&self) -> &Path {
+        &self.ledger_path
+    }
+    pub(super) fn account(&self) -> NativeAccount {
+        self.account
+    }
+    pub(super) async fn verify_recipient(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let wallet = ClnFoundation::connect_receiving(self.wallet.clone(), self.account).await?;
+        // Help advertises API support; a bounded read also checks this rune's
+        // actual receiving permission. This probe never advances a ledger cursor.
+        wallet.incoming_updates(1).await?;
+        Ok(())
+    }
     /// Opening precedes wallet access. A missing ledger never causes provisioning
     /// and credentials never appear in returned diagnostics from this module.
     pub async fn open(
