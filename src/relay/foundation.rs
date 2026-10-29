@@ -3,10 +3,16 @@
 //! coordinator has no outgoing-payment interface and never provisions storage.
 use crate::{payment_ledger::*, rpc::*};
 use lni::cln::foundation::{ClnFoundation, IncomingStatus, Observation};
-use std::{collections::BTreeMap, error::Error};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    error::Error,
+    time::{Duration, Instant},
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const MAX_BINDINGS: usize = 128;
+const MAX_RECOVERY_HISTORY: usize = 4096;
+const ACTIONABLE_BURST: u8 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStep {
@@ -28,6 +34,12 @@ pub struct RelayFoundation {
     recovery: Option<PaymentRecovery>,
     live: BTreeMap<[u8; 16], PaymentInventoryRow>,
     next: usize,
+    actionable: VecDeque<[u8; 16]>,
+    financial: BTreeSet<[u8; 16]>,
+    probed: BTreeMap<[u8; 16], u64>,
+    closed: BTreeSet<[u8; 16]>,
+    actionable_streak: u8,
+    last_inventory: Instant,
     instance: Option<[u8; 16]>,
 }
 impl RelayFoundation {
@@ -46,6 +58,12 @@ impl RelayFoundation {
             recovery: None,
             live: BTreeMap::new(),
             next: 0,
+            actionable: VecDeque::new(),
+            financial: BTreeSet::new(),
+            probed: BTreeMap::new(),
+            closed: BTreeSet::new(),
+            actionable_streak: 0,
+            last_inventory: Instant::now(),
             instance: None,
         })
     }
@@ -65,26 +83,117 @@ impl RelayFoundation {
         }
         result
     }
-    async fn synchronize(&mut self) -> Result<()> {
-        let recovery = self.control.recover().await?;
-        let instance = recovery.instance();
-        let rows = recovery.tracked_rows_for(PaymentRole::Relay)?;
-        if rows.len() > MAX_BINDINGS {
-            return Err("Foundation relay work capacity exceeded".into());
+    fn binding_closed(&mut self, instance: [u8; 16], handle: [u8; 16]) -> Result<bool> {
+        if self.closed.contains(&handle) {
+            return Ok(true);
         }
+        if !self.ledger.binding_is_closed(instance, handle)? {
+            return Ok(false);
+        }
+        // Only a bounded lookup cache; eviction never removes the durable
+        // tombstone or permits a handle to reopen without checking that ledger.
+        if self.closed.len() >= MAX_RECOVERY_HISTORY {
+            self.closed.clear();
+        }
+        self.closed.insert(handle);
+        Ok(true)
+    }
+    fn has_financial_work(&self, instance: [u8; 16], handle: [u8; 16]) -> Result<bool> {
+        Ok(self
+            .ledger
+            .latest_admission_period(instance, handle)?
+            .is_some()
+            || self
+                .ledger
+                .get_handshake_obligation(instance, handle)?
+                .is_some())
+    }
+    fn forget_work(&mut self, handle: [u8; 16]) {
+        self.live.remove(&handle);
+        self.financial.remove(&handle);
+        self.probed.remove(&handle);
+        self.actionable.retain(|h| *h != handle);
+    }
+    fn schedule_actionable(&mut self, handle: [u8; 16]) -> Result<()> {
+        if self.live.contains_key(&handle) && !self.actionable.contains(&handle) {
+            if self.actionable.len() >= MAX_BINDINGS {
+                return Err("Foundation relay work capacity exceeded".into());
+            }
+            self.actionable.push_back(handle);
+        }
+        Ok(())
+    }
+    fn schedule_hints(&mut self, events: &[PaymentEvent]) -> Result<()> {
+        for event in events {
+            if event.role == PaymentRole::Relay
+                && event.kind != PaymentEventKind::Registered
+                && self.live.get(&event.handle).is_some_and(|row| {
+                    row.revision == event.revision
+                        && self.probed.get(&event.handle).copied().unwrap_or(0) < event.revision
+                })
+            {
+                // Only the current, not-yet-probed revision can wake ordinary
+                // work. Buffered hints matching the fresh inventory can guide
+                // its first query, but stale/duplicate hints cannot reawaken a
+                // dormant row. Financial followups have their own bounded queue.
+                // Hints determine query order only. No reservation, clock,
+                // authorization or consumption follows without the typed query.
+                self.schedule_actionable(event.handle)?;
+            }
+        }
+        Ok(())
+    }
+    async fn synchronize(&mut self) -> Result<()> {
+        let inventory = self.control.inventory().await?;
+        let events = self.control.take_events()?;
+        let recovery = PaymentRecovery::new(inventory, &events)?;
+        let instance = recovery.instance();
         if self.instance != Some(instance) {
             self.ledger.close_other_instances(instance)?;
             self.live.clear();
+            self.financial.clear();
+            self.probed.clear();
+            self.closed.clear();
+            self.actionable.clear();
+            self.actionable_streak = 0;
             self.next = 0;
         }
-        for row in rows {
-            self.live.insert(row.handle, row);
+        let mut live = BTreeMap::new();
+        for row in recovery.tracked_rows_for(PaymentRole::Relay)? {
+            // Recovery can retain 4096 historical hints. The 128 work ceiling
+            // counts only bindings not already durably closed.
+            if !self.binding_closed(instance, row.handle)? {
+                live.insert(row.handle, row);
+            }
         }
-        if self.live.len() > MAX_BINDINGS {
+        // An absent inventory row never releases accounting. Retain only
+        // previously known durable financial work for an authoritative terminal
+        // query; ordinary absent candidates do not accumulate across recovery.
+        for handle in &self.financial {
+            if let Some(row) = self.live.get(handle) {
+                if !self.ledger.binding_is_closed(instance, *handle)? {
+                    live.entry(*handle).or_insert_with(|| row.clone());
+                }
+            }
+        }
+        if live.len() > MAX_BINDINGS {
             return Err("Foundation relay work capacity exceeded".into());
+        }
+        self.live = live;
+        let live = &self.live;
+        self.financial.retain(|h| live.contains_key(h));
+        self.probed.retain(|h, _| live.contains_key(h));
+        self.actionable.retain(|h| live.contains_key(h));
+        for handle in self.live.keys().copied().collect::<Vec<_>>() {
+            if self.has_financial_work(instance, handle)? {
+                self.financial.insert(handle);
+                self.schedule_actionable(handle)?;
+            }
         }
         self.instance = Some(instance);
         self.recovery = Some(recovery);
+        self.last_inventory = Instant::now();
+        self.schedule_hints(&events)?;
         Ok(())
     }
     fn drain_hints(&mut self) -> Result<()> {
@@ -93,16 +202,48 @@ impl RelayFoundation {
             .recovery
             .as_mut()
             .ok_or("Foundation requires inventory recovery")?;
-        for event in events {
-            recovery.observe(&event)?;
+        for event in &events {
+            recovery.observe(event)?;
         }
-        for row in recovery.tracked_rows_for(PaymentRole::Relay)? {
+        let instance = recovery.instance();
+        let rows = recovery.tracked_rows_for(PaymentRole::Relay)?;
+        for row in rows {
+            if self.binding_closed(instance, row.handle)? {
+                self.forget_work(row.handle);
+                continue;
+            }
             self.live.insert(row.handle, row);
         }
         if self.live.len() > MAX_BINDINGS {
             return Err("Foundation relay work capacity exceeded".into());
         }
+        self.schedule_hints(&events)?;
         Ok(())
+    }
+    fn next_work(&mut self) -> Option<PaymentInventoryRow> {
+        let ordinary: Vec<_> = self
+            .live
+            .values()
+            .filter(|row| {
+                !self.financial.contains(&row.handle)
+                    && self.probed.get(&row.handle).copied().unwrap_or(0) < row.revision
+            })
+            .cloned()
+            .collect();
+        if !self.actionable.is_empty()
+            && (self.actionable_streak < ACTIONABLE_BURST || ordinary.is_empty())
+        {
+            self.actionable_streak = self.actionable_streak.saturating_add(1);
+            let handle = self.actionable.pop_front().expect("nonempty bounded queue");
+            return self.live.get(&handle).cloned();
+        }
+        if !ordinary.is_empty() {
+            let row = ordinary[self.next % ordinary.len()].clone();
+            self.next = self.next.wrapping_add(1);
+            self.actionable_streak = 0;
+            return Some(row);
+        }
+        None
     }
     async fn step_inner<F>(&mut self, observe: &mut F) -> Result<RelayStep>
     where
@@ -113,31 +254,47 @@ impl RelayFoundation {
             return Ok(RelayStep::Recovered);
         }
         self.drain_hints()?;
-        if self.live.is_empty() {
-            // Inventory is also the bounded idle poll. Native payments cannot
-            // create a Tor binding, and absence never releases financial state.
-            self.synchronize().await?;
-            return Ok(RelayStep::Idle);
-        }
-        let row = self
-            .live
-            .values()
-            .nth(self.next % self.live.len())
-            .expect("bounded live row")
-            .clone();
-        self.next = self.next.wrapping_add(1);
+        let Some(row) = self.next_work() else {
+            // take_events only drains already parsed bytes. A real bounded
+            // inventory read is needed to ingest hints while all candidates are
+            // dormant; never spin on the in-memory event queue indefinitely.
+            if self.last_inventory.elapsed() >= Duration::from_secs(1) {
+                self.synchronize().await?;
+                return Ok(RelayStep::Idle);
+            }
+            return Ok(RelayStep::Deferred);
+        };
         let instance = self
             .instance
             .ok_or("Foundation requires inventory recovery")?;
-        if self.ledger.binding_is_closed(instance, row.handle)? {
-            self.live.remove(&row.handle);
+        if self.binding_closed(instance, row.handle)? {
+            self.forget_work(row.handle);
             return Ok(RelayStep::Deferred);
         }
         let result = self.reconcile_binding(instance, &row, observe).await;
+        if self.binding_closed(instance, row.handle)? {
+            self.forget_work(row.handle);
+        } else if self.has_financial_work(instance, row.handle)? {
+            self.financial.insert(row.handle);
+            self.schedule_actionable(row.handle)?;
+        } else if matches!(
+            result.as_ref().err().and_then(rejection),
+            Some(
+                PaymentRejection::InitialStateUnconfirmed
+                    | PaymentRejection::UnknownPeriod
+                    | PaymentRejection::DeadlineExpired
+            )
+        ) {
+            // Authoritative absence of pending work for this revision, not
+            // closure/payment. A new lifecycle revision wakes it immediately.
+            self.probed.insert(row.handle, row.revision);
+        } else if result.is_err() {
+            self.schedule_actionable(row.handle)?;
+        }
         match result {
             Err(error) if rejection(&error) == Some(PaymentRejection::UnknownCircuit) => {
                 self.ledger.close_binding(instance, row.handle)?;
-                self.live.remove(&row.handle);
+                self.forget_work(row.handle);
                 self.recovery = None;
                 Ok(RelayStep::Deferred)
             }

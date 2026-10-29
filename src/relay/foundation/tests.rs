@@ -120,6 +120,11 @@ struct ControlState {
     auth: Mutex<BTreeMap<u64, (String, String)>>,
     commands: Mutex<Vec<String>>,
     inventory_count: AtomicU64,
+    many_candidates: AtomicBool,
+    hints_on_idle: AtomicBool,
+    empty_inventory: AtomicBool,
+    registration_capacity_once: AtomicBool,
+    read_times: Mutex<Vec<(String, Instant)>>,
 }
 fn registration(state: &ControlState) -> String {
     let instance = state.instance.load(Ordering::SeqCst);
@@ -263,6 +268,16 @@ async fn controller(
                 while let Some(command) = lines.next_line().await.unwrap() {
                     let fields: Vec<_> = command.split(' ').collect();
                     state.commands.lock().unwrap().push(command.clone());
+                    if matches!(
+                        fields[0],
+                        "ELTOR_PAYMENT_ADMISSION_GET" | "ELTOR_PAYMENT_REGISTRATION_GET"
+                    ) {
+                        state
+                            .read_times
+                            .lock()
+                            .unwrap()
+                            .push((fields[3].into(), Instant::now()));
+                    }
                     let instance = state.instance.load(Ordering::SeqCst);
                     let i = hex::encode([instance; 16]);
                     let h = hex::encode([2; 16]);
@@ -270,10 +285,37 @@ async fn controller(
                         "AUTHENTICATE" | "SETEVENTS" => "250 OK".into(),
                         "ELTOR_PAYMENT_LIST" => {
                             state.inventory_count.fetch_add(1, Ordering::SeqCst);
-                            format!("250-ELTOR_PAYMENT_LIST 1 {i} 10 -\n250-CIRCUIT {h} RELAY 1\n250 OK")
+                            if state.many_candidates.load(Ordering::SeqCst) {
+                                let sequence = if state.hints_on_idle.load(Ordering::SeqCst) {
+                                    10
+                                } else {
+                                    12
+                                };
+                                let mut rows =
+                                    vec![format!("250-ELTOR_PAYMENT_LIST 1 {i} {sequence} -")];
+                                if !state.empty_inventory.load(Ordering::SeqCst) {
+                                    rows.push(format!("250-CIRCUIT {h} RELAY 1"));
+                                    for value in (3..53).chain(100..110) {
+                                        rows.push(format!(
+                                            "250-CIRCUIT {} RELAY 1",
+                                            hex::encode([value; 16])
+                                        ));
+                                    }
+                                }
+                                rows.push("250 OK".into());
+                                rows.join("\n")
+                            } else {
+                                format!("250-ELTOR_PAYMENT_LIST 1 {i} 10 -\n250-CIRCUIT {h} RELAY 1\n250 OK")
+                            }
                         }
                         "ELTOR_PAYMENT_ADMISSION_GET" => {
-                            if fields[4] == "0" && !state.admitted.load(Ordering::SeqCst) {
+                            if fields[3] != h {
+                                if state.hints_on_idle.swap(false, Ordering::SeqCst) {
+                                    format!("650 ELTOR_PAYMENT_STATE 1 {i} 11 {h} RELAY 2 ADMISSION_PENDING\n650 ELTOR_PAYMENT_STATE 1 {i} 12 {h} RELAY 3 START_REQUESTED\n551 INITIAL_STATE_UNCONFIRMED")
+                                } else {
+                                    "551 INITIAL_STATE_UNCONFIRMED".into()
+                                }
+                            } else if fields[4] == "0" && !state.admitted.load(Ordering::SeqCst) {
                                 pending(instance)
                             } else if fields[4] == "1"
                                 && state.renewal_pending.load(Ordering::SeqCst)
@@ -314,7 +356,12 @@ async fn controller(
                             )
                         }
                         "ELTOR_PAYMENT_REGISTRATION_GET" => {
-                            if state.unknown.load(Ordering::SeqCst) {
+                            if state
+                                .registration_capacity_once
+                                .swap(false, Ordering::SeqCst)
+                            {
+                                "451 CAPACITY".into()
+                            } else if state.unknown.load(Ordering::SeqCst) {
                                 "552 UNKNOWN_CIRCUIT".into()
                             } else if fields[4] == "1" {
                                 assert!(state.renewal_admitted.load(Ordering::SeqCst));
@@ -500,6 +547,97 @@ async fn setup(
         native,
     )
 }
+#[tokio::test]
+async fn actionable_work_preempts_idle_candidates_without_resurrecting_closed_history() {
+    let dir = Directory::new();
+    let state = Arc::new(ControlState::default());
+    state.many_candidates.store(true, Ordering::SeqCst);
+    state.hints_on_idle.store(true, Ordering::SeqCst);
+    state
+        .registration_capacity_once
+        .store(true, Ordering::SeqCst);
+    let n = Arc::new(NativeState::default());
+    let (mut coordinator, _, _, controller, native) = setup(&dir, state.clone(), n.clone()).await;
+    for value in 100..110 {
+        coordinator
+            .ledger
+            .close_binding([1; 16], [value; 16])
+            .unwrap();
+    }
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Recovered);
+    assert_eq!(coordinator.live.len(), 51);
+    // Start behind the first ordinary candidate: its real socket read receives
+    // pending admission/START hints for the financially relevant handle.
+    coordinator.next = 1;
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Deferred);
+    assert_eq!(coordinator.probed.get(&[3; 16]), Some(&1));
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Deferred);
+    assert!(state.admitted.load(Ordering::SeqCst));
+    assert!(coordinator.financial.contains(&[2; 16]));
+    assert_eq!(
+        coordinator.step(clock).await.unwrap(),
+        RelayStep::Reconciled {
+            notifications: 2,
+            consumed: 0,
+        }
+    );
+    // The legitimate shared per-hop floor is enforced across admission and
+    // registration reads, including the CAPACITY retry, without scanning50rows.
+    let read_times = state.read_times.lock().unwrap();
+    let reads: Vec<_> = read_times
+        .iter()
+        .filter(|(h, _)| *h == hex::encode([2; 16]))
+        .collect();
+    assert_eq!(reads.len(), 3);
+    for pair in reads.windows(2) {
+        assert!(pair[1].1.duration_since(pair[0].1) >= Duration::from_millis(1100));
+    }
+    assert_eq!(read_times.len(), 4);
+    drop(read_times);
+    assert_eq!(n.lookups.load(Ordering::SeqCst), 1);
+    assert!(coordinator.live.keys().all(|h| h[0] < 100));
+    // A stale same-revision hint cannot reawaken a dormant ordinary candidate.
+    let old = PaymentEvent {
+        instance: [1; 16],
+        sequence: 10,
+        handle: [3; 16],
+        role: PaymentRole::Relay,
+        revision: 1,
+        kind: PaymentEventKind::StartRequested,
+    };
+    coordinator.schedule_hints(&[old]).unwrap();
+    assert!(!coordinator.actionable.contains(&[3; 16]));
+    // Bounded urgent bursts still admit an ordinary background probe.
+    coordinator.actionable_streak = 0;
+    for _ in 0..ACTIONABLE_BURST {
+        assert_eq!(coordinator.next_work().unwrap().handle, [2; 16]);
+        coordinator.schedule_actionable([2; 16]).unwrap();
+    }
+    assert_ne!(coordinator.next_work().unwrap().handle, [2; 16]);
+    // A fresh same-instance inventory replaces ordinary work; absence is not a
+    // financial close. The exact admitted binding remains for a terminal query.
+    state.empty_inventory.store(true, Ordering::SeqCst);
+    coordinator.synchronize().await.unwrap();
+    assert_eq!(coordinator.live.len(), 1);
+    assert!(coordinator.live.contains_key(&[2; 16]));
+    assert!(!coordinator
+        .ledger
+        .binding_is_closed([1; 16], [2; 16])
+        .unwrap());
+    coordinator.drain_hints().unwrap();
+    assert_eq!(coordinator.live.len(), 1);
+    // Dormant work still performs an actual inventory read to receive events.
+    coordinator.live.clear();
+    coordinator.financial.clear();
+    coordinator.actionable.clear();
+    coordinator.last_inventory = Instant::now() - Duration::from_secs(2);
+    let inventories = state.inventory_count.load(Ordering::SeqCst);
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Idle);
+    assert!(state.inventory_count.load(Ordering::SeqCst) > inventories);
+    controller.abort();
+    native.abort();
+}
+
 #[tokio::test]
 async fn recipient_discovery_authorization_and_exact_consumption_run_over_local_sockets() {
     let dir = Directory::new();
