@@ -131,6 +131,7 @@ struct TorState {
     uncertain_hop: AtomicUsize,
     uncertain_operation: Mutex<Option<String>>,
     forced_round: AtomicUsize,
+    pending_get_hop: AtomicUsize,
 }
 fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> String {
     let b = binding();
@@ -193,7 +194,14 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
     };
     let uncertain =
         kind == "QUERY" && state.uncertain_operation.lock().unwrap().as_deref() == Some(op);
-    format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE {} {} {} 2\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,hex::encode(q),hex::encode(a),profile,clocks,op,kind,if uncertain{"UNCERTAIN"}else if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
+    let revision = 2 + clocks
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+        .saturating_sub(1);
+    format!("250-ELTOR_INITIAL 1 {} {} {} {}\n250-PROFILE {} {} {} {}\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,revision,hex::encode(q),hex::encode(a),profile,revision,clocks,op,kind,if uncertain{"UNCERTAIN"}else if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
 }
 async fn tor_server(
     req: Vec<FoundationHop>,
@@ -263,7 +271,15 @@ async fn tor_server(
                         }
                         "ELTOR_INITIAL_GET" => {
                             let hop = f[4].parse::<usize>().unwrap() - 1;
-                            snapshot(&state, hop, f[5], &req[hop])
+                            if state
+                                .pending_get_hop
+                                .compare_exchange(hop + 1, 0, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok()
+                            {
+                                "551 STATE_TRANSITION_PENDING".into()
+                            } else {
+                                snapshot(&state, hop, f[5], &req[hop])
+                            }
                         }
                         _ => panic!("unexpected controlcommand"),
                     };
@@ -621,7 +637,7 @@ async fn slow_native_lookup_keeps_authenticated_round_status_fresh_without_repay
 }
 
 #[tokio::test]
-async fn uncertain_third_hop_query_requests_new_bounded_observation_without_replaying_start() {
+async fn pushed_active_transition_survives_pending_and_uncertain_query_without_replaying_start() {
     let d = Directory::new();
     let mut req = requirements(false);
     let mut third = req[1].clone();
@@ -657,12 +673,15 @@ async fn uncertain_third_hop_query_requests_new_bounded_observation_without_repl
         }
     }
     assert!(runner.start_observed.iter().all(|observed| *observed));
+    let original_window = runner.hop_window(0, 3, clock().unwrap()).unwrap();
+    let original_commit = runner.commit_open_ms;
     tor.active.store(true, Ordering::SeqCst);
     tor.uncertain_hop.store(3, Ordering::SeqCst);
     assert_eq!(runner.observe_active(&mut clock).await.unwrap(), None); // Queue each first QUERY.
     let old = runner.operation(2, InitialOperationKind::Query, 1);
-    assert_eq!(runner.observe_active(&mut clock).await.unwrap(), None); // Last hop timed out.
-    assert_eq!(runner.query_indices, vec![2, 2, 2]);
+    tor.pending_get_hop.store(3, Ordering::SeqCst);
+    assert_eq!(runner.observe_active(&mut clock).await.unwrap(), None);
+    assert_eq!(runner.query_indices, vec![2, 2, 1]); // No concurrent claim on pending GET.
     assert_eq!(
         runner
             .ledger
@@ -684,6 +703,32 @@ async fn uncertain_third_hop_query_requests_new_bounded_observation_without_repl
             .dispatch_claimed
     );
     tor.forced_round.store(2, Ordering::SeqCst);
+    // Native received a matching actual-activation notification bound to its
+    // immutable START. The unrelated QUERY remains UNCERTAIN; its phase is not
+    // the current profile's authority and is never rewritten to VERIFIED here.
+    assert_eq!(runner.observe_active(&mut clock).await.unwrap(), Some(2));
+    assert_eq!(runner.query_indices, vec![3, 3, 2]);
+    assert!(
+        runner.observations[2]
+            .as_ref()
+            .unwrap()
+            .snapshot
+            .operation
+            .as_ref()
+            .unwrap()
+            .phase
+            == InitialOperationPhase::Uncertain
+    );
+    assert_eq!(
+        runner
+            .ledger
+            .spending_round(runner.plan.local_scope())
+            .unwrap(),
+        1
+    );
+    assert_eq!(runner.fund_round(3, &mut clock).await.unwrap(), None);
+    assert!(runner.hop_window(0, 3, clock().unwrap()).unwrap() == original_window);
+    assert_eq!(runner.commit_open_ms, original_commit);
     assert!(matches!(
         tick(&mut runner).await.unwrap(),
         FoundationProgress::Active {
@@ -698,7 +743,7 @@ async fn uncertain_third_hop_query_requests_new_bounded_observation_without_repl
             .unwrap(),
         2
     );
-    assert!(runner.query_indices.iter().all(|index| *index == 3));
+    assert_eq!(runner.query_indices, vec![4, 4, 3]);
     let commands = tor.commands.lock().unwrap();
     assert_eq!(
         commands

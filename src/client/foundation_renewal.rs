@@ -146,9 +146,10 @@ impl ClientFoundation {
                     if PaymentRejection::from_io(&error)
                         == Some(PaymentRejection::StateTransitionPending) =>
                 {
-                    // GET remains read-only. Only a fresh separately persisted
-                    // explicit QUERY asks Tor to obtain coherent status clocks.
-                    self.queue_status_query(hop).await?;
+                    // A pushed activation or an in-flight QUERY must first
+                    // restore coherent current clocks. Do not claim another
+                    // QUERY while its exact predecessor may still be pending;
+                    // a complete CAPACITY rejection cannot undo that claim.
                     continue;
                 }
                 Err(error) => return Err(error.into()),

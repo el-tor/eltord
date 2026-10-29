@@ -575,7 +575,9 @@ impl ClientFoundation {
                     .await,
             )?;
             let Some(outcome) = outcome else {
-                self.queue_status_query(hop).await?;
+                // A pending current-clock transition is not permission to
+                // replace START or claim a concurrent QUERY. The native pushed
+                // transition or original response must restore a coherent GET.
                 continue;
             };
             match outcome {
@@ -867,14 +869,14 @@ impl ClientFoundation {
         // Subsequent rounds additionally require all-hop authenticated ACTIVE.
         for hop in 0..self.plan.hops.len() {
             let state = self.observations[hop].as_ref().ok_or_else(invalid)?;
-            if state
-                .snapshot
-                .operation
-                .as_ref()
-                .map_or(true, |o| o.phase != InitialOperationPhase::Verified)
-                || (round == 1 && state.snapshot.state != InitialOriginState::Committed)
+            if (round == 1
+                && (state.snapshot.operation.as_ref().map_or(true, |o| {
+                    o.kind != InitialOperationKind::Commit
+                        || o.phase != InitialOperationPhase::Verified
+                }) || state.snapshot.state != InitialOriginState::Committed))
                 || (round > 1
-                    && (state.snapshot.state != InitialOriginState::Active
+                    && (!self.start_observed[hop]
+                        || state.snapshot.state != InitialOriginState::Active
                         || state.snapshot.clocks[3].unwrap_or(0)
                             <= state.at.elapsed().as_millis() as u64 + 1000))
             {
@@ -1043,7 +1045,10 @@ impl ClientFoundation {
                     error
                 })?;
                 let Some(outcome) = outcome else {
-                    self.queue_status_query(hop).await?;
+                    // Current ACTIVE clocks expired while a push or the exact
+                    // QUERY is still in flight. Another claim could receive
+                    // CAPACITY and strand its durable identity as unknown.
+                    // Keep this operation and await an authenticated snapshot.
                     minimum = 0;
                     continue;
                 };
@@ -1055,7 +1060,19 @@ impl ClientFoundation {
                             error
                         })?;
                         let phase = snapshot.operation.as_ref().map(|o| o.phase);
-                        if phase == Some(InitialOperationPhase::Verified) {
+                        if matches!(
+                            phase,
+                            Some(
+                                InitialOperationPhase::Verified
+                                    | InitialOperationPhase::Queued
+                                    | InitialOperationPhase::Sent
+                                    | InitialOperationPhase::Uncertain
+                            )
+                        ) {
+                            // PROFILE/CLOCK describe the native hop's current
+                            // authenticated state, independent of this QUERY's
+                            // lifecycle. A START-bound activation notification
+                            // may advance it while this QUERY remains uncertain.
                             self.retain_snapshot(hop, snapshot, request_at)
                                 .map_err(|error| {
                                     log_status_failure(hop, "query-clocks", error.as_ref());
@@ -1068,14 +1085,14 @@ impl ClientFoundation {
                             let remaining = snapshot.clocks[2]
                                 .unwrap_or(0)
                                 .min(snapshot.clocks[3].unwrap_or(0));
-                            if snapshot.state == InitialOriginState::Active && remaining > 1000 {
+                            if self.start_observed[hop]
+                                && snapshot.state == InitialOriginState::Active
+                                && remaining > 1000
+                            {
                                 minimum = minimum.min(snapshot.clocks[0].unwrap_or(0));
                             } else {
                                 minimum = 0;
                             }
-                            next = true;
-                        } else {
-                            minimum = 0;
                             if phase == Some(InitialOperationPhase::Uncertain) {
                                 // The original one-shot QUERY's native response
                                 // window expired. Preserve it and request a new
@@ -1083,17 +1100,16 @@ impl ClientFoundation {
                                 // request, START, payment or deadline.
                                 log::warn!("Foundation origin status hop {} QUERY uncertain; requesting bounded fresh observation", hop + 1);
                                 next = true;
-                            } else if !matches!(
-                                phase,
-                                Some(InitialOperationPhase::Queued | InitialOperationPhase::Sent)
-                            ) {
-                                log::warn!(
-                                    "Foundation origin status hop {} terminal QUERY phase {:?}",
-                                    hop + 1,
-                                    phase
-                                );
-                                return Err("Origin QUERY refused, closed or unavailable".into());
+                            } else if phase == Some(InitialOperationPhase::Verified) {
+                                next = true;
                             }
+                        } else {
+                            log::warn!(
+                                "Foundation origin status hop {} terminal QUERY phase {:?}",
+                                hop + 1,
+                                phase
+                            );
+                            return Err("Origin QUERY refused, closed or unavailable".into());
                         }
                     }
                 }
