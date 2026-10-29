@@ -1,7 +1,7 @@
 //! Private, leased observations for an in-process UI. These never authorize
 //! traffic, payments, retries or fallback and contain no financial identifiers.
 use serde::Serialize;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use tokio::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -20,40 +20,57 @@ struct Status {
     phase: FoundationClientStatus,
     expires: Option<Instant>,
 }
-static STATUS: Mutex<Status> = Mutex::new(Status {
-    owner: None,
-    phase: FoundationClientStatus::NotConfigured,
-    expires: None,
-});
-
-fn status_at(now: Instant) -> FoundationClientStatus {
-    let Ok(status) = STATUS.lock() else {
-        return FoundationClientStatus::Recovering;
-    };
-    if status.phase == FoundationClientStatus::LastVerifiedActive
-        && status.expires.map_or(true, |expires| now >= expires)
-    {
-        FoundationClientStatus::Recovering
-    } else {
-        status.phase
+struct Registry(Mutex<Status>);
+static STATUS: LazyLock<Arc<Registry>> = LazyLock::new(|| Arc::new(Registry::new()));
+impl Registry {
+    fn new() -> Self {
+        Self(Mutex::new(Status {
+            owner: None,
+            phase: FoundationClientStatus::NotConfigured,
+            expires: None,
+        }))
+    }
+    fn at(&self, now: Instant) -> FoundationClientStatus {
+        let Ok(status) = self.0.lock() else {
+            return FoundationClientStatus::Recovering;
+        };
+        if status.phase == FoundationClientStatus::LastVerifiedActive
+            && status.expires.map_or(true, |expires| now >= expires)
+        {
+            FoundationClientStatus::Recovering
+        } else {
+            status.phase
+        }
     }
 }
 
 /// Last authenticated in-process observation, conservatively expired against
 /// monotonic time. This performs no Tor, wallet, filesystem or ledger operation.
 pub fn foundation_client_status() -> FoundationClientStatus {
-    status_at(Instant::now())
+    STATUS.at(Instant::now())
 }
 
-pub(super) struct StatusOwner(Arc<()>);
+pub(super) struct StatusOwner {
+    token: Arc<()>,
+    registry: Arc<Registry>,
+}
 #[derive(Clone)]
-pub(super) struct StatusPublisher(Weak<()>);
+pub(super) struct StatusPublisher {
+    token: Weak<()>,
+    registry: Arc<Registry>,
+}
 impl StatusOwner {
     pub(super) fn start() -> Self {
-        let owner = Self(Arc::new(()));
-        if let Ok(mut status) = STATUS.lock() {
+        Self::start_in(STATUS.clone())
+    }
+    fn start_in(registry: Arc<Registry>) -> Self {
+        let owner = Self {
+            token: Arc::new(()),
+            registry,
+        };
+        if let Ok(mut status) = owner.registry.0.lock() {
             *status = Status {
-                owner: Some(Arc::downgrade(&owner.0)),
+                owner: Some(Arc::downgrade(&owner.token)),
                 phase: FoundationClientStatus::Starting,
                 expires: None,
             };
@@ -61,21 +78,24 @@ impl StatusOwner {
         owner
     }
     pub(super) fn publisher(&self) -> StatusPublisher {
-        StatusPublisher(Arc::downgrade(&self.0))
+        StatusPublisher {
+            token: Arc::downgrade(&self.token),
+            registry: self.registry.clone(),
+        }
     }
 }
 impl StatusPublisher {
     pub(super) fn publish(&self, phase: FoundationClientStatus, expires: Option<Instant>) {
         // A publisher never owns its runtime generation. Cancellation/drop or
         // a newer owner makes every delayed update from the old task inert.
-        let Some(_owner) = self.0.upgrade() else {
+        let Some(_owner) = self.token.upgrade() else {
             return;
         };
-        if let Ok(mut status) = STATUS.lock() {
+        if let Ok(mut status) = self.registry.0.lock() {
             if status
                 .owner
                 .as_ref()
-                .is_some_and(|owner| Weak::ptr_eq(owner, &self.0))
+                .is_some_and(|owner| Weak::ptr_eq(owner, &self.token))
                 && status.phase != FoundationClientStatus::Closed
             {
                 status.phase = phase;
@@ -90,11 +110,11 @@ impl StatusPublisher {
 }
 impl Drop for StatusOwner {
     fn drop(&mut self) {
-        if let Ok(mut status) = STATUS.lock() {
+        if let Ok(mut status) = self.registry.0.lock() {
             if status
                 .owner
                 .as_ref()
-                .is_some_and(|owner| Weak::ptr_eq(owner, &Arc::downgrade(&self.0)))
+                .is_some_and(|owner| Weak::ptr_eq(owner, &Arc::downgrade(&self.token)))
             {
                 if status.phase != FoundationClientStatus::Closed {
                     status.phase = FoundationClientStatus::Stopped;
@@ -112,22 +132,26 @@ mod tests {
 
     #[tokio::test]
     async fn leases_expire_old_generations_cannot_publish_and_parent_abort_cancels_controller() {
-        let old = StatusOwner::start();
+        let registry = Arc::new(Registry::new());
+        let old = StatusOwner::start_in(registry.clone());
         let publisher = old.publisher();
         let deadline = Instant::now() + std::time::Duration::from_secs(1);
         publisher.publish(FoundationClientStatus::LastVerifiedActive, Some(deadline));
         assert_eq!(
-            status_at(deadline - std::time::Duration::from_millis(1)),
+            registry.at(deadline - std::time::Duration::from_millis(1)),
             FoundationClientStatus::LastVerifiedActive
         );
-        assert_eq!(status_at(deadline), FoundationClientStatus::Recovering);
+        assert_eq!(registry.at(deadline), FoundationClientStatus::Recovering);
         // Republishing an unchanged observation does not grant fresh time.
         publisher.publish(FoundationClientStatus::LastVerifiedActive, Some(deadline));
-        assert_eq!(status_at(deadline), FoundationClientStatus::Recovering);
-        let current = StatusOwner::start();
+        assert_eq!(registry.at(deadline), FoundationClientStatus::Recovering);
+        let current = StatusOwner::start_in(registry.clone());
         publisher.publish(FoundationClientStatus::Closed, None);
         drop(old);
-        assert_eq!(foundation_client_status(), FoundationClientStatus::Starting);
+        assert_eq!(
+            registry.at(Instant::now()),
+            FoundationClientStatus::Starting
+        );
 
         let (controller_tx, controller_rx) = tokio::sync::oneshot::channel();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -149,14 +173,14 @@ mod tests {
         let child = controller_rx.await.unwrap();
         ready_rx.await.unwrap();
         assert_eq!(
-            foundation_client_status(),
+            registry.at(Instant::now()),
             FoundationClientStatus::LastVerifiedActive
         );
         parent.abort();
         assert!(parent.await.unwrap_err().is_cancelled());
         assert!(child.await.unwrap_err().is_cancelled());
-        assert_eq!(foundation_client_status(), FoundationClientStatus::Stopped);
+        assert_eq!(registry.at(Instant::now()), FoundationClientStatus::Stopped);
         publisher.publish(FoundationClientStatus::LastVerifiedActive, Some(deadline));
-        assert_eq!(foundation_client_status(), FoundationClientStatus::Stopped);
+        assert_eq!(registry.at(Instant::now()), FoundationClientStatus::Stopped);
     }
 }
