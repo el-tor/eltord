@@ -285,6 +285,116 @@ fn exact_settlement_retry_survives_reopen_and_cannot_rebind() {
 }
 
 #[test]
+fn incoming_semantic_corruption_refuses_replay_and_reopen_without_repairing_history() {
+    for corruption in 0..3 {
+        let directory = TestDirectory::new();
+        let mut ledger = directory.provision();
+        let positive = obligation();
+        ledger.register_handshake(&positive).unwrap();
+        ledger
+            .authorize(&positive, &evidence(), [11; 16], clock())
+            .unwrap();
+        let mut zero_batch = batch();
+        for round in &mut zero_batch.rounds {
+            round.handle = [21; 16];
+            round.circuit_binding = [22; 32];
+            round.amount_msat = 0;
+        }
+        ledger.reserve_batch(&zero_batch, [13; 16]).unwrap();
+        let zero = zero_batch.rounds[0].clone();
+        assert!(zero.window.is_none());
+        ledger
+            .bind_initial_window(zero.instance, zero.handle, positive.window.unwrap())
+            .unwrap();
+        let zero_saved = ledger.authorize_zero(&zero, [12; 16], clock()).unwrap();
+        ledger
+            .bind_activation(
+                zero.instance,
+                zero.handle,
+                ActivationAnchor {
+                    started_at_ms: clock().now_ms,
+                    round_ms: 60_000,
+                    early_ms: 60_000,
+                    grace_ms: 15_000,
+                },
+            )
+            .unwrap();
+        drop(ledger);
+        // Valid positive and explicit zero records both survive normal reopen.
+        let mut ledger = PaymentLedger::reopen(&directory.file(), account()).unwrap();
+        assert!(ledger.get_authorization(&zero).unwrap().as_ref() == Some(&zero_saved));
+        match corruption {
+            0 => {
+                ledger
+                    .connection
+                    .execute("DELETE FROM incoming_claims", [])
+                    .unwrap();
+            }
+            1 => {
+                let mut changed = evidence();
+                changed.amount_msat += 1;
+                let payload = encode(&changed).unwrap();
+                // Even matching copies of malformed evidence cannot change
+                // the immutable obligation's accepted amount.
+                ledger
+                    .connection
+                    .execute(
+                        "UPDATE incoming_claims SET amount_msat=amount_msat+1,evidence=?1",
+                        params![&payload],
+                    )
+                    .unwrap();
+                ledger
+                    .connection
+                    .execute(
+                        "UPDATE authorizations SET evidence=?1 WHERE payment_hash!=zeroblob(32)",
+                        params![&payload],
+                    )
+                    .unwrap();
+            }
+            _ => {
+                ledger.connection.execute("UPDATE authorizations SET record_digest=?1 WHERE payment_hash!=zeroblob(32)", params![&[77u8; 32][..]]).unwrap();
+            }
+        }
+        assert!(matches!(
+            ledger.get_authorization(&positive),
+            Err(LedgerError::InvalidLedger)
+        ));
+        assert!(matches!(
+            ledger.authorize(&positive, &evidence(), [11; 16], clock()),
+            Err(LedgerError::InvalidLedger)
+        ));
+        assert!(matches!(
+            ledger.mark_consumed(&positive, [11; 16]),
+            Err(LedgerError::InvalidLedger)
+        ));
+        assert!(ledger.get_authorization(&zero).unwrap().as_ref() == Some(&zero_saved));
+        let claims = count(&ledger, "incoming_claims");
+        drop(ledger);
+        assert!(matches!(
+            PaymentLedger::reopen(&directory.file(), account()),
+            Err(LedgerError::InvalidLedger)
+        ));
+        let retained =
+            Connection::open_with_flags(directory.file(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            retained
+                .query_row("SELECT count(*) FROM authorizations", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            retained
+                .query_row("SELECT count(*) FROM incoming_claims", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            claims
+        );
+    }
+}
+
+#[test]
 fn recipient_evidence_must_match_account_amount_hash_and_native_settlement() {
     let directory = TestDirectory::new();
     let mut ledger = directory.provision();

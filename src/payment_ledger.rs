@@ -370,6 +370,7 @@ impl PaymentLedger {
         origin_artifacts::validate_schema(&ledger.connection, expected_account)?;
         outgoing_renewal::validate_schema(&ledger.connection)?;
         handshake::validate_schema(&ledger.connection, expected_account)?;
+        validate_incoming_history(&ledger.connection)?;
         Ok(ledger)
     }
 
@@ -879,7 +880,7 @@ fn require_initial_registration(
 }
 
 fn effective_window(
-    tx: &rusqlite::Transaction<'_>,
+    tx: &Connection,
     obligation: &Obligation,
 ) -> Result<AcceptanceWindow> {
     if let Some(window) = obligation.window {
@@ -948,32 +949,135 @@ fn find_registration(
     Ok((id, closed))
 }
 
-fn read_authorization(
-    tx: &rusqlite::Transaction<'_>,
-    id: i64,
-) -> Result<Option<(Authorization, Vec<u8>)>> {
+fn read_authorization(tx: &Connection, id: i64) -> Result<Option<(Authorization, Vec<u8>)>> {
     let row: Option<(Vec<u8>,Vec<u8>,Vec<u8>,i64,Vec<u8>)> = tx.query_row("SELECT decision,record_digest,payment_hash,state,evidence FROM authorizations WHERE registration_id=?1", params![id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
     row.map(|(decision, digest, payment_hash, state, evidence)| {
-        Ok((
-            Authorization {
-                decision: decision
-                    .try_into()
-                    .map_err(|_| LedgerError::InvalidLedger)?,
-                record_digest: digest.try_into().map_err(|_| LedgerError::InvalidLedger)?,
-                payment_hash: payment_hash
-                    .try_into()
-                    .map_err(|_| LedgerError::InvalidLedger)?,
-                state: match state {
-                    0 => AuthorizationState::Authorized,
-                    1 => AuthorizationState::Consumed,
-                    2 => AuthorizationState::ClosedUnresolved,
-                    _ => return Err(LedgerError::InvalidLedger),
-                },
+        let authorization = Authorization {
+            decision: decision
+                .try_into()
+                .map_err(|_| LedgerError::InvalidLedger)?,
+            record_digest: digest.try_into().map_err(|_| LedgerError::InvalidLedger)?,
+            payment_hash: payment_hash
+                .try_into()
+                .map_err(|_| LedgerError::InvalidLedger)?,
+            state: match state {
+                0 => AuthorizationState::Authorized,
+                1 => AuthorizationState::Consumed,
+                2 => AuthorizationState::ClosedUnresolved,
+                _ => return Err(LedgerError::InvalidLedger),
             },
-            evidence,
-        ))
+        };
+        validate_authorization(tx, id, &authorization, &evidence)?;
+        Ok((authorization, evidence))
     })
     .transpose()
+}
+
+/// SQLite structural checks cannot detect a missing replay claim or changed
+/// financial payload inside an otherwise well-formed database. Never repair
+/// these records or reuse an authorization whose retained proof is inconsistent.
+fn validate_authorization(
+    connection: &Connection,
+    id: i64,
+    authorization: &Authorization,
+    evidence: &[u8],
+) -> Result<()> {
+    let row: (Vec<u8>, i64, i64, Vec<u8>, Vec<u8>, Vec<u8>) = connection.query_row(
+        "SELECT circuit_binding,round,kind,instance,handle,payload FROM registrations WHERE id=?1",
+        params![id],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        },
+    )?;
+    let obligation: Obligation =
+        serde_json::from_slice(&row.5).map_err(|_| LedgerError::InvalidLedger)?;
+    obligation
+        .validate()
+        .map_err(|_| LedgerError::InvalidLedger)?;
+    if row.0 != obligation.circuit_binding
+        || row.1 != sql_number(obligation.round)?
+        || row.2 != obligation.kind.code()
+        || row.3 != obligation.instance
+        || row.4 != obligation.handle
+        || authorization.decision == [0; 16]
+        || authorization.record_digest
+            != authorization_digest(
+                &obligation,
+                authorization.decision,
+                authorization.payment_hash,
+            )
+    {
+        return Err(LedgerError::InvalidLedger);
+    }
+    let claim: Option<(Vec<u8>, Vec<u8>, i64, i64, Vec<u8>)> = connection.query_row(
+        "SELECT account,payment_hash,amount_msat,settled_at_ms,evidence FROM incoming_claims WHERE registration_id=?1",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).optional()?;
+    // The saved obligation remains unbound for recurring rounds. Resolve its
+    // original separate clock record exactly as authorization creation does.
+    let window =
+        effective_window(connection, &obligation).map_err(|_| LedgerError::InvalidLedger)?;
+    if obligation.amount_msat == 0 {
+        return if authorization.payment_hash == [0; 32] && evidence.is_empty() && claim.is_none() {
+            Ok(())
+        } else {
+            Err(LedgerError::InvalidLedger)
+        };
+    }
+    let claim = claim.ok_or(LedgerError::InvalidLedger)?;
+    let proof: RecipientEvidence =
+        serde_json::from_slice(evidence).map_err(|_| LedgerError::InvalidLedger)?;
+    let account: Vec<u8> = connection.query_row(
+        "SELECT account FROM ledger_info WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )?;
+    if account != proof.account.0
+        || claim.0 != account
+        || claim.1 != authorization.payment_hash
+        || claim.2 != sql_number(obligation.amount_msat)?
+        || claim.3 != proof.settled_at_ms
+        || claim.4 != evidence
+        || encode(&proof)? != evidence
+        || proof.payment_hash != authorization.payment_hash
+        || proof.payment_hash == [0; 32]
+        || proof.invoice_digest == [0; 32]
+        || proof.amount_msat != obligation.amount_msat
+        || !proof.incoming
+        || !proof.lightning
+        || !proof.completed
+        || obligation.expected_payment_hash.map_or(
+            proof.authenticated_payment_id != Some(obligation.payment_id),
+            |hash| hash != proof.payment_hash,
+        )
+    {
+        return Err(LedgerError::InvalidLedger);
+    }
+    certain_time(proof.settled_at_ms, proof.settlement_uncertainty_ms, window)
+        .map_err(|_| LedgerError::InvalidLedger)
+}
+
+fn validate_incoming_history(connection: &Connection) -> Result<()> {
+    let orphaned: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM incoming_claims c LEFT JOIN authorizations a ON a.registration_id=c.registration_id WHERE a.registration_id IS NULL)",
+        [], |r| r.get(0),
+    )?;
+    if orphaned {
+        return Err(LedgerError::InvalidLedger);
+    }
+    let mut statement = connection.prepare("SELECT registration_id FROM authorizations")?;
+    for row in statement.query_map([], |r| r.get::<_, i64>(0))? {
+        read_authorization(connection, row?)?.ok_or(LedgerError::InvalidLedger)?;
+    }
+    Ok(())
 }
 
 fn outcome_from_sql(code: i64) -> Result<AdmissionOutcome> {
