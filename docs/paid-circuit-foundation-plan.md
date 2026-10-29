@@ -428,3 +428,14 @@ of every byte/CPU/queue budget, production latency, independent privacy review o
 Lightning settlement. All fixture clients were stopped and the relay's exact
 original configuration restored. Same-stream renewal and final desktop/Firefox
 acceptance on these rebuilt inputs remain required.
+
+The subsequent app attempt is **not accepted** as paid-profile transport.
+Construction and BIND completed and a durable plan was recorded, but its local
+circuit 13 closed at the native setup deadline before every hop activated.
+The daemon first stopped new work before that closure. HTTPS and a short paced
+transfer used an ordinary free circuit; the sustained observer's strict ledger
+ownership check rejected that circuit. A bootstrap-complete UI, an open round-1
+budget, and HTTP success therefore do not establish all-hop paid activation.
+The closed plan and all failed observer results remain retained. The observer
+also now decodes quoted targets and single-line GETINFO framing correctly.
+Diagnose the initial coordinator failure before authorizing another test scope.
