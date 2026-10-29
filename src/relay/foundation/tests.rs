@@ -114,6 +114,9 @@ struct ControlState {
     gap: AtomicBool,
     unknown: AtomicBool,
     admitted: AtomicBool,
+    renewal_pending: AtomicBool,
+    renewal_admitted: AtomicBool,
+    unproven_next_authorization: AtomicBool,
     auth: Mutex<BTreeMap<u64, (String, String)>>,
     commands: Mutex<Vec<String>>,
     inventory_count: AtomicU64,
@@ -173,6 +176,72 @@ fn registration(state: &ControlState) -> String {
     }
     rows.join("\n")
 }
+fn renewal_pending(state: &ControlState) -> String {
+    let instance = state.instance.load(Ordering::SeqCst);
+    let f = vector();
+    let renewal = &f["periods"][0];
+    let mut rows: Vec<String> = pending(instance).split('\n').map(str::to_owned).collect();
+    rows[0] = format!(
+        "250-ELTOR_ADMISSION 1 {} {} 4 1 {} 19000",
+        hex::encode([instance; 16]),
+        hex::encode([2; 16]),
+        renewal["request_digest_hex"].as_str().unwrap()
+    );
+    rows[1] = format!(
+        "250-ELTOR_REGISTRATION 1 {} {} 4 1",
+        hex::encode([instance; 16]),
+        hex::encode([2; 16])
+    );
+    rows[2] = format!(
+        "250-POLICY {} {} {} 11",
+        f["terms_hex"].as_str().unwrap(),
+        renewal["parent_digest_hex"].as_str().unwrap(),
+        renewal["allocation_digest_hex"].as_str().unwrap()
+    );
+    rows[4] = "250-STATE ADMISSION_PENDING 1 0 0 75000".into();
+    rows[5] = "250-CLOCK 11000 6000".into();
+    if let Some((decision, hash)) = state.auth.lock().unwrap().get(&0) {
+        rows[6] = format!("250-FEE 0 {hash} {decision} CONSUMED");
+    }
+    let ids = renewal["new_ids_hex"].as_str().unwrap();
+    for n in 0..10 {
+        rows[7 + n] = format!(
+            "250-ROUND {} {} 1000 - - - - NONE",
+            11 + n,
+            &ids[n * 64..(n + 1) * 64]
+        );
+    }
+    rows.join("\n")
+}
+fn renewal_registration(state: &ControlState) -> String {
+    let mut rows: Vec<String> = renewal_pending(state)
+        .split('\n')
+        .skip(1)
+        .map(str::to_owned)
+        .collect();
+    rows[3] = "250-STATE ACTIVE 1 0 0 75000".into();
+    let f = vector();
+    let ids = f["periods"][0]["new_ids_hex"].as_str().unwrap();
+    for n in 0..10 {
+        let charge = if n == 0 && state.unproven_next_authorization.load(Ordering::SeqCst) {
+            format!(
+                "{} {} AUTHORIZED",
+                hex::encode([99; 16]),
+                hex::encode([98; 32])
+            )
+        } else {
+            "- - NONE".into()
+        };
+        rows[6 + n] = format!(
+            "250-ROUND {} {} 1000 {} {} {charge}",
+            11 + n,
+            &ids[n * 64..(n + 1) * 64],
+            (10 + n) * 60000 - 60000,
+            (10 + n) * 60000 + 15000
+        );
+    }
+    rows.join("\n")
+}
 async fn controller(
     path: PathBuf,
     state: Arc<ControlState>,
@@ -206,6 +275,10 @@ async fn controller(
                         "ELTOR_PAYMENT_ADMISSION_GET" => {
                             if fields[4] == "0" && !state.admitted.load(Ordering::SeqCst) {
                                 pending(instance)
+                            } else if fields[4] == "1"
+                                && state.renewal_pending.load(Ordering::SeqCst)
+                            {
+                                renewal_pending(&state)
                             } else {
                                 "552 UNKNOWN_PERIOD".into()
                             }
@@ -219,19 +292,33 @@ async fn controller(
                                 .unwrap()
                                 .is_some());
                             let reservation = ledger
-                                .get_batch_reservation([instance; 16], [2; 16], 0)
+                                .get_batch_reservation(
+                                    [instance; 16],
+                                    [2; 16],
+                                    fields[4].parse().unwrap(),
+                                )
                                 .unwrap()
                                 .unwrap();
                             assert_eq!(
                                 command,
                                 AdmissionDecision::from(&reservation).command().unwrap()
                             );
-                            state.admitted.store(true, Ordering::SeqCst);
-                            format!("250 ELTOR_ADMISSION_DECIDED 1 {i} {h} 0 {} 2", fields[6])
+                            if fields[4] == "0" {
+                                state.admitted.store(true, Ordering::SeqCst);
+                            } else {
+                                state.renewal_admitted.store(true, Ordering::SeqCst);
+                            }
+                            format!(
+                                "250 ELTOR_ADMISSION_DECIDED 1 {i} {h} {} {} 2",
+                                fields[4], fields[6]
+                            )
                         }
                         "ELTOR_PAYMENT_REGISTRATION_GET" => {
                             if state.unknown.load(Ordering::SeqCst) {
                                 "552 UNKNOWN_CIRCUIT".into()
+                            } else if fields[4] == "1" {
+                                assert!(state.renewal_admitted.load(Ordering::SeqCst));
+                                renewal_registration(&state)
                             } else if state.gap.swap(false, Ordering::SeqCst) {
                                 format!(
                                     "650 ELTOR_PAYMENT_STATE 1 {i} 12 {h} RELAY 4 AUTHORIZED\n{}",
@@ -659,6 +746,143 @@ async fn unknown_handle_and_new_tor_instance_close_live_bindings_without_erasing
             .state
             == AuthorizationState::ClosedUnresolved
     );
+    controller.abort();
+    native.abort();
+}
+
+#[tokio::test]
+async fn current_and_admitted_next_snapshots_preflight_together_before_consumption() {
+    for invalid_next in [false, true] {
+        let dir = Directory::new();
+        let state = Arc::new(ControlState::default());
+        let n = Arc::new(NativeState::default());
+        let (mut coordinator, _, _, controller, native) =
+            setup(&dir, state.clone(), n.clone()).await;
+        coordinator.step(clock).await.unwrap();
+        coordinator.step(clock).await.unwrap();
+        let first = batch(1).rounds[0].clone();
+        let original_fee = coordinator
+            .ledger
+            .get_handshake_obligation([1; 16], [2; 16])
+            .unwrap()
+            .unwrap();
+        state.active.store(true, Ordering::SeqCst);
+        state.renewal_pending.store(true, Ordering::SeqCst);
+        // Exercise the same durable admission API over the persistent socket,
+        // before current consumption has been reconciled. No synthetic proof.
+        coordinator
+            .control
+            .admit_pending(&mut coordinator.ledger, [1; 16], [2; 16], 1, clock)
+            .await
+            .unwrap();
+        assert!(
+            coordinator
+                .ledger
+                .get_handshake_obligation([1; 16], [2; 16])
+                .unwrap()
+                == Some(original_fee.clone())
+        );
+        let next = coordinator
+            .ledger
+            .get_reserved_batch_registration([1; 16], [2; 16], 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.rounds[0].round, 11);
+        assert_eq!(next.rounds[0].allocation_hash, first.allocation_hash);
+        state
+            .unproven_next_authorization
+            .store(invalid_next, Ordering::SeqCst);
+        let result = coordinator.step(clock).await;
+        if invalid_next {
+            assert!(result.is_err());
+            assert!(
+                coordinator
+                    .ledger
+                    .get_authorization(&first)
+                    .unwrap()
+                    .unwrap()
+                    .state
+                    == AuthorizationState::Authorized
+            );
+            assert!(
+                coordinator
+                    .ledger
+                    .get_authorization(&original_fee)
+                    .unwrap()
+                    .unwrap()
+                    .state
+                    == AuthorizationState::Authorized
+            );
+            assert_eq!(n.pages.load(Ordering::SeqCst), 1);
+        } else {
+            assert_eq!(
+                result.unwrap(),
+                RelayStep::Reconciled {
+                    notifications: 0,
+                    consumed: 2
+                }
+            );
+            assert!(
+                coordinator
+                    .ledger
+                    .get_authorization(&first)
+                    .unwrap()
+                    .unwrap()
+                    .state
+                    == AuthorizationState::Consumed
+            );
+        }
+        assert_eq!(n.lookups.load(Ordering::SeqCst), 1);
+        let commands = state.commands.lock().unwrap();
+        assert!(commands
+            .iter()
+            .any(|c| c.starts_with("ELTOR_PAYMENT_REGISTRATION_GET") && c.ends_with(" 1")));
+        assert!(commands
+            .iter()
+            .any(|c| c.starts_with("ELTOR_PAYMENT_REGISTRATION_GET") && c.ends_with(" 0")));
+        controller.abort();
+        native.abort();
+    }
+}
+
+#[tokio::test]
+async fn durable_initial_identifier_conflict_refuses_and_closes_only_its_binding() {
+    let dir = Directory::new();
+    let state = Arc::new(ControlState::default());
+    let n = Arc::new(NativeState::default());
+    let (mut coordinator, _, _, controller, native) = setup(&dir, state.clone(), n.clone()).await;
+    let mut other = batch(1);
+    for r in &mut other.rounds {
+        r.instance = [1; 16];
+        r.handle = [8; 16];
+        r.circuit_binding = [9; 32];
+    }
+    coordinator.ledger.reserve_batch(&other, [10; 16]).unwrap();
+    coordinator.step(clock).await.unwrap();
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Deferred);
+    let refusal = coordinator
+        .ledger
+        .get_batch_reservation([1; 16], [2; 16], 0)
+        .unwrap()
+        .unwrap();
+    assert!(refusal.outcome == AdmissionOutcome::Conflict);
+    assert!(coordinator
+        .ledger
+        .binding_is_closed([1; 16], [2; 16])
+        .unwrap());
+    assert!(!coordinator
+        .ledger
+        .binding_is_closed([1; 16], [8; 16])
+        .unwrap());
+    assert!(
+        coordinator
+            .ledger
+            .get_reserved_batch_registration([1; 16], [8; 16], 0)
+            .unwrap()
+            == Some(other)
+    );
+    assert!(state.auth.lock().unwrap().is_empty());
+    assert_eq!(n.pages.load(Ordering::SeqCst), 0);
     controller.abort();
     native.abort();
 }

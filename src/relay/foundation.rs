@@ -186,6 +186,27 @@ impl RelayFoundation {
                 )
                 .await?;
         }
+        if period == 0
+            && self
+                .ledger
+                .get_batch_reservation(instance, row.handle, period)?
+                .is_some_and(|r| r.outcome == AdmissionOutcome::Conflict)
+        {
+            // Recover the exact persisted refusal. The canonical decision
+            // receipt confirms this initial candidate was refused, not paid.
+            self.control
+                .admit_pending(
+                    &mut self.ledger,
+                    instance,
+                    row.handle,
+                    period,
+                    &mut *observe,
+                )
+                .await?;
+            self.ledger.close_binding(instance, row.handle)?;
+            self.live.remove(&row.handle);
+            return Ok(RelayStep::Deferred);
+        }
         let mut expected = self
             .ledger
             .get_reserved_batch_registration(instance, row.handle, period)?;
@@ -235,6 +256,7 @@ impl RelayFoundation {
         if active > period || period > active + 1 {
             return Err("Foundation registration periods exceed current/next bound".into());
         }
+        let mut next_snapshot = None;
         let current_expected = if active != period {
             let current = self
                 .ledger
@@ -247,6 +269,7 @@ impl RelayFoundation {
             if current_observed.registration.current_round != observed.registration.current_round {
                 return Ok(RelayStep::Deferred);
             }
+            next_snapshot = Some(observed.registration);
             observed = current_observed;
             current
         } else {
@@ -268,6 +291,10 @@ impl RelayFoundation {
             .get_handshake_obligation(instance, row.handle)?
             .ok_or("Missing original handshake obligation")?;
         let snapshot = &observed.registration;
+        validate_relay_consumption(&mut self.ledger, snapshot, &current_expected, &handshake)?;
+        if let Some(next) = next_snapshot.as_ref() {
+            validate_relay_consumption(&mut self.ledger, next, &expected, &handshake)?;
+        }
         let consumed =
             reconcile_relay_consumption(&mut self.ledger, snapshot, &current_expected, &handshake)?;
         if matches!(

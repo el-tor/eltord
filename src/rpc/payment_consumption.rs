@@ -11,6 +11,32 @@ pub fn reconcile_relay_consumption(
     expected: &BatchRegistration,
     handshake: &Obligation,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let consumed = consumption_preflight(ledger, registration, expected, handshake)?;
+    // Each update is durable and idempotent. A storage failure partway through
+    // leaves confirmed earlier records intact; replay finishes only the rest.
+    let count = consumed.len();
+    for (obligation, decision) in consumed {
+        ledger.mark_consumed(obligation, decision)?;
+    }
+    Ok(count)
+}
+/// Validate every remote charge without mutating a durable consumption record.
+/// A coordinator querying current and admitted-next must preflight both complete
+/// snapshots before applying either, including remote AUTHORIZED claims.
+pub fn validate_relay_consumption(
+    ledger: &mut PaymentLedger,
+    registration: &RelayRegistration,
+    expected: &BatchRegistration,
+    handshake: &Obligation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    consumption_preflight(ledger, registration, expected, handshake).map(|_| ())
+}
+fn consumption_preflight<'a>(
+    ledger: &mut PaymentLedger,
+    registration: &RelayRegistration,
+    expected: &'a BatchRegistration,
+    handshake: &'a Obligation,
+) -> Result<Vec<(&'a Obligation, [u8; 16])>, Box<dyn std::error::Error>> {
     registration.validate_for(expected)?;
     if ledger
         .get_reserved_batch_registration(
@@ -56,14 +82,9 @@ pub fn reconcile_relay_consumption(
         }
         check(ledger, obligation, &wire.charge, &mut consumed)?;
     }
-    // Each update is durable and idempotent. A storage failure partway through
-    // leaves confirmed earlier records intact; replay finishes only the rest.
-    let count = consumed.len();
-    for (obligation, decision) in consumed {
-        ledger.mark_consumed(obligation, decision)?;
-    }
-    Ok(count)
+    Ok(consumed)
 }
+
 fn check<'a>(
     ledger: &mut PaymentLedger,
     obligation: &'a Obligation,
