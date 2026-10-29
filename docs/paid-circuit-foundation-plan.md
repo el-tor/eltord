@@ -93,3 +93,18 @@ control framing, explicit clocks and idempotent retries. Financial associations
 remain local and must not appear in routine logs. Storage and overload failures
 must stop new paid work without discarding unresolved accounting. Independent
 cryptographic/privacy review and measurements remain distinct from local tests.
+
+## Incremental implementation evidence
+
+- LNI commit `38044c6` validates Phoenixd's exact incoming payment-hash response,
+  explicit settlement status, checked amounts and an exact payer-note candidate
+  followed by a hash lookup. Six focused tests passed, including a local HTTP
+  response with a substituted payment hash. No real wallet was contacted. This
+  does not establish account provisioning, fee-limited outgoing dispatch, durable
+  consumption or end-to-end BOLT12 support.
+- Daemon commit `45324b6` adds fixed typed admission bindings, canonical receipt
+  parsing and a bounded response reader. Three focused tests passed, including
+  stale/mismatched receipts, integer overflow and an oversized reply without a
+  newline. No live Tor handler is enabled by adding this helper.
+- The durable admission bridge documentation passes the repository documentation
+  checks. Its runtime ledger/C handshake remains under implementation.

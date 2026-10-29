@@ -104,11 +104,18 @@ ELTOR_PAYMENT_ADMISSION_DECIDE 1 instance handle period request_digest decision 
 CAPACITY. Tor accepts the command only from the privileged verifier, for the
 exact retained candidate while live and before its original deadline. RESERVED
 permits COMMITTED/ADMITTED; it never implies settlement or activates capacity.
-CONFLICT/CAPACITY produces the corresponding fixed-size wire refusal. Success:
+CAPACITY produces the fixed-size CAPACITY refusal. A ledger CONFLICT maps to
+initial BAD_INITIAL_BINDING (2) or renewal BAD_SEQUENCE (7): renewal CONFLICT (4)
+is reserved for a different wire request for an already reserved period, which
+Tor rejects before asking the ledger. Success:
 `250 ELTOR_ADMISSION_DECIDED 1 instance handle period decision revision`.
 Changed arguments or a second decision return `553 OPERATION_CONFLICT`; exact
-replays return the original decision without another wire transmission or timer
-reset. Normal query/retry rules recover a lost response.
+replays of a retained decision on a still-known handle return the original
+decision even after its admission deadline, without another wire transmission,
+activation or timer reset. Check retained exact replay before the deadline check
+for new decisions. Closed/retired handles return UNKNOWN_CIRCUIT and a replaced
+Tor process returns STALE_INSTANCE; neither response permits another reservation.
+Normal query/retry rules recover a lost response.
 
 Daemon loss leaves the candidate pending only until its existing deadline;
 Tor never admits on timeout. Tor loss invalidates the candidate and its handle.
