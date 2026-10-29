@@ -364,3 +364,16 @@ awaits can delay status refresh within a coordinator step; that requires separat
 integration work and cannot be proven by the zero-price run. Operator-lower
 resource ceilings and ordinary free-only constructor coverage remain active
 implementation items. The production gate remains enabled.
+
+
+The 22-minute run did **not** pass: its only TCP stream stopped after roughly
+three minutes with a partial response. The owned native circuit closed on the
+five-second held-queue limit; no retry/replacement occurred, and the temporary
+control mapping was restored. Retained query counts were asymmetric across the
+three hops. Source review found that `observe_active` did not issue a fresh
+bounded QUERY after a previous QUERY became UNCERTAIN, although the controller
+spec permits that recovery. This fits the observed stall but the closed native
+operation no longer supplies direct proof of its former phase. Recovery handling
+and the status-refresh scheduling margin must be verified before another live
+acceptance claim. The earlier Firefox rendering remains valid short-duration
+transport evidence only.
