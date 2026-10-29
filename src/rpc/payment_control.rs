@@ -148,6 +148,55 @@ impl PaymentControl {
         self.failed = true;
         Err(invalid())
     }
+    /// Forward only an authorization already committed by recipient verification
+    /// (or explicit zero-price accounting). A receipt is not consumption proof.
+    pub async fn notify_authorization(
+        &mut self,
+        ledger: &mut crate::payment_ledger::PaymentLedger,
+        obligation: &crate::payment_ledger::Obligation,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
+        use crate::payment_ledger::AuthorizationState;
+        let authorization = ledger
+            .get_authorization(obligation)?
+            .ok_or("No durable payment authorization")?;
+        if authorization.state == AuthorizationState::ClosedUnresolved {
+            return Err("Payment binding is closed and unresolved".into());
+        }
+        let command = format!(
+            "ELTOR_PAYMENT_AUTHORIZE 1 {} {} {} {} {} {} {}",
+            hex::encode(obligation.instance),
+            hex::encode(obligation.handle),
+            hex::encode(authorization.decision),
+            obligation.round,
+            obligation.amount_msat,
+            hex::encode(authorization.payment_hash),
+            hex::encode(authorization.record_digest)
+        );
+        let reply = self.command(&command).await?;
+        let fields: Vec<_> = reply.split(' ').collect();
+        if fields.len() != 7
+            || fields[..3] != ["250", "ELTOR_AUTHORIZED", "1"]
+            || fields[3] != hex::encode(obligation.instance)
+            || fields[4] != hex::encode(obligation.handle)
+            || fields[5] != hex::encode(authorization.decision)
+        {
+            self.failed = true;
+            return Err("Mismatched payment authorization receipt".into());
+        }
+        let revision: u64 = match fields[6].parse() {
+            Ok(value) => value,
+            Err(_) => {
+                self.failed = true;
+                return Err(invalid().into());
+            }
+        };
+        if revision == 0 || revision.to_string() != fields[6] {
+            self.failed = true;
+            return Err("Invalid payment authorization revision".into());
+        }
+        Ok(revision)
+    }
+
     /// Wait for one state hint when no command is outstanding. Idle waiting has
     /// no payment deadline semantics. If the caller cancels this future after
     /// reading begins, discard this connection and recover inventory again;
@@ -299,5 +348,96 @@ mod tests {
         assert!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.is_err());
         finish_tx.send(()).unwrap();
         server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn payment_control_authorization_requires_ledger_and_does_not_consume() {
+        use crate::payment_ledger::*;
+        let directory =
+            std::env::temp_dir().join(format!("eltor-notify-{:032x}", rand::random::<u128>()));
+        std::fs::create_dir(&directory).unwrap();
+        let mut ledger =
+            PaymentLedger::provision(&directory.join("ledger.sqlite"), AccountId([7; 32])).unwrap();
+        let obligation = Obligation {
+            instance: [1; 16],
+            handle: [2; 16],
+            circuit_binding: [3; 32],
+            round: 0,
+            kind: ChargeKind::Handshake,
+            payment_id: [4; 32],
+            amount_msat: 0,
+            expected_payment_hash: None,
+            policy_hash: [5; 32],
+            allocation_hash: [6; 32],
+            window: Some(AcceptanceWindow {
+                opens_at_ms: 0,
+                closes_at_ms: 2000,
+            }),
+        };
+        ledger.register_handshake(&obligation).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let server = tokio::spawn(async move {
+            let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+            for _ in 0..2 {
+                read(&mut socket).await;
+                socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            let command = read(&mut socket).await;
+            let fields: Vec<_> = command.trim_end().split(' ').collect();
+            assert_eq!(fields.len(), 9);
+            assert_eq!(fields[0], "ELTOR_PAYMENT_AUTHORIZE");
+            assert_eq!(fields[5], "0");
+            assert_eq!(fields[6], "0");
+            assert_eq!(fields[7], hex::encode([0; 32]));
+            socket
+                .get_mut()
+                .write_all(
+                    format!(
+                        "250 ELTOR_AUTHORIZED 1 {} {} {} 9\r\n",
+                        fields[2], fields[3], fields[4]
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let mut client = PaymentControl::connect(&config).await.unwrap();
+        assert!(client
+            .notify_authorization(&mut ledger, &obligation)
+            .await
+            .is_err());
+        ledger
+            .authorize_zero(
+                &obligation,
+                [8; 16],
+                ClockObservation {
+                    now_ms: 1000,
+                    uncertainty_ms: 0,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            client
+                .notify_authorization(&mut ledger, &obligation)
+                .await
+                .unwrap(),
+            9
+        );
+        assert!(
+            ledger
+                .get_authorization(&obligation)
+                .unwrap()
+                .unwrap()
+                .state
+                == AuthorizationState::Authorized
+        );
+        server.await.unwrap();
+        drop(client);
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
