@@ -116,6 +116,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v4(path, account);
         }
+        if version == 5 {
+            drop(ledger);
+            return Self::upgrade_from_v5(path, account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, account);
@@ -148,12 +152,15 @@ impl PaymentLedger {
         outgoing::validate_schema(&ledger.connection)?;
         storage::validate_schema(&ledger.connection)?;
         ledger.connection.prepare("SELECT r.id,b.decision,p.payment_id,c.payment_hash,a.record_digest,w.opens_at_ms,t.payload,x.instance FROM registrations r,batches b,payment_ids p,incoming_claims c,authorizations a,initial_windows w,activation_anchors t,closed_instances x LIMIT 0")?;
+        ledger.connection.pragma_update(None,"foreign_keys","OFF")?;
         let tx = ledger
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
+        tx.execute_batch(origin_artifacts::SCHEMA)?;
+        outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);

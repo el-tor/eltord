@@ -100,6 +100,7 @@ impl PaymentLedger {
         require_open_instance(&tx, op.binding.instance)?;
         super::receiving::require_open_binding(&tx, op.binding.instance, op.binding.handle)?;
         storage::check_admission(&tx)?;
+        origin_artifacts::control_capacity(&tx)?;
         let count: i64 =
             tx.query_row("SELECT count(*) FROM origin_operations", [], |r| r.get(0))?;
         if count >= LIMIT {
@@ -378,7 +379,7 @@ mod tests {
             std::env::temp_dir().join(format!("eltor-origin-{}.sqlite", rand::random::<u128>()));
         let account = AccountId([9; 32]);
         let ledger = PaymentLedger::provision(&path, account).unwrap();
-        ledger.connection.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
+        ledger.connection.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
         drop(ledger);
         assert!(matches!(
             PaymentLedger::reopen(&path, account),

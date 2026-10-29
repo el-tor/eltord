@@ -65,11 +65,18 @@ command requires the existing authoritative file and the same pinned account:
 
 A read-only preflight checks the file, application ID, supported schema, account,
 SQLite health, references, and rollback-journal mode before native verification.
-The existing transactional migration dispatcher supports schema versions 1–4
-to current schema 5, preserving records and uniqueness tombstones. An already
+The existing transactional migration dispatcher supports schema versions 1–5
+to current schema 6, preserving records and uniqueness tombstones. An already
 current ledger is explicitly verified without resetting anything. Unsupported,
 missing, corrupt, wrong-account, or symlink storage is refused. Native identity
 or receiving-capability failure also prevents migration.
+
+Schema 6 also retains private bounded origin-construction/accepted-plan journals
+and exact native outgoing invoice artifacts for lookup-only recovery. Constructor
+and renewal dispatch claims are single-use. The migration widens the database's
+legacy round-counter constraint while the ledger still requires typed, immutable
+all-hop admission before funding any renewed allocation. Existing unknown costs,
+per-hop prices, aggregate financial caps, and hash/ID uniqueness remain intact.
 
 Migration cannot invent historical payment evidence, discarded records, original
 clock uncertainty, or missing invoice associations. Preserved legacy point-only

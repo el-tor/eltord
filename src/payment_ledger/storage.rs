@@ -70,6 +70,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v4(path, expected_account);
         }
+        if version == 5 {
+            drop(ledger);
+            return Self::upgrade_from_v5(path, expected_account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
@@ -106,6 +110,9 @@ impl PaymentLedger {
         }
         outgoing::validate_schema(&ledger.connection)?;
         ledger.connection.prepare("SELECT r.id,b.decision,p.payment_id,c.payment_hash,a.record_digest,w.opens_at_ms,t.payload,x.instance FROM registrations r,batches b,payment_ids p,incoming_claims c,authorizations a,initial_windows w,activation_anchors t,closed_instances x LIMIT 0")?;
+        ledger
+            .connection
+            .pragma_update(None, "foreign_keys", "OFF")?;
         let tx = ledger
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -114,6 +121,8 @@ impl PaymentLedger {
         tx.execute_batch(clock::SCHEMA)?;
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
+        tx.execute_batch(origin_artifacts::SCHEMA)?;
+        outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -267,9 +276,16 @@ fn measure(connection: &Connection) -> Result<StorageStatus> {
         [],
         |r| r.get(0),
     )?;
-    let origin_reserved: i64 = connection.query_row("SELECT coalesce(sum(reserve_bytes),0) FROM origin_operations", [], |r|r.get(0))?;
-    let reserved = u64::try_from(reserved).map_err(|_| LedgerError::InvalidLedger)?
-        .checked_add(u64::try_from(origin_reserved).map_err(|_|LedgerError::InvalidLedger)?)
+    let origin_reserved: i64 = connection.query_row(
+        "SELECT coalesce(sum(reserve_bytes),0) FROM origin_operations",
+        [],
+        |r| r.get(0),
+    )?;
+    let artifacts_reserved:i64=connection.query_row("SELECT coalesce((SELECT sum(reserve_bytes) FROM origin_constructions),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_invoices),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_renewal_operations),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_allocations),0)",[],|r|r.get(0))?;
+    let reserved = u64::try_from(reserved)
+        .map_err(|_| LedgerError::InvalidLedger)?
+        .checked_add(u64::try_from(origin_reserved).map_err(|_| LedgerError::InvalidLedger)?)
+        .and_then(|n| n.checked_add(u64::try_from(artifacts_reserved).ok()?))
         .ok_or(LedgerError::InvalidLedger)?;
     let charged = database
         .checked_add(journal.max(rollback))

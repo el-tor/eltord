@@ -25,8 +25,9 @@ pub enum FundingSource {
 
 /// Immutable accepted limits. Changing limits or resetting a circuit's lifetime
 /// history requires a future explicit operator/reconciliation workflow; this API
-/// deliberately permits only exact replays. The initial slice admits rounds
-/// one through ten; it cannot manufacture renewal readiness for round eleven.
+/// deliberately permits only exact replays. Managed origin plans can fund later
+/// periods only after typed all-hop admission; legacy financial scopes remain
+/// bounded to rounds one through ten.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathBudget {
     pub instance: Id16,
@@ -157,6 +158,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v4(path, expected_account);
         }
+        if version == 5 {
+            drop(ledger);
+            return Self::upgrade_from_v5(path, expected_account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
@@ -198,6 +203,9 @@ impl PaymentLedger {
             return Err(LedgerError::InvalidLedger);
         }
         ledger.connection.prepare("SELECT r.id,b.decision,p.payment_id,c.payment_hash,a.record_digest,w.opens_at_ms,t.payload,x.instance FROM registrations r,batches b,payment_ids p,incoming_claims c,authorizations a,initial_windows w,activation_anchors t,closed_instances x LIMIT 0")?;
+        ledger
+            .connection
+            .pragma_update(None, "foreign_keys", "OFF")?;
         let tx = ledger
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -207,6 +215,8 @@ impl PaymentLedger {
         tx.execute_batch(clock::SCHEMA)?;
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
+        tx.execute_batch(origin_artifacts::SCHEMA)?;
+        outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -332,6 +342,7 @@ impl PaymentLedger {
                 Err(LedgerError::Conflict)
             };
         }
+        outgoing_renewal::require_new_hop_slot(&tx, terms.local_budget_scope)?;
         let (_, _, closed) = path_budget(&tx, terms.local_budget_scope)?;
         if closed {
             return Err(LedgerError::Closed);
@@ -376,7 +387,8 @@ impl PaymentLedger {
         }
         match_path(intent, &circuit)?;
         match_hop_terms(&tx, intent)?;
-        allowed_round(intent, current)?;
+        origin_artifacts::require_managed_invoice(&tx, intent, self.account)?;
+        outgoing_renewal::check_intent(&tx, intent, current)?;
         let duplicate:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing_intents WHERE payment_hash=?1 OR payment_id=?2 OR (local_budget_scope=?3 AND round=?4 AND kind=?5 AND charge_reference=?6))",params![&intent.payment_hash[..],&intent.payment_id[..],&intent.local_budget_scope[..],sql_number(intent.round)?,intent.kind.code(),&intent.charge_reference[..]],|r|r.get(0))?;
         if duplicate {
             return Err(LedgerError::Conflict);
@@ -444,7 +456,8 @@ impl PaymentLedger {
             return Err(LedgerError::BudgetExceeded);
         }
         storage::check_dispatch(&tx)?;
-        allowed_round(&record.intent, current)?;
+        origin_artifacts::require_managed_invoice(&tx, &record.intent, self.account)?;
+        outgoing_renewal::check_intent(&tx, &record.intent, current)?;
         certain_time(clock.now_ms, clock.uncertainty_ms, record.intent.window)?;
         tx.execute(
             "UPDATE outgoing_intents SET state=1 WHERE operation=?1",
@@ -602,9 +615,10 @@ impl PaymentLedger {
         if closed {
             return Err(LedgerError::Closed);
         }
-        if round != current + 1 || round > 10 {
+        if round != current + 1 {
             return Err(LedgerError::InvalidInput);
         }
+        outgoing_renewal::check_advance(&tx, binding, round)?;
         let old:i64=tx.query_row("SELECT COALESCE(SUM(outstanding_msat),0) FROM outgoing_intents WHERE local_budget_scope=?1 AND round>0 AND round<?2",params![&binding[..],sql_number(round)?],|r|r.get(0))?;
         if old != 0 {
             return Err(LedgerError::BudgetExceeded);
@@ -622,6 +636,11 @@ impl PaymentLedger {
         read_outgoing(&self.connection, operation)
     }
 
+    /// Read retained progress without mutating or guessing forward on restart.
+    pub fn spending_round(&self, scope: Hash32) -> Result<u64> {
+        self.check_file_identity()?;
+        Ok(path_budget(&self.connection, scope)?.1)
+    }
     /// Close financial admission for one failed live circuit. This does not send
     /// a Tor command and cannot turn an uncertain dispatched payment into failure.
     pub fn close_outgoing_path(&mut self, binding: Hash32) -> Result<()> {
@@ -691,7 +710,7 @@ fn validate_limits(lifetime: u64, outstanding: u64) -> Result<()> {
     Ok(())
 }
 
-fn validate_intent(intent: &OutgoingIntent, account: AccountId) -> Result<()> {
+pub(super) fn validate_intent(intent: &OutgoingIntent, account: AccountId) -> Result<()> {
     if intent.account != account {
         return Err(LedgerError::WrongAccount);
     }
@@ -789,17 +808,6 @@ fn match_hop_terms(connection: &Connection, intent: &OutgoingIntent) -> Result<(
     Ok(())
 }
 
-fn allowed_round(intent: &OutgoingIntent, current: u64) -> Result<()> {
-    if intent.round > 10
-        || (intent.round == 0 && current != 1)
-        || (intent.round > 0 && (intent.round < current || intent.round > current + 1))
-    {
-        Err(LedgerError::InvalidInput)
-    } else {
-        Ok(())
-    }
-}
-
 fn committed(exposure: Exposure) -> Result<u64> {
     exposure
         .reserved_msat
@@ -892,7 +900,7 @@ pub(super) fn validate_schema(connection: &Connection) -> Result<()> {
 
 pub(super) const SCHEMA:&str="
 CREATE TABLE account_budget(singleton INTEGER PRIMARY KEY CHECK(singleton=1),payload BLOB NOT NULL,blocked INTEGER NOT NULL CHECK(blocked IN(0,1)));
-CREATE TABLE path_budgets(local_budget_scope BLOB PRIMARY KEY CHECK(length(local_budget_scope)=32),instance BLOB NOT NULL CHECK(length(instance)=16),handle BLOB NOT NULL CHECK(length(handle)=16),payload BLOB NOT NULL,current_round INTEGER NOT NULL CHECK(current_round BETWEEN 1 AND 10),closed INTEGER NOT NULL CHECK(closed IN(0,1)),UNIQUE(instance,handle));
+CREATE TABLE path_budgets(local_budget_scope BLOB PRIMARY KEY CHECK(length(local_budget_scope)=32),instance BLOB NOT NULL CHECK(length(instance)=16),handle BLOB NOT NULL CHECK(length(handle)=16),payload BLOB NOT NULL,current_round INTEGER NOT NULL CHECK(current_round>=1),closed INTEGER NOT NULL CHECK(closed IN(0,1)),UNIQUE(instance,handle));
 CREATE TABLE hop_spending_terms(local_budget_scope BLOB NOT NULL REFERENCES path_budgets(local_budget_scope),charge_reference BLOB NOT NULL CHECK(length(charge_reference)=32),hop_circuit_binding BLOB NOT NULL CHECK(length(hop_circuit_binding)=32),payload BLOB NOT NULL,PRIMARY KEY(local_budget_scope,charge_reference),UNIQUE(local_budget_scope,hop_circuit_binding));
 CREATE TABLE outgoing_intents(operation BLOB PRIMARY KEY CHECK(length(operation)=16),instance BLOB NOT NULL CHECK(length(instance)=16),local_budget_scope BLOB NOT NULL REFERENCES path_budgets(local_budget_scope),round INTEGER NOT NULL CHECK(round>=0),kind INTEGER NOT NULL CHECK(kind IN(0,1)),payee_reference BLOB NOT NULL CHECK(length(payee_reference)=32),charge_reference BLOB NOT NULL CHECK(length(charge_reference)=32),payment_id BLOB NOT NULL UNIQUE CHECK(length(payment_id)=32),payment_hash BLOB NOT NULL UNIQUE CHECK(length(payment_hash)=32),payload BLOB NOT NULL,state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 7),closed INTEGER NOT NULL CHECK(closed IN(0,1)),reserved_msat INTEGER NOT NULL CHECK(reserved_msat>=0),spent_msat INTEGER NOT NULL CHECK(spent_msat>=0),outstanding_msat INTEGER NOT NULL CHECK(outstanding_msat>=0),fee_breached INTEGER NOT NULL CHECK(fee_breached IN(0,1)),outcome BLOB,exception_evidence BLOB,UNIQUE(local_budget_scope,round,kind,charge_reference));
 ";

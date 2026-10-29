@@ -31,7 +31,7 @@ fn account() -> AccountId {
 }
 fn simulate_v4(path: &Path) {
     let connection = Connection::open(path).unwrap();
-    connection.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
+    connection.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
 }
 struct Directory(PathBuf);
 impl Directory {
@@ -345,7 +345,7 @@ async fn explicit_v4_migration_preserves_claims_authorizations_and_tombstones() 
     ledger.close_instance([1; 16]).unwrap();
     drop(ledger);
     let connection = Connection::open(dir.ledger()).unwrap();
-    connection.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
+    connection.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;PRAGMA user_version=4;").unwrap();
     drop(connection);
     assert!(PaymentLedger::reopen(&dir.ledger(), account()).is_err());
     let report = operate_foundation_ledger(LedgerOperation::Migrate, &path)

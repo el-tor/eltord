@@ -223,7 +223,7 @@ fn explicit_v3_migration_preserves_exact_legacy_points_and_refuses_fabricated_in
         grace_ms: 15_000,
     };
     ledger.bind_activation([1; 16], [2; 16], point).unwrap();
-    ledger.connection.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;PRAGMA user_version=3;").unwrap();
+    ledger.connection.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;PRAGMA user_version=3;").unwrap();
     drop(ledger);
     assert!(PaymentLedger::reopen(&dir.file(), account()).is_err());
     assert!(PaymentLedger::upgrade_from_v3(&dir.file(), AccountId([8; 32])).is_err());

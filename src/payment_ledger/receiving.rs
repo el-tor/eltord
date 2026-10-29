@@ -186,7 +186,7 @@ impl PaymentLedger {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("INSERT OR IGNORE INTO closed_instances(instance) SELECT instance FROM registrations WHERE instance!=?1 UNION SELECT instance FROM batches WHERE instance!=?1 UNION SELECT instance FROM path_budgets WHERE instance!=?1 UNION SELECT instance FROM origin_operations WHERE instance!=?1",params![&current[..]])?;
+        tx.execute("INSERT OR IGNORE INTO closed_instances(instance) SELECT instance FROM registrations WHERE instance!=?1 UNION SELECT instance FROM batches WHERE instance!=?1 UNION SELECT instance FROM path_budgets WHERE instance!=?1 UNION SELECT instance FROM origin_operations WHERE instance!=?1 UNION SELECT instance FROM origin_constructions WHERE instance!=?1",params![&current[..]])?;
         tx.execute("UPDATE authorizations SET state=2 WHERE state=0 AND registration_id IN(SELECT id FROM registrations WHERE instance!=?1)",params![&current[..]])?;
         tx.execute(
             "UPDATE registrations SET closed=1 WHERE instance!=?1",

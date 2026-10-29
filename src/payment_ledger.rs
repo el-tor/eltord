@@ -8,7 +8,8 @@
 //! is an explicit operator action for a genuinely new account, never recovery
 //! from lost history. Reopen never creates or repairs missing/corrupt state.
 //!
-//! No preimages, invoice strings or traffic keys are stored. Identifying records
+//! Exact outgoing invoice artifacts are retained privately for lookup recovery.
+//! No preimages or traffic keys are stored. Identifying records
 //! deliberately do not implement Debug. No retention/deletion API is provided:
 //! unresolved accounting and payment-ID reservations must not be evicted.
 
@@ -26,7 +27,9 @@ use thiserror::Error;
 pub mod clock;
 pub use clock::{ActivationIntervalAnchor, InitialClockAnchor, UtcClockInterval};
 pub mod outgoing;
+pub mod outgoing_renewal;
 pub mod origin;
+pub mod origin_artifacts;
 pub mod receiving;
 mod migration;
 pub mod storage;
@@ -35,7 +38,7 @@ pub mod wallet;
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 pub(crate) const APPLICATION_ID: i64 = 0x454c5452;
-pub(crate) const VERSION: i64 = 5;
+pub(crate) const VERSION: i64 = 6;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -299,6 +302,8 @@ impl PaymentLedger {
         tx.execute_batch(clock::SCHEMA)?;
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
+        tx.execute_batch(origin_artifacts::SCHEMA)?;
+        tx.execute_batch(outgoing_renewal::SCHEMA)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
             params![&account.0[..]],
@@ -360,6 +365,8 @@ impl PaymentLedger {
         clock::validate_schema(&ledger.connection)?;
         receiving::validate_schema(&ledger.connection)?;
         origin::validate_schema(&ledger.connection)?;
+        origin_artifacts::validate_schema(&ledger.connection, expected_account)?;
+        outgoing_renewal::validate_schema(&ledger.connection)?;
         Ok(ledger)
     }
 
