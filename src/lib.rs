@@ -470,14 +470,13 @@ where
     // std::io::stdin().read_line(&mut input).unwrap();
 
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
-    info!("Mode: {:?}", mode);
     let rpc_config = self::get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
-    info!("RPC Config: {:?}", rpc_config);
     if rpc_config.is_none() {
         error!("Error: Could not load rpc_config from torrc file. Be sure to configure the following settings in the torrc file here '{}': ControlPort, Address, and (HashedControlPassword or CookieAuthentication) ", torrc_path);
         std::process::exit(1);
     }
     let rpc_config = rpc_config.unwrap();
+    info!("Tor control endpoint: {}", rpc_config.addr);
     // let rpc_config_2 = rpc_config.clone();
     let rpc_config_relay = rpc_config.clone();
 
@@ -586,19 +585,15 @@ pub async fn init_and_run() {
     // ARGS="eltord relay -f torrc.relay.dev -p password1234_"
     // ARGS="eltord both -f torrc.relay.dev -p password1234_"
     let env_args = env::var("ARGS").ok();
-    dbg!(env_args.clone());
-    info!("Environment args: {:?}", env_args);
     let args: Vec<String> = if let Some(env_args) = env_args {
         // Use shell_words to properly parse arguments with spaces and quotes
-        shell_words::split(&env_args).unwrap_or_else(|e| {
-            error!("Failed to parse ARGS: {:?}", e);
+        shell_words::split(&env_args).unwrap_or_else(|_| {
+            error!("Failed to parse ARGS; using process arguments");
             std::env::args().collect()
         })
     } else {
         std::env::args().collect()
     };
-    dbg!(args.clone());
-    info!("Parsed args: {:?}", args.clone());
     run_with_args(args).await;
 }
 
@@ -633,7 +628,6 @@ where
 
     // Check if first argument is "client" or "relay" or "both"
     if let Some(arg1) = args.next() {
-        info!("First argument: {:?}", arg1);
         if arg1 == "client" || arg1 == "relay" || arg1 == "both" {
             mode = arg1;
         } else if arg1 == "-f" {
@@ -661,7 +655,7 @@ where
         }
     }
 
-    info!("Using torrc file: {} in mode {}", torrc_path, mode);
+    info!("Selected daemon mode: {}", mode);
     (mode, torrc_path, control_port_password)
 }
 
@@ -804,11 +798,11 @@ impl EltordTasks {
 pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) -> Result<(RpcConfig, String), Box<dyn std::error::Error>> {
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
     let rpc_config = self::get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
-    info!("RPC Config: {:?}", rpc_config);
     if rpc_config.is_none() {
         return Err("Could not load rpc_config from torrc file".into());
     }
     let rpc_config = rpc_config.unwrap();
+    info!("Tor control endpoint: {}", rpc_config.addr);
 
     // Check if Tor is already running on this port
     let addr = rpc_config.addr.clone();

@@ -4,7 +4,7 @@ use clap::Parser;
 use dotenv::dotenv;
 use std::env;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Mode: client, relay, or both

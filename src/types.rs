@@ -24,11 +24,19 @@ pub struct Relay {
     pub hop: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RpcConfig {
     pub addr: String,
     pub rpc_password: Option<String>,
     pub command: String,
+}
+
+// Commands can themselves contain credentials or construction proof material.
+// Keep Debug useful for endpoint diagnostics without formatting either secret.
+impl std::fmt::Debug for RpcConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcConfig").field("addr", &self.addr).finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
