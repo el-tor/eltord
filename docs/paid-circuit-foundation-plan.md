@@ -304,3 +304,30 @@ method. It exercises actual Tor construction, controller activation, stream
 gating and the desktop/browser path without contacting or funding a real wallet.
 Positive payment verification and uncertain-outcome recovery use separate native
 HTTP fixtures. Neither result may be reported as real Lightning settlement.
+
+### Live acceptance checkpoint (in progress)
+
+The native foundation network reached current 100% bootstrap on all nine nodes,
+with original node keys retained. Eight controller-only relay processes reopened
+explicitly provisioned schema-7 fixture ledgers. The standalone client and native
+desktop client constructed and activated their approved three-hop paths. The
+desktop SOCKS router returned an HTTPS 200 response for Example Domain.
+
+Chutney transmission passed through the standalone foundation client. Because
+all fixture relays share one loopback address, Tor's legacy exit-enclave hint
+initially selected a different relay from the approved path. The verification
+used a temporary exact mapping of the loopback sink to the approved exit's
+`.exit` address; the original control mapping was restored immediately afterward.
+This did not change payment gating, authorization, or the accepted relay path.
+
+The desktop's first attempt stopped safely before construction while startup
+state was not ready; a later retry created exactly one retained construction and
+plan. This is observed recovery, not permission to replace a claimed attempt.
+Sustained traffic through renewal and the rendered Firefox screenshot remain
+pending at this checkpoint. A locked desktop currently prevents visual browser
+verification. Source-only credential-log fixes have not yet been redeployed into
+the active app; final validation must name the actually deployed revision.
+
+All these live checks use zero-priced policies and a wallet fixture that rejects
+payment work. They do not prove real Lightning settlement. The production gate
+remains in place pending the remaining acceptance and requirement audit.
