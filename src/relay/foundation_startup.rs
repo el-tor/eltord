@@ -164,6 +164,53 @@ pub(crate) fn observe_clock(
         uncertainty_ms,
     })
 }
+/// Return only fixed categories. Error display/debug strings can contain native
+/// response bodies, account identifiers, private paths or credentials.
+fn recovery_category(mut error: &(dyn std::error::Error + 'static)) -> &'static str {
+    use crate::rpc::{PaymentRejection, RegistrationError};
+    for _ in 0..8 {
+        let rejection = error
+            .downcast_ref::<PaymentRejection>()
+            .copied()
+            .or_else(|| {
+                error
+                    .downcast_ref::<io::Error>()
+                    .and_then(PaymentRejection::from_io)
+            });
+        if let Some(rejection) = rejection {
+            return match rejection {
+                PaymentRejection::Capacity => "control-capacity",
+                PaymentRejection::StateTransitionPending => "control-state-pending",
+                PaymentRejection::InitialStateUnconfirmed => "control-unconfirmed",
+                PaymentRejection::DeadlineExpired => "control-deadline-expired",
+                PaymentRejection::UnsupportedProfile => "control-unsupported-profile",
+                PaymentRejection::UnknownPeriod => "control-unknown-period",
+                PaymentRejection::UnknownCircuit => "control-unknown-circuit",
+                PaymentRejection::UnknownCursor => "control-unknown-cursor",
+                PaymentRejection::UnknownOperation => "control-unknown-operation",
+                PaymentRejection::StaleInstance => "control-stale-instance",
+                PaymentRejection::OperationConflict => "control-operation-conflict",
+                PaymentRejection::BadSequence => "control-bad-sequence",
+                PaymentRejection::BadArgument => "control-bad-argument",
+                PaymentRejection::AuthenticationRequired => "control-authentication-required",
+            };
+        }
+        if let Some(registration) = error.downcast_ref::<RegistrationError>() {
+            return match registration {
+                RegistrationError::Invalid => "registration-invalid",
+                RegistrationError::Binding => "registration-binding",
+                RegistrationError::Clock => "registration-clock",
+                RegistrationError::NotActivated => "registration-not-activated",
+                RegistrationError::LegacyClock => "registration-legacy-clock",
+            };
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => break,
+        }
+    }
+    "unclassified"
+}
 /// Returns false only after authenticated confirmation that foundation mode is
 /// disabled. A failed/unknown query or incomplete setup never enables legacy
 /// payment handling on a potentially foundation-enabled relay.
@@ -273,14 +320,15 @@ async fn run_with_path(
     loop {
         // Drop the non-Send diagnostic before sleeping/reconnecting. Never log
         // provider response bodies, account identifiers, paths or credentials.
-        let failed = coordinator
-            .step(|| observe_clock(uncertainty))
-            .await
-            .is_err();
-        if failed {
+        let failure = match coordinator.step(|| observe_clock(uncertainty)).await {
+            Ok(_) => None,
+            Err(error) => Some(recovery_category(error.as_ref())),
+        };
+        if let Some(category) = failure {
             if backoff == 1 {
                 log::warn!(
-                    "Foundation relay requires authoritative state recovery; no legacy fallback"
+                    "Foundation relay requires authoritative state recovery; category={}; no legacy fallback",
+                    category
                 );
             }
             loop {
@@ -308,6 +356,24 @@ async fn run_with_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_diagnostics_use_only_fixed_typed_categories() {
+        assert_eq!(
+            recovery_category(&io::Error::new(
+                io::ErrorKind::Other,
+                crate::rpc::PaymentRejection::Capacity,
+            )),
+            "control-capacity"
+        );
+        assert_eq!(
+            recovery_category(&crate::rpc::RegistrationError::Clock),
+            "registration-clock"
+        );
+        assert_eq!(
+            recovery_category(&io::Error::new(io::ErrorKind::Other, "private-fixture-value")),
+            "unclassified"
+        );
+    }
     #[test]
     fn private_control_password_is_bounded_and_refuses_unsafe_files() {
         let base =
