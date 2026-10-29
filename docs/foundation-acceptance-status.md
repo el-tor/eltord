@@ -7,6 +7,22 @@ source baseline, dependency order and detailed historical evidence. The
 [implementation TODO](../TODO.md) and [handoff](../spec/validation/handoff.md)
 remain the requirement references.
 
+## Next session: manual real-Lightning test
+
+Start by helping the operator configure one paid Chutney relay and pin it in
+an explicit ordered foundation client path. Other selected hops remain zero-priced.
+Use `PaymentBolt12Offer` for the receiving offer, `ElTorFoundationTerms` for
+foundation pricing, and separate private controller/account configuration with
+an existing durable ledger. The current integrated foundation wallet path is
+Core Lightning; Phoenixd UI support alone does not establish verifier support.
+Choose the receiving wallet and a separate payer, agree a small explicit spend
+cap before dispatch, and verify Firefox uses the exact approved circuit. Observe
+recipient settlement, all-hop activation, renewal and closure when funding stops.
+Preserve the original free-testnet configurations and financial histories.
+
+This is a next-session reminder, not an executed test or authorization for
+unattended payments. Nothing is configured, funded or sent by recording it.
+
 | Requirement | Implementation and executed evidence | Scope and limits |
 | --- | --- | --- |
 | Recipient-backed validation and replay protection | Exact CLN native recipient lookup, settlement/preimage/hash/amount/time checks, transactional unique redemption and authenticated consumption; positive socket, concurrent claim, corruption and lost-receipt/reopen regressions. | Deterministic native wallet fixtures; real settlement is not claimed. Unsupported adapters cannot enable this profile. |
