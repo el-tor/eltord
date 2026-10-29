@@ -340,3 +340,27 @@ transport and renewal acceptance are not yet achieved. The short HTTPS success
 must not be generalized to successful continued operation. Diagnose the original
 clock/status transition before starting a fresh approved zero-cost test attempt;
 retain the closed attempt and all accounting history.
+
+
+### Updated live run: deadline-aware origin polling
+
+Daemon revision `ab885ba` schedules authenticated status refresh before the
+minimum remaining per-hop round/enforcement observation expires. It retains the
+native five-second held-data limit; it does not project future ACTIVE state or
+extend payment windows. The earlier 15-second polling cadence could otherwise
+leave a healthy stream held past that limit at rollover.
+
+The rebuilt native app (wallet follow-up `a3fb8ae`) now activates a fresh approved
+zero-cost scope while retaining the prior closed attempt and ledger history.
+All three hops reported ACTIVE in round 1. Firefox's actual rendered viewport
+was captured through its dedicated SOCKS5 profile; local evidence is under
+`.runtime/foundation-live/`. The daemon and both bundled resource copies have
+SHA-256 `3c1fb3643be7feaa1bd96ce17a6e0d2e93abe5ef3e90b266b808849f1fea04bd`.
+
+A server-paced 22-minute transfer is running to verify the same TCP stream and
+native circuit across rounds 10–11 and 20–21. This paragraph records its start,
+not a passing result. The source audit also found that positive-price wallet
+awaits can delay status refresh within a coordinator step; that requires separate
+integration work and cannot be proven by the zero-price run. Operator-lower
+resource ceilings and ordinary free-only constructor coverage remain active
+implementation items. The production gate remains enabled.
