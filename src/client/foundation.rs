@@ -66,6 +66,31 @@ fn initial_observation(
         Err(error) => Err(error),
     }
 }
+fn log_status_failure(hop: usize, stage: &'static str, error: &(dyn Error + 'static)) {
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        if let Some(rejection) = PaymentRejection::from_io(error) {
+            log::warn!(
+                "Foundation origin status hop {} stage {} rejection {:?}",
+                hop + 1,
+                stage,
+                rejection
+            );
+        } else {
+            log::warn!(
+                "Foundation origin status hop {} stage {} I/O {:?}",
+                hop + 1,
+                stage,
+                error.kind()
+            );
+        }
+    } else {
+        log::warn!(
+            "Foundation origin status hop {} stage {} validation/journal failure",
+            hop + 1,
+            stage
+        );
+    }
+}
 fn digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update((domain.len() as u16).to_be_bytes());
@@ -1012,7 +1037,11 @@ impl ClientFoundation {
                     self.control
                         .durable_initial_operation(&mut self.ledger, &previous)
                         .await,
-                )?;
+                )
+                .map_err(|error| {
+                    log_status_failure(hop, "query-get", error.as_ref());
+                    error
+                })?;
                 let Some(outcome) = outcome else {
                     self.queue_status_query(hop).await?;
                     minimum = 0;
@@ -1021,13 +1050,17 @@ impl ClientFoundation {
                 match outcome {
                     DurableInitialResult::Queued { .. } => return Err(invalid()),
                     DurableInitialResult::Recovered(snapshot) => {
-                        self.check_snapshot(hop, &snapshot)?;
-                        if snapshot
-                            .operation
-                            .as_ref()
-                            .map_or(false, |o| o.phase == InitialOperationPhase::Verified)
-                        {
-                            self.retain_snapshot(hop, snapshot, request_at)?;
+                        self.check_snapshot(hop, &snapshot).map_err(|error| {
+                            log_status_failure(hop, "query-binding", error.as_ref());
+                            error
+                        })?;
+                        let phase = snapshot.operation.as_ref().map(|o| o.phase);
+                        if phase == Some(InitialOperationPhase::Verified) {
+                            self.retain_snapshot(hop, snapshot, request_at)
+                                .map_err(|error| {
+                                    log_status_failure(hop, "query-clocks", error.as_ref());
+                                    error
+                                })?;
                             let snapshot = &self.observations[hop]
                                 .as_ref()
                                 .ok_or_else(invalid)?
@@ -1043,6 +1076,24 @@ impl ClientFoundation {
                             next = true;
                         } else {
                             minimum = 0;
+                            if phase == Some(InitialOperationPhase::Uncertain) {
+                                // The original one-shot QUERY's native response
+                                // window expired. Preserve it and request a new
+                                // bounded observation; never repeat its wire
+                                // request, START, payment or deadline.
+                                log::warn!("Foundation origin status hop {} QUERY uncertain; requesting bounded fresh observation", hop + 1);
+                                next = true;
+                            } else if !matches!(
+                                phase,
+                                Some(InitialOperationPhase::Queued | InitialOperationPhase::Sent)
+                            ) {
+                                log::warn!(
+                                    "Foundation origin status hop {} terminal QUERY phase {:?}",
+                                    hop + 1,
+                                    phase
+                                );
+                                return Err("Origin QUERY refused, closed or unavailable".into());
+                            }
                         }
                     }
                 }
@@ -1050,7 +1101,10 @@ impl ClientFoundation {
                 minimum = 0;
             }
             if next {
-                self.queue_status_query(hop).await?;
+                self.queue_status_query(hop).await.map_err(|error| {
+                    log_status_failure(hop, "query-refresh", error.as_ref());
+                    error
+                })?;
             }
             self.clock(observe)?;
         }

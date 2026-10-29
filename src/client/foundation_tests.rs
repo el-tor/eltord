@@ -122,12 +122,15 @@ fn registration(hop: usize, r: &FoundationHop) -> String {
 struct TorState {
     commands: Mutex<Vec<String>>,
     ops: Mutex<BTreeMap<(usize, String), String>>,
-    committed: Mutex<[bool; 2]>,
+    committed: Mutex<Vec<bool>>,
     withhold_second: AtomicBool,
     active: AtomicBool,
     lose_start: AtomicBool,
     instance: AtomicUsize,
     rollover_at: Mutex<Option<Instant>>,
+    uncertain_hop: AtomicUsize,
+    uncertain_operation: Mutex<Option<String>>,
+    forced_round: AtomicUsize,
 }
 fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> String {
     let b = binding();
@@ -146,7 +149,11 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
         .unwrap();
     let verified = !(kind == "COMMIT" && hop == 1 && state.withhold_second.load(Ordering::SeqCst));
     if kind == "COMMIT" && verified {
-        state.committed.lock().unwrap()[hop] = true;
+        let mut committed = state.committed.lock().unwrap();
+        if committed.len() <= hop {
+            committed.resize(hop + 1, false);
+        }
+        committed[hop] = true;
     }
     let active = state.active.load(Ordering::SeqCst);
     let profile = if active {
@@ -162,7 +169,11 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
             let (round, elapsed, remaining) = if elapsed < 2000 {
                 (1, 58000 + elapsed, 2000 - elapsed)
             } else {
-                (2, 60000 + elapsed - 2000, 60000u64.saturating_sub(elapsed - 2000))
+                (
+                    2,
+                    60000 + elapsed - 2000,
+                    60000u64.saturating_sub(elapsed - 2000),
+                )
             };
             format!(
                 "{} {} {} {} 0",
@@ -171,13 +182,18 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
                 remaining,
                 remaining + 15000
             )
+        } else if state.forced_round.load(Ordering::SeqCst) > 0 {
+            let round = state.forced_round.load(Ordering::SeqCst) as u64;
+            format!("{} {} 59000 74000 0", round, (round - 1) * 60000 + 1000)
         } else {
             "1 1000 59000 74000 0".into()
         }
     } else {
         "0 0 0 0 25000".into()
     };
-    format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE {} {} {} 2\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,hex::encode(q),hex::encode(a),profile,clocks,op,kind,if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
+    let uncertain =
+        kind == "QUERY" && state.uncertain_operation.lock().unwrap().as_deref() == Some(op);
+    format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE {} {} {} 2\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,hex::encode(q),hex::encode(a),profile,clocks,op,kind,if uncertain{"UNCERTAIN"}else if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
 }
 async fn tor_server(
     req: Vec<FoundationHop>,
@@ -229,6 +245,14 @@ async fn tor_server(
                                 .lock()
                                 .unwrap()
                                 .insert((hop, f[5].into()), kind.into());
+                            if kind == "QUERY"
+                                && state.uncertain_hop.load(Ordering::SeqCst) == hop + 1
+                            {
+                                let mut uncertain = state.uncertain_operation.lock().unwrap();
+                                if uncertain.is_none() {
+                                    *uncertain = Some(f[5].into());
+                                }
+                            }
                             if kind == "START" && state.lose_start.swap(false, Ordering::SeqCst) {
                                 return;
                             }
@@ -594,6 +618,111 @@ async fn slow_native_lookup_keeps_authenticated_round_status_fresh_without_repay
     assert_eq!(record.outstanding_msat, 2050);
     server.abort();
     wallet_task.abort();
+}
+
+#[tokio::test]
+async fn uncertain_third_hop_query_requests_new_bounded_observation_without_replaying_start() {
+    let d = Directory::new();
+    let mut req = requirements(false);
+    let mut third = req[1].clone();
+    third.descriptor.fingerprint = [3; 20];
+    third.payment_ids = std::array::from_fn(|i| [70 + i as u8; 32]);
+    req.push(third);
+    let tor = Arc::new(TorState::default());
+    tor.instance.store(1, Ordering::SeqCst);
+    let (config, server) = tor_server(req.clone(), tor.clone()).await;
+    let mut ledger = ledger(&d);
+    let mut control = PaymentControl::connect(&config).await.unwrap();
+    let mut b = binding();
+    b.hops = 3;
+    let draft = FoundationDraft::inspect(&mut control, b, &req, clock().unwrap())
+        .await
+        .unwrap();
+    let plan = draft
+        .accept(
+            &mut ledger,
+            [8; 32],
+            FoundationLimits {
+                lifetime_msat: 100000,
+                outstanding_msat: 10000,
+                per_round_msat: 10000,
+            },
+        )
+        .unwrap();
+    let mut runner = ClientFoundation::new(ledger, control, None, plan).unwrap();
+    for _ in 0..6 {
+        tick(&mut runner).await.unwrap();
+        if runner.start_observed.iter().all(|observed| *observed) {
+            break;
+        }
+    }
+    assert!(runner.start_observed.iter().all(|observed| *observed));
+    tor.active.store(true, Ordering::SeqCst);
+    tor.uncertain_hop.store(3, Ordering::SeqCst);
+    assert_eq!(runner.observe_active(&mut clock).await.unwrap(), None); // Queue each first QUERY.
+    let old = runner.operation(2, InitialOperationKind::Query, 1);
+    assert_eq!(runner.observe_active(&mut clock).await.unwrap(), None); // Last hop timed out.
+    assert_eq!(runner.query_indices, vec![2, 2, 2]);
+    assert_eq!(
+        runner
+            .ledger
+            .spending_round(runner.plan.local_scope())
+            .unwrap(),
+        1
+    );
+    assert!(
+        runner
+            .ledger
+            .origin_operation(
+                old.binding.instance,
+                old.binding.handle,
+                old.hop,
+                old.operation
+            )
+            .unwrap()
+            .unwrap()
+            .dispatch_claimed
+    );
+    tor.forced_round.store(2, Ordering::SeqCst);
+    assert!(matches!(
+        tick(&mut runner).await.unwrap(),
+        FoundationProgress::Active {
+            current_round: 2,
+            ..
+        }
+    ));
+    assert_eq!(
+        runner
+            .ledger
+            .spending_round(runner.plan.local_scope())
+            .unwrap(),
+        2
+    );
+    assert!(runner.query_indices.iter().all(|index| *index == 3));
+    let commands = tor.commands.lock().unwrap();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| c.starts_with("ELTOR_INITIAL_START"))
+            .count(),
+        3
+    );
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| c.starts_with("ELTOR_INITIAL_PREPARE"))
+            .count(),
+        3
+    );
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| c.as_str() == old.command().unwrap())
+            .count(),
+        1
+    );
+    assert_eq!(runner.ledger.account_exposure().unwrap().spent_msat, 0);
+    server.abort();
 }
 
 async fn tick_later(r: &mut ClientFoundation) -> Result<FoundationProgress> {
