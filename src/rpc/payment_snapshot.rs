@@ -68,7 +68,7 @@ impl PendingAdmission {
             return Err(INVALID);
         }
         let rows: Vec<Vec<&str>> = reply.split('\n').map(|r| r.split(' ').collect()).collect();
-        if rows.len() != 17 {
+        if rows.len() != 18 {
             return Err(INVALID);
         }
         let a = &rows[0];
@@ -147,7 +147,17 @@ impl PendingAdmission {
         for value in &state[2..] {
             number(value)?;
         }
-        let fee = &rows[5];
+        let clock = &rows[5];
+        if clock.len() != 3 || clock[0] != "250-CLOCK" {
+            return Err(INVALID);
+        }
+        let constructed_age = number(clock[1])?;
+        if period == 0 {
+            if clock[2] != "-" { return Err(INVALID); }
+        } else if number(clock[2])? > constructed_age {
+            return Err(INVALID);
+        }
+        let fee = &rows[6];
         if fee.len() != 5
             || fee[0] != "250-FEE"
             || number(fee[1])? != u64_at(&terms, 43)
@@ -162,7 +172,7 @@ impl PendingAdmission {
         }
         let mut ids = [[0; 32]; 10];
         for i in 0..10 {
-            let r = &rows[6 + i];
+            let r = &rows[7 + i];
             if r.len() != 9
                 || r[0] != "250-ROUND"
                 || number(r[1])? != first + i as u64
@@ -182,7 +192,7 @@ impl PendingAdmission {
                 return Err(INVALID);
             }
         }
-        if rows[16] != ["250", "OK"] {
+        if rows[17] != ["250", "OK"] {
             return Err(INVALID);
         }
         let s = Self {
@@ -409,6 +419,7 @@ mod tests {
             format!("250-POLICY {terms} {a0} {a0} 1"),
             format!("250-BINDING {}", f["C_hex"].as_str().unwrap()),
             "250-STATE ADMISSION_PENDING 0 0 20000 0".into(),
+            "250-CLOCK 1000 -".into(),
             format!("250-FEE 0 {} - NONE", hex::encode([0; 32])),
         ];
         for i in 0..10 {
@@ -457,11 +468,13 @@ mod tests {
             (1, 4, "2"),
             (3, 1, "00"),
             (4, 1, "ACTIVE"),
-            (6, 1, "2"),
-            (6, 3, "1"),
-            (6, 4, "0"),
-            (6, 8, "AUTHORIZED"),
-            (16, 1, "OK extra"),
+            (5, 1, "01"),
+            (5, 2, "0"),
+            (7, 1, "2"),
+            (7, 3, "1"),
+            (7, 4, "0"),
+            (7, 8, "AUTHORIZED"),
+            (17, 1, "OK extra"),
         ] {
             let mut altered: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
             let mut fields: Vec<&str> = lines[row].split(' ').collect();
@@ -477,10 +490,10 @@ mod tests {
         assert!(PendingAdmission::parse(&wire, [9; 16], [2; 16], 0).is_err());
         assert!(PendingAdmission::parse(&wire, [1; 16], [2; 16], 1).is_err());
         let mut altered: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
-        let duplicate_id = lines[6].split(' ').nth(2).unwrap();
-        let mut fields: Vec<&str> = lines[7].split(' ').collect();
+        let duplicate_id = lines[7].split(' ').nth(2).unwrap();
+        let mut fields: Vec<&str> = lines[8].split(' ').collect();
         fields[2] = duplicate_id;
-        altered[7] = fields.join(" ");
+        altered[8] = fields.join(" ");
         assert!(PendingAdmission::parse(&altered.join("\n"), [1; 16], [2; 16], 0).is_err());
     }
     #[tokio::test]

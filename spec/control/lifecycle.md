@@ -176,6 +176,7 @@ ledger retains its accounting. No query recreates a retired allocation.
 250-POLICY terms initial_allocation allocation_digest first_round
 250-BINDING circuit_binding
 250-STATE state current_round elapsed_ms setup_remaining_ms enforcement_remaining_ms
+250-CLOCK constructed_elapsed_ms commit_elapsed_ms
 250-FEE amount_msat payment_hash decision authorization
 250-ROUND round payment_id amount_msat opens_in_ms closes_in_ms decision payment_hash authorization
 250 OK
@@ -218,6 +219,26 @@ The ledger records the original windows, not merely these remaining counters.
 Renewal admission is separately required before any next-allocation payment.
 Deadlines expire even if the controller is disconnected. Old settlements never
 become valid because a new query returns zero remaining time.
+
+The CLOCK line reports unclamped ages since the original construction and accepted
+initial COMMIT, sampled at the same monotonic instant as STATE and ROUND.
+Construction age is always available. COMMIT age is `-` only in a pending initial
+admission snapshot; committed registrations and pending renewals report it as u64.
+Require `commit_elapsed_ms <= constructed_elapsed_ms`. Neither age resets at
+activation, renewal, control reconnect or daemon restart. These ages, the accepted
+setup duration and an uncertainty-bounded local observation allow recovery of the
+original COMMIT opening and construction-based setup deadline even after remaining
+counters reach zero. A missing age is not permission to invent a timestamp.
+
+Persist uncertainty intervals for original clock anchors. A receiving payment
+window opens at the latest possible opening and closes at the earliest possible
+deadline; reject an empty interval. Include clock uncertainty and control exchange
+latency. Later observations cannot replace stored anchors or widen an accepted
+window. Availability of T0 follows actual activation state, never a zero elapsed
+counter alone. This is privileged local clock disclosure only: no additional
+relay-wire field, common cross-hop identifier, or routine logging is introduced.
+Test delayed queries, initial COMMIT at monotonic zero, activation at zero elapsed,
+expired counters, reconnects, clock discontinuity and unchanged saved windows.
 
 For initial round one, the registration window starts at accepted COMMIT, before
 T0 exists, and remains that original window after activation. Later rounds use
