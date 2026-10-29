@@ -31,6 +31,23 @@ pub struct AdmissionDecision {
     pub result: AdmissionResult,
 }
 
+impl From<&crate::payment_ledger::BatchReservation> for AdmissionDecision {
+    fn from(reservation: &crate::payment_ledger::BatchReservation) -> Self {
+        use crate::payment_ledger::AdmissionOutcome;
+        Self {
+            instance: reservation.instance,
+            handle: reservation.handle,
+            period: reservation.period,
+            request_digest: reservation.request_digest,
+            decision: reservation.decision,
+            result: match reservation.outcome {
+                AdmissionOutcome::Reserved => AdmissionResult::Reserved,
+                AdmissionOutcome::Conflict => AdmissionResult::Conflict,
+            },
+        }
+    }
+}
+
 impl AdmissionDecision {
     pub fn command(&self) -> Result<String, Box<dyn Error>> {
         if self.decision == [0; 16] {

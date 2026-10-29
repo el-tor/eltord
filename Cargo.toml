@@ -43,6 +43,7 @@ shell-words = "1.1"
 ctrlc = "3.4"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["socks", "json"] }
+rusqlite = "0.31.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

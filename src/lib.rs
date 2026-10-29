@@ -369,6 +369,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 
 pub mod client;
 pub mod database;
+pub mod payment_ledger;
 pub mod lightning;
 pub mod logging;
 pub mod manager;
