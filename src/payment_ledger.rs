@@ -24,6 +24,7 @@ use std::{
 use thiserror::Error;
 
 pub mod outgoing;
+pub mod wallet;
 
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
