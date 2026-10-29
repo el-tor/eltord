@@ -325,6 +325,63 @@ pub async fn recover_admission_decision(
     super::send_admission_decision(config, &super::AdmissionDecision::from(&reservation)).await
 }
 
+impl super::PaymentControl {
+    /// Recover an existing immutable reservation first; otherwise query and
+    /// durably reserve all IDs before notifying Tor over this connection.
+    /// This admits identifiers only, never settlement or paid capacity.
+    pub async fn admit_pending(
+        &mut self,
+        ledger: &mut crate::payment_ledger::PaymentLedger,
+        instance: [u8; 16],
+        handle: [u8; 16],
+        period: u64,
+    ) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>> {
+        if instance == [0; 16]
+            || handle == [0; 16]
+            || period
+                .checked_mul(10)
+                .and_then(|n| n.checked_add(10))
+                .is_none()
+        {
+            return Err(INVALID.into());
+        }
+        let reservation =
+            if let Some(old) = ledger.get_batch_reservation(instance, handle, period)? {
+                old
+            } else {
+                let sent = std::time::Instant::now();
+                let reply = self
+                    .command(&format!(
+                        "ELTOR_PAYMENT_ADMISSION_GET 1 {} {} {}",
+                        hex::encode(instance),
+                        hex::encode(handle),
+                        period
+                    ))
+                    .await?;
+                let candidate = PendingAdmission::parse(&reply, instance, handle, period)?;
+                let lifetime = std::time::Duration::from_millis(candidate.remaining_ms);
+                if sent.elapsed() >= lifetime {
+                    return Err("Admission candidate expired".into());
+                }
+                let decision = loop {
+                    let value: [u8; 16] = rand::random();
+                    if value != [0; 16] {
+                        break value;
+                    }
+                };
+                let saved = ledger.reserve_batch(&candidate.registration(), decision)?;
+                if sent.elapsed() >= lifetime {
+                    return Err("Admission candidate expired after reservation".into());
+                }
+                saved
+            };
+        let decision = super::AdmissionDecision::from(&reservation);
+        let reply = self.command(&decision.command()?).await?;
+        let revision = decision.receipt_revision(&reply)?;
+        Ok((reservation, revision))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,5 +585,110 @@ mod tests {
             drop(ledger);
             std::fs::remove_dir_all(directory).unwrap();
         }
+    }
+    #[tokio::test]
+    async fn persistent_admission_recovers_original_decision_without_new_snapshot() {
+        use crate::payment_ledger::{AccountId, PaymentLedger};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let directory = std::env::temp_dir().join(format!(
+            "eltor-persistent-admission-{:032x}",
+            rand::random::<u128>()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ledger.sqlite");
+        let account = AccountId([8; 32]);
+        let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = crate::types::RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let server_path = path.clone();
+        let (wire, _) = fixture(0);
+        let server = tokio::spawn(async move {
+            let mut original = None;
+            for attempt in 0..2 {
+                let (socket, _) = listener.accept().await.unwrap();
+                let (reader, mut writer) = socket.into_split();
+                let mut lines = BufReader::new(reader).lines();
+                for expected in ["AUTHENTICATE", "SETEVENTS ELTOR_PAYMENT_STATE"] {
+                    assert_eq!(lines.next_line().await.unwrap().unwrap(), expected);
+                    writer.write_all(b"250 OK\r\n").await.unwrap();
+                }
+                if attempt == 0 {
+                    assert!(lines
+                        .next_line()
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .starts_with("ELTOR_PAYMENT_ADMISSION_GET 1 "));
+                    writer
+                        .write_all(format!("{}\r\n", wire.replace('\n', "\r\n")).as_bytes())
+                        .await
+                        .unwrap();
+                }
+                let command = lines.next_line().await.unwrap().unwrap();
+                let persisted = PaymentLedger::reopen(&server_path, account)
+                    .unwrap()
+                    .get_batch_reservation([1; 16], [2; 16], 0)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    command,
+                    super::super::AdmissionDecision::from(&persisted)
+                        .command()
+                        .unwrap()
+                );
+                if attempt == 0 {
+                    original = Some(persisted.decision);
+                } else {
+                    assert_eq!(original, Some(persisted.decision));
+                    writer
+                        .write_all(
+                            format!(
+                                "250 ELTOR_ADMISSION_DECIDED 1 {} {} 0 {} 2\r\n",
+                                hex::encode([1; 16]),
+                                hex::encode([2; 16]),
+                                hex::encode(persisted.decision)
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let mut client = super::super::PaymentControl::connect(&config)
+            .await
+            .unwrap();
+        assert!(client
+            .admit_pending(&mut ledger, [1; 16], [2; 16], 0)
+            .await
+            .is_err());
+        drop(client);
+        drop(ledger);
+        let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
+        let mut client = super::super::PaymentControl::connect(&config)
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .admit_pending(&mut ledger, [1; 16], [2; 16], 0)
+                .await
+                .unwrap()
+                .1,
+            2
+        );
+        server.await.unwrap();
+        let batch = PendingAdmission::parse(&fixture(0).0, [1; 16], [2; 16], 0)
+            .unwrap()
+            .registration();
+        for obligation in &batch.rounds {
+            assert!(ledger.get_authorization(obligation).unwrap().is_none());
+        }
+        drop(client);
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
