@@ -370,6 +370,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 pub mod client;
 mod controller_tasks;
 pub use client::{foundation_client_status, FoundationClientStatus};
+pub mod foundation_status_bridge;
 pub mod database;
 pub mod payment_ledger;
 pub mod lightning;

@@ -235,3 +235,13 @@ honest recovery. Sampled peaks are not proof of unsampled maxima or privacy;
 no live overload result is claimed by adding instrumentation or the runner.
 
 ET-08/33 control backpressure acceptance: validate complete no-effect QUERY CAPACITY followed by bounded exact same-connection resubmission (four total attempts, original lifetime, unchanged durable claim), read-only GET deferral, response-based per-hop pacing, and no resubmission permit after ambiguous replies, disconnect or restart. No wallet/COMMIT/START retry authority or deadline reset is added; live acceptance remains required. See [origin control rules](spec/control/lifecycle.md#origin-initial-operations).
+
+ET-33 native status acceptance: distinguish the Tauri OS sidecar from the managed
+in-process backend. Bind the bounded private phase observation to the parent's
+exact owned child and fresh local generation; reject stale/wrong-owner/malformed
+records and expire ACTIVE at its original authenticated monotonic deadline.
+Process/bootstrap readiness must never substitute for that observation. Keep
+unknown, exited and externally adopted PID-only processes fail-closed, retain
+financial history, and verify the rebuilt native UI without additional Tor or
+wallet queries. See `../eltor-app/docs/foundation-runtime.md` for the local
+privacy/timing assessment; this adds no wire, payment or retry authority.

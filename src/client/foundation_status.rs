@@ -1,10 +1,10 @@
 //! Private, leased observations for an in-process UI. These never authorize
 //! traffic, payments, retries or fallback and contain no financial identifiers.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 use tokio::time::Instant;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FoundationClientStatus {
     NotConfigured,
@@ -20,15 +20,18 @@ struct Status {
     phase: FoundationClientStatus,
     expires: Option<Instant>,
 }
-struct Registry(Mutex<Status>);
-static STATUS: LazyLock<Arc<Registry>> = LazyLock::new(|| Arc::new(Registry::new()));
+struct Registry(Mutex<Status>, bool);
+static STATUS: LazyLock<Arc<Registry>> = LazyLock::new(|| Arc::new(Registry::new(true)));
 impl Registry {
-    fn new() -> Self {
-        Self(Mutex::new(Status {
-            owner: None,
-            phase: FoundationClientStatus::NotConfigured,
-            expires: None,
-        }))
+    fn new(export: bool) -> Self {
+        Self(
+            Mutex::new(Status {
+                owner: None,
+                phase: FoundationClientStatus::NotConfigured,
+                expires: None,
+            }),
+            export,
+        )
     }
     fn at(&self, now: Instant) -> FoundationClientStatus {
         let Ok(status) = self.0.lock() else {
@@ -74,6 +77,9 @@ impl StatusOwner {
                 phase: FoundationClientStatus::Starting,
                 expires: None,
             };
+            if owner.registry.1 {
+                crate::foundation_status_bridge::publish(FoundationClientStatus::Starting, None);
+            }
         }
         owner
     }
@@ -98,12 +104,16 @@ impl StatusPublisher {
                 .is_some_and(|owner| Weak::ptr_eq(owner, &self.token))
                 && status.phase != FoundationClientStatus::Closed
             {
+                let changed = status.phase != phase || status.expires != expires;
                 status.phase = phase;
                 status.expires = if phase == FoundationClientStatus::LastVerifiedActive {
                     expires
                 } else {
                     None
                 };
+                if changed && self.registry.1 {
+                    crate::foundation_status_bridge::publish(status.phase, status.expires);
+                }
             }
         }
     }
@@ -121,6 +131,9 @@ impl Drop for StatusOwner {
                 }
                 status.expires = None;
                 status.owner = None;
+                if self.registry.1 {
+                    crate::foundation_status_bridge::publish(status.phase, None);
+                }
             }
         }
     }
@@ -132,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn leases_expire_old_generations_cannot_publish_and_parent_abort_cancels_controller() {
-        let registry = Arc::new(Registry::new());
+        let registry = Arc::new(Registry::new(false));
         let old = StatusOwner::start_in(registry.clone());
         let publisher = old.publisher();
         let deadline = Instant::now() + std::time::Duration::from_secs(1);
