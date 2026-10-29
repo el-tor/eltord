@@ -127,6 +127,7 @@ struct TorState {
     active: AtomicBool,
     lose_start: AtomicBool,
     instance: AtomicUsize,
+    rollover_at: Mutex<Option<Instant>>,
 }
 fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> String {
     let b = binding();
@@ -155,7 +156,28 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
     } else {
         "COMMITTED"
     };
-    format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE {} {} {} 2\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,hex::encode(q),hex::encode(a),profile,if active{"1 1000 59000 74000 0"}else{"0 0 0 0 25000"},op,kind,if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
+    let clocks = if active {
+        if let Some(at) = *state.rollover_at.lock().unwrap() {
+            let elapsed = at.elapsed().as_millis() as u64;
+            let (round, elapsed, remaining) = if elapsed < 2000 {
+                (1, 58000 + elapsed, 2000 - elapsed)
+            } else {
+                (2, 60000 + elapsed - 2000, 60000u64.saturating_sub(elapsed - 2000))
+            };
+            format!(
+                "{} {} {} {} 0",
+                round,
+                elapsed,
+                remaining,
+                remaining + 15000
+            )
+        } else {
+            "1 1000 59000 74000 0".into()
+        }
+    } else {
+        "0 0 0 0 25000".into()
+    };
+    format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE {} {} {} 2\n250-CLOCK {}\n250-OP {} {} {} {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,hex::encode(q),hex::encode(a),profile,clocks,op,kind,if verified{"VERIFIED"}else{"SENT"},hex::encode([9;32]))
 }
 async fn tor_server(
     req: Vec<FoundationHop>,
@@ -369,6 +391,7 @@ struct NativeState {
     settled: AtomicBool,
     lose_pay: AtomicBool,
     label: Mutex<Option<String>>,
+    lookup_delay_ms: AtomicUsize,
 }
 async fn wallet_server(
     directory: &Directory,
@@ -473,6 +496,10 @@ async fn wallet_server(
                     }
                     "listpays" => {
                         state.lookups.fetch_add(1, Ordering::SeqCst);
+                        let delay = state.lookup_delay_ms.load(Ordering::SeqCst);
+                        if delay > 0 {
+                            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                        }
                         if state.pays.load(Ordering::SeqCst) == 0
                             || !state.settled.load(Ordering::SeqCst)
                         {
@@ -491,6 +518,82 @@ async fn wallet_server(
     });
     let wallet = Arc::new(ClnFoundation::connect(config, account()).await.unwrap());
     (wallet, task)
+}
+
+#[tokio::test]
+async fn slow_native_lookup_keeps_authenticated_round_status_fresh_without_repay() {
+    let d = Directory::new();
+    let req = requirements(true);
+    let tor = Arc::new(TorState::default());
+    tor.instance.store(1, Ordering::SeqCst);
+    let (config, server) = tor_server(req.clone(), tor.clone()).await;
+    let (ledger, control, plan) = accepted(&d, &config, &req).await;
+    let native = Arc::new(NativeState::default());
+    native.lose_pay.store(true, Ordering::SeqCst);
+    let (wallet, wallet_task) = wallet_server(&d, tor.clone(), native.clone()).await;
+    let mut runner = ClientFoundation::new(ledger, control, Some(wallet), plan).unwrap();
+    for _ in 0..3 {
+        tick(&mut runner).await.unwrap();
+    }
+    let operation = runner.round_operation(0, 1);
+    assert!(
+        runner
+            .ledger
+            .get_outgoing(operation)
+            .unwrap()
+            .unwrap()
+            .state
+            == OutgoingState::Unknown
+    );
+    for hop in 0..2 {
+        runner.queue_status_query(hop).await.unwrap();
+    }
+    let before = runner.query_indices.clone();
+    native.settled.store(true, Ordering::SeqCst);
+    native.lookup_delay_ms.store(6500, Ordering::SeqCst);
+    tor.active.store(true, Ordering::SeqCst);
+    let at = Instant::now();
+    *tor.rollover_at.lock().unwrap() = Some(at);
+    // The HTTP response stays pending longer than the unchanged five-second
+    // held-DATA queue. A real serialized controller must observe round 2 while
+    // that same lookup is pending; sleeping only after lookup is too late.
+    let mut observe = || {
+        Ok(ClockObservation {
+            now_ms: NOW + at.elapsed().as_millis() as i64,
+            uncertainty_ms: 2000,
+        })
+    };
+    assert_eq!(
+        runner
+            .reconcile_existing_round(1, &mut observe)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(runner
+        .query_indices
+        .iter()
+        .zip(before)
+        .all(|(now, old)| *now >= old + 2));
+    assert!(runner
+        .observations
+        .iter()
+        .all(|o| o.as_ref().unwrap().snapshot.clocks[0] == Some(2)));
+    assert_eq!(native.fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(native.pays.load(Ordering::SeqCst), 1);
+    let record = runner.ledger.get_outgoing(operation).unwrap().unwrap();
+    assert!(record.state == OutgoingState::Settled);
+    assert_eq!(
+        runner
+            .ledger
+            .spending_round(runner.plan.local_scope())
+            .unwrap(),
+        1
+    );
+    // Status observations during finance do not fabricate consumption/advance.
+    assert_eq!(record.outstanding_msat, 2050);
+    server.abort();
+    wallet_task.abort();
 }
 
 async fn tick_later(r: &mut ClientFoundation) -> Result<FoundationProgress> {

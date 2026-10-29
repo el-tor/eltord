@@ -23,6 +23,8 @@ mod financial_recovery;
 pub use financial_recovery::{reconcile_origin_financial, OriginFinancialRecoveryPage};
 #[path = "foundation_renewal.rs"]
 mod renewal;
+#[path = "foundation_wallet_status.rs"]
+mod wallet_status;
 const MAX_STATUS_QUERIES_PER_HOP: u64 = 256;
 const ACTIVE_STATUS_POLL_MS: u64 = 15_000;
 const ROUND_STATUS_GUARD_MS: u64 = 3_000;
@@ -140,6 +142,7 @@ pub struct ClientFoundation {
     commit_open_ms: Option<i64>,
     pending_renewal_period: Option<u64>,
     renewal_observations: Vec<Option<RenewalOriginSnapshot>>,
+    wallet_status_failed: bool,
 }
 impl ClientFoundation {
     pub fn new(
@@ -233,6 +236,7 @@ impl ClientFoundation {
             renewal_observations: (0..count).map(|_| None).collect(),
             funded: BTreeSet::new(),
             last_clock: None,
+            wallet_status_failed: false,
         })
     }
     pub fn binding(&self) -> &OriginBinding {
@@ -245,32 +249,93 @@ impl ClientFoundation {
         &mut self,
         after: Option<Id16>,
         limit: u64,
-        observe: F,
+        mut observe: F,
     ) -> Result<OriginFinancialRecoveryPage>
     where
         F: FnMut() -> Result<ClockObservation>,
     {
         let wallet = self.wallet.as_ref().ok_or_else(invalid)?.clone();
-        reconcile_origin_financial(&mut self.ledger, &wallet, after, limit, observe).await
+        if limit == 0 || limit > 16 {
+            return Err(invalid());
+        }
+        let mut peer = self.ledger.reopen_verified_peer()?;
+        let mut page = OriginFinancialRecoveryPage {
+            after,
+            examined: 0,
+            reconciled: 0,
+            unresolved: 0,
+        };
+        for _ in 0..limit {
+            let clock = self.clock(&mut observe)?;
+            let work = async {
+                reconcile_origin_financial(&mut peer, &wallet, page.after, 1, move || Ok(clock))
+                    .await
+                    .map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Foundation financial lookup failed",
+                        )
+                    })
+            };
+            let item = self.await_wallet(work, &mut observe).await?;
+            if item.examined == 0 {
+                break;
+            }
+            page.after = item.after;
+            page.examined += item.examined;
+            page.reconciled += item.reconciled;
+            page.unresolved += item.unresolved;
+        }
+        Ok(page)
     }
     pub async fn reconcile_handshake_financial<F>(
         &mut self,
         after: Option<Id16>,
         limit: u64,
-        observe: F,
+        mut observe: F,
     ) -> Result<crate::client::handshake::HandshakeFinancialRecoveryPage>
     where
         F: FnMut() -> Result<ClockObservation>,
     {
         let wallet = self.wallet.as_ref().ok_or_else(invalid)?.clone();
-        crate::client::handshake::reconcile_handshake_financial(
-            &mut self.ledger,
-            &wallet,
+        if limit == 0 || limit > 16 {
+            return Err(invalid());
+        }
+        let mut peer = self.ledger.reopen_verified_peer()?;
+        let mut page = crate::client::handshake::HandshakeFinancialRecoveryPage {
             after,
-            limit,
-            observe,
-        )
-        .await
+            examined: 0,
+            reconciled: 0,
+            unresolved: 0,
+        };
+        for _ in 0..limit {
+            let clock = self.clock(&mut observe)?;
+            let work = async {
+                crate::client::handshake::reconcile_handshake_financial(
+                    &mut peer,
+                    &wallet,
+                    page.after,
+                    1,
+                    move || Ok(clock),
+                )
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Foundation handshake lookup failed",
+                    )
+                })
+            };
+            let item = self.await_wallet(work, &mut observe).await?;
+            if item.examined == 0 {
+                break;
+            }
+            page.after = item.after;
+            page.examined += item.examined;
+            page.reconciled += item.reconciled;
+            page.unresolved += item.unresolved;
+        }
+        Ok(page)
     }
     pub fn reconnect(&mut self, control: PaymentControl) {
         self.control = control;
@@ -324,6 +389,7 @@ impl ClientFoundation {
         }
         self.plan.configure(&mut self.ledger)?;
         self.recovery = Some(recovery);
+        self.wallet_status_failed = false;
         Ok(())
     }
     /// One bounded path reconciliation. The supervisor owns sleep/reconnect and
@@ -540,9 +606,10 @@ impl ClientFoundation {
                     expected_payment_hash: Some(saved.intent.payment_hash),
                 },
             )?;
-            let result =
-                wallet::reconcile_cln(&mut self.ledger, &wallet, operation, &invoice, clock)
-                    .await?;
+            let mut peer = self.ledger.reopen_verified_peer()?;
+            let work = wallet::reconcile_cln(&mut peer, &wallet, operation, &invoice, clock);
+            let result = self.await_wallet(work, observe).await?;
+            self.require_wallet_status()?;
             match result.evidence {
                 EvidenceStatus::PaidWithinWindow if !result.record.fee_limit_breached => {
                     self.funded.insert((hop, round));
@@ -763,6 +830,7 @@ impl ClientFoundation {
     where
         F: FnMut() -> Result<ClockObservation>,
     {
+        self.require_wallet_status()?;
         if round == 0
             || !self
                 .ledger
@@ -789,6 +857,7 @@ impl ClientFoundation {
             }
         }
         for hop in 0..self.plan.hops.len() {
+            self.require_wallet_status()?;
             if self.round_funded(hop, round)? {
                 continue;
             }
@@ -830,21 +899,20 @@ impl ClientFoundation {
                     .clone()
                     .ok_or_else(invalid)?;
                 let payment_id = self.payment_id(hop, round)?;
-                let invoice = wallet
-                    .fetch_bolt12(
-                        &offer,
-                        payment_id,
-                        InvoiceExpectation {
-                            amount_msat: policy.rate_msat,
-                            expected_payee: None,
-                            expected_payment_hash: None,
-                        },
-                        Observation {
-                            now_ms: clock.now_ms,
-                            uncertainty_ms: clock.uncertainty_ms,
-                        },
-                    )
-                    .await?;
+                let work = wallet.fetch_bolt12(
+                    &offer,
+                    payment_id,
+                    InvoiceExpectation {
+                        amount_msat: policy.rate_msat,
+                        expected_payee: None,
+                        expected_payment_hash: None,
+                    },
+                    Observation {
+                        now_ms: clock.now_ms,
+                        uncertainty_ms: clock.uncertainty_ms,
+                    },
+                );
+                let invoice = self.await_wallet(work, observe).await?;
                 let intent = OutgoingIntent {
                     operation: op,
                     account: self.plan.account,
@@ -870,13 +938,21 @@ impl ClientFoundation {
                 (intent, invoice)
             };
             self.validate_intent(hop, round, &intent)?;
+            self.require_wallet_status()?;
+            if round > 1 && !self.fresh_funding_status() {
+                return Ok(Some(hop as u16 + 1));
+            }
             let clock = self.clock(observe)?;
             let record = wallet::prepare_cln(&mut self.ledger, &wallet, &intent, &invoice, clock)?;
+            let mut peer = self.ledger.reopen_verified_peer()?;
             let result = if record.state == OutgoingState::Prepared {
-                wallet::dispatch_cln(&mut self.ledger, &wallet, op, &invoice, clock, 1).await?
+                let work = wallet::dispatch_cln(&mut peer, &wallet, op, &invoice, clock, 1);
+                self.await_wallet(work, observe).await?
             } else {
-                wallet::reconcile_cln(&mut self.ledger, &wallet, op, &invoice, clock).await?
+                let work = wallet::reconcile_cln(&mut peer, &wallet, op, &invoice, clock);
+                self.await_wallet(work, observe).await?
             };
+            self.require_wallet_status()?;
             match result.evidence {
                 EvidenceStatus::PaidWithinWindow if !result.record.fee_limit_breached => {
                     self.funded.insert((hop, round));
@@ -886,6 +962,17 @@ impl ClientFoundation {
             }
         }
         Ok(None)
+    }
+    fn fresh_funding_status(&self) -> bool {
+        self.observations.iter().all(|observed| {
+            observed.as_ref().map_or(false, |observed| {
+                observed.snapshot.state == InitialOriginState::Active
+                    && observed.snapshot.clocks[2]
+                        .unwrap_or(0)
+                        .min(observed.snapshot.clocks[3].unwrap_or(0))
+                        > (observed.at.elapsed().as_millis() as u64).saturating_add(1000)
+            })
+        })
     }
     fn validate_intent(&self, hop: usize, round: u64, intent: &OutgoingIntent) -> Result<()> {
         let reg = &self.plan.hops[hop].registration;

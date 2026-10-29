@@ -373,6 +373,19 @@ impl PaymentLedger {
         Ok(ledger)
     }
 
+    /// A second verified connection to this exact authoritative file. Native
+    /// wallet waits may use it while the controller journals status queries;
+    /// neither connection may retain a SQLite transaction across an await.
+    pub(crate) fn reopen_verified_peer(&self) -> Result<Self> {
+        self.check_file_identity()?;
+        let peer = Self::reopen(&self.path, self.account)?;
+        if peer.file_identity != self.file_identity {
+            return Err(LedgerError::InvalidLedger);
+        }
+        self.check_file_identity()?;
+        Ok(peer)
+    }
+
     fn check_file_identity(&self) -> Result<()> {
         if storage::FileIdentity::read(&self.path)? != self.file_identity {
             return Err(LedgerError::InvalidLedger);
