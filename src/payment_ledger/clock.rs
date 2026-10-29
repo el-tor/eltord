@@ -112,6 +112,10 @@ impl PaymentLedger {
         let version: i64 = ledger
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version == 4 {
+            drop(ledger);
+            return Self::upgrade_from_v4(path, account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, account);
@@ -148,6 +152,8 @@ impl PaymentLedger {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(receiving::SCHEMA)?;
+        tx.execute_batch(origin::SCHEMA)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);

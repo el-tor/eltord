@@ -26,13 +26,16 @@ use thiserror::Error;
 pub mod clock;
 pub use clock::{ActivationIntervalAnchor, InitialClockAnchor, UtcClockInterval};
 pub mod outgoing;
+pub mod origin;
+pub mod receiving;
+mod migration;
 pub mod storage;
 pub mod wallet;
 
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 const APPLICATION_ID: i64 = 0x454c5452;
-const VERSION: i64 = 4;
+const VERSION: i64 = 5;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -294,6 +297,8 @@ impl PaymentLedger {
         tx.execute_batch(outgoing::SCHEMA)?;
         storage::initialize(&tx, budget_bytes)?;
         tx.execute_batch(clock::SCHEMA)?;
+        tx.execute_batch(receiving::SCHEMA)?;
+        tx.execute_batch(origin::SCHEMA)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
             params![&account.0[..]],
@@ -353,6 +358,8 @@ impl PaymentLedger {
         outgoing::validate_schema(&ledger.connection)?;
         storage::validate_schema(&ledger.connection)?;
         clock::validate_schema(&ledger.connection)?;
+        receiving::validate_schema(&ledger.connection)?;
+        origin::validate_schema(&ledger.connection)?;
         Ok(ledger)
     }
 
@@ -458,6 +465,7 @@ impl PaymentLedger {
         } else {
             storage::check_admission(&tx)?;
             require_open_instance(&tx, first.instance)?;
+            receiving::require_open_binding(&tx, first.instance, first.handle)?;
             let mut conflict = false;
             for obligation in &batch.rounds {
                 let used: bool = tx.query_row(
@@ -886,6 +894,7 @@ fn insert_registration(tx: &rusqlite::Transaction<'_>, obligation: &Obligation) 
     }
     storage::check_admission(tx)?;
     require_open_instance(tx, obligation.instance)?;
+    receiving::require_open_binding(tx, obligation.instance, obligation.handle)?;
     tx.execute("INSERT INTO registrations(circuit_binding,round,kind,instance,handle,payload) VALUES(?1,?2,?3,?4,?5,?6)", params![&obligation.circuit_binding[..], sql_number(obligation.round)?, obligation.kind.code(), &obligation.instance[..], &obligation.handle[..], payload])?;
     storage::acquire_incoming(tx, tx.last_insert_rowid())?;
     Ok(())

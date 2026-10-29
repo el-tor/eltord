@@ -160,3 +160,18 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   suite passed 34 tests, including registration sockets, clock discontinuities,
   mismatched consumption proofs and closed bindings. These are local integration
   tests; the production coordinator and live paid-network acceptance are pending.
+
+- Schema 5 adds a durable, bounded native invoice-discovery cursor and candidate
+  mapping, per-circuit closure tombstones, and an origin control-operation
+  journal. Candidate hashes remain lookup hints: the relay must still obtain
+  exact native recipient evidence before authorization. COMMIT and START retain
+  their original operation identities; a claimed dispatch survives restart and
+  cannot be claimed again by a second controller. Read-only recovery does not
+  authorize payment. Origin records reserve conservative future-write headroom
+  under the same ledger storage ceiling, and closure prevents later dispatch.
+  Explicit migration preserves existing obligations and replay records; normal
+  reopen never upgrades a database. The combined ledger suite passed 75 tests,
+  including wrong-account migration, closed-circuit dispatch, changed operation
+  identity, and corruption checks. These local tests do not establish live
+  activation, renewal, or real Lightning settlement acceptance. The live relay
+  coordinator and origin orchestration remain in progress.

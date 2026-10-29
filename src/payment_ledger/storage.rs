@@ -66,6 +66,10 @@ impl PaymentLedger {
         let version: i64 = ledger
             .connection
             .pragma_query_value(None, "user_version", |r| r.get(0))?;
+        if version == 4 {
+            drop(ledger);
+            return Self::upgrade_from_v4(path, expected_account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
@@ -108,6 +112,8 @@ impl PaymentLedger {
         initialize(&tx, DEFAULT_BUDGET_BYTES)?;
         reserve_legacy(&tx)?;
         tx.execute_batch(clock::SCHEMA)?;
+        tx.execute_batch(receiving::SCHEMA)?;
+        tx.execute_batch(origin::SCHEMA)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -261,7 +267,10 @@ fn measure(connection: &Connection) -> Result<StorageStatus> {
         [],
         |r| r.get(0),
     )?;
-    let reserved = u64::try_from(reserved).map_err(|_| LedgerError::InvalidLedger)?;
+    let origin_reserved: i64 = connection.query_row("SELECT coalesce(sum(reserve_bytes),0) FROM origin_operations", [], |r|r.get(0))?;
+    let reserved = u64::try_from(reserved).map_err(|_| LedgerError::InvalidLedger)?
+        .checked_add(u64::try_from(origin_reserved).map_err(|_|LedgerError::InvalidLedger)?)
+        .ok_or(LedgerError::InvalidLedger)?;
     let charged = database
         .checked_add(journal.max(rollback))
         .and_then(|n| n.checked_add(reserved))

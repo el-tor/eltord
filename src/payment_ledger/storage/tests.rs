@@ -327,7 +327,7 @@ fn explicit_v2_upgrade_preserves_unresolved_reservations_and_authorization_histo
     ledger
         .connection
         .execute_batch(
-            "DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;DROP TABLE storage_reservations;DROP TABLE storage_policy;PRAGMA user_version=2;",
+            "DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;DROP TABLE storage_reservations;DROP TABLE storage_policy;PRAGMA user_version=2;",
         )
         .unwrap();
     drop(ledger);
