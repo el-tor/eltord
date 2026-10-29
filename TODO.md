@@ -16,6 +16,17 @@ For every new or changed specification requirement, add or update a stable TODO 
 
 ## Shared paid-circuit requirements
 
+ET-04/05/07/33 must implement the [paid byte quota contract](spec/01a_circuit_renewal_wire.md#paid-byte-quota-accounting)
+in `tor` and the embedded `libeltor-sys` source mirror. Count both physical
+directions at actual ingress/egress, including headers/control/padding, with
+transit receiving two link charges. Reset only on actual new paid-round
+activation; close on insufficient quota without dropping/resuming, free fallback
+or an exempt control lane. Test exact boundary and zero/unlimited paid semantics,
+full fork cell sizes, duplicate activation/reconnect/renewal reset attempts,
+grace and timer ordering. Assess exhaustion-close timing/linkability in live
+acceptance; local tests and explicit policy configuration do not satisfy the
+independent review or production advertisement prerequisites.
+
 Foundation implementation is now authorized on local `paid-circuit-foundation`
 branches. See [the implementation plan](docs/paid-circuit-foundation-plan.md).
 ET-01/07/08/33 also require the [durable admission bridge](spec/control/lifecycle.md#durable-admission-before-registration):
