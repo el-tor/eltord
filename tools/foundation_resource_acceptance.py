@@ -408,7 +408,12 @@ def run(args):
 
         def stress(index):
             control = controls[index]
-            for _ in range(manifest["per_origin"]):
+            for attempt in range(manifest["per_origin"]):
+                # Three stress origins at <=1 build/s each remain below the
+                # shared downstream connection's four-admission/s profile. This
+                # scenario targets live state capacity, not setup-rate pressure.
+                if attempt:
+                    time.sleep(1)
                 owned[index].append(control.build(manifest["path"]))
             deadline = time.monotonic() + 15
             built = set()

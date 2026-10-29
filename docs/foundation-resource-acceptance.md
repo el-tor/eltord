@@ -7,6 +7,9 @@ provisions a ledger, sends payment commands, or deletes an earlier result.
 Preparation creates fresh private client directories; existing Chutney identities,
 wallets, configurations and financial histories are not copied or replaced.
 
+The workload spaces requests by one second per stress origin so the shared
+setup-rate limit does not prevent reaching the live-state ceiling.
+
 The current scenario measures shared **live-circuit capacity**, refusal across
 independent origin processes and honest recovery. It samples other resource
 ceilings, but does not saturate every byte/CPU/queue ceiling or establish
