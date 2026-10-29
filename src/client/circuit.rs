@@ -333,6 +333,9 @@ mod tests {
         drop(control);
         drop(ledger);
         let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
+        let prepared = PreparedConstruction::restore(&ledger, [4; 32])
+            .unwrap()
+            .unwrap();
         assert!(
             ledger
                 .get_origin_construction([4; 32])

@@ -30,6 +30,11 @@ impl PreparedConstruction {
             || instance == [0; 16]
             || accepted_context.is_empty()
             || accepted_context.len() > 16384
+            || clock.now_ms < 0
+            || clock
+                .now_ms
+                .checked_add(clock.uncertainty_ms as i64)
+                .is_none()
             || clock.uncertainty_ms > 5000
         {
             return Err(invalid());
@@ -49,6 +54,57 @@ impl PreparedConstruction {
             command,
             payload,
         })
+    }
+    /// Recover the exact original context and clock instead of constructing new
+    /// arguments from current settings. This never clears a dispatch claim.
+    pub(crate) fn restore(ledger: &PaymentLedger, scope: [u8; 32]) -> io::Result<Option<Self>> {
+        let Some(saved) = ledger
+            .get_origin_construction(scope)
+            .map_err(|_| invalid())?
+        else {
+            return Ok(None);
+        };
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Clock {
+            now_ms: i64,
+            uncertainty_ms: u64,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Envelope {
+            version: u8,
+            instance: String,
+            command: String,
+            accepted_context: String,
+            construction_clock: Clock,
+        }
+        let envelope: Envelope = serde_json::from_slice(&saved.payload).map_err(|_| invalid())?;
+        let clock = &envelope.construction_clock;
+        let context = hex::decode(&envelope.accepted_context).map_err(|_| invalid())?;
+        if envelope.version != 1
+            || envelope.instance != hex::encode(saved.instance)
+            || context.is_empty()
+            || context.len() > 16384
+            || hex::encode(&context) != envelope.accepted_context
+            || clock.now_ms < 0
+            || clock.uncertainty_ms > 5000
+            || clock
+                .now_ms
+                .checked_add(clock.uncertainty_ms as i64)
+                .is_none()
+            || envelope.command.len() > 16384
+            || !envelope.command.starts_with("+EXTENDPAIDCIRCUIT 0\r\n")
+            || !envelope.command.ends_with("\r\n.\r\n")
+        {
+            return Err(invalid());
+        }
+        Ok(Some(Self {
+            scope,
+            instance: saved.instance,
+            command: envelope.command,
+            payload: saved.payload,
+        }))
     }
     pub(crate) async fn dispatch(
         &self,
