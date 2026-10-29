@@ -24,12 +24,13 @@ use std::{
 use thiserror::Error;
 
 pub mod outgoing;
+pub mod storage;
 pub mod wallet;
 
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 const APPLICATION_ID: i64 = 0x454c5452;
-const VERSION: i64 = 2;
+const VERSION: i64 = 3;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -55,6 +56,8 @@ pub enum LedgerError {
     OutsideWindow,
     #[error("financial exposure or wallet work budget exhausted")]
     BudgetExceeded,
+    #[error("durable ledger storage pressure; admission or dispatch refused")]
+    StoragePressure,
     #[error("wallet dispatch was already claimed; reconcile its outcome")]
     DispatchAlreadyClaimed,
     #[error("operation unsupported by the paid-circuit foundation")]
@@ -249,6 +252,8 @@ pub struct Authorization {
 pub struct PaymentLedger {
     connection: Connection,
     account: AccountId,
+    path: std::path::PathBuf,
+    file_identity: storage::FileIdentity,
 }
 
 impl PaymentLedger {
@@ -256,6 +261,17 @@ impl PaymentLedger {
     /// empty/corrupt files, are never overwritten. A failed provision leaves its
     /// file in place for inspection, requiring explicit operator recovery.
     pub fn provision(path: &Path, account: AccountId) -> Result<Self> {
+        Self::provision_with_storage_budget(path, account, storage::DEFAULT_BUDGET_BYTES)
+    }
+
+    /// Exclusive creation with a smaller immutable local storage budget. The
+    /// profile ceiling remains 1GiB; reopening never changes accepted limits.
+    pub fn provision_with_storage_budget(
+        path: &Path,
+        account: AccountId,
+        budget_bytes: u64,
+    ) -> Result<Self> {
+        storage::validate_budget(budget_bytes)?;
         if account.0 == [0; 32] {
             return Err(LedgerError::InvalidInput);
         }
@@ -274,6 +290,7 @@ impl PaymentLedger {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
         tx.execute_batch(outgoing::SCHEMA)?;
+        storage::initialize(&tx, budget_bytes)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
             params![&account.0[..]],
@@ -281,6 +298,7 @@ impl PaymentLedger {
         tx.pragma_update(None, "application_id", APPLICATION_ID)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
+        storage::validate_schema(&ledger.connection)?;
         // Persist the newly created directory entry as well as SQLite's commit.
         #[cfg(unix)]
         {
@@ -330,10 +348,20 @@ impl PaymentLedger {
             return Err(LedgerError::InvalidLedger);
         }
         outgoing::validate_schema(&ledger.connection)?;
+        storage::validate_schema(&ledger.connection)?;
         Ok(ledger)
     }
 
+    fn check_file_identity(&self) -> Result<()> {
+        if storage::FileIdentity::read(&self.path)? != self.file_identity {
+            return Err(LedgerError::InvalidLedger);
+        }
+        Ok(())
+    }
+
     fn connect(path: &Path, account: AccountId) -> Result<Self> {
+        let file_identity = storage::FileIdentity::read(path)?;
+        let canonical_path = path.canonicalize()?;
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
@@ -351,12 +379,15 @@ impl PaymentLedger {
         Ok(Self {
             connection,
             account,
+            path: canonical_path,
+            file_identity,
         })
     }
 
     /// Register a one-time handshake obligation. Recurring obligations must use
     /// reserve_batch so every ID is reserved together before Tor admission.
     pub fn register_handshake(&mut self, obligation: &Obligation) -> Result<()> {
+        self.check_file_identity()?;
         obligation.validate()?;
         if obligation.kind != ChargeKind::Handshake {
             return Err(LedgerError::InvalidInput);
@@ -377,6 +408,7 @@ impl PaymentLedger {
         batch: &BatchRegistration,
         decision: Id16,
     ) -> Result<BatchReservation> {
+        self.check_file_identity()?;
         if decision == [0; 16] || batch.request_digest == [0; 32] {
             return Err(LedgerError::InvalidInput);
         }
@@ -420,6 +452,7 @@ impl PaymentLedger {
             }
             outcome_from_sql(outcome)?
         } else {
+            storage::check_admission(&tx)?;
             require_open_instance(&tx, first.instance)?;
             let mut conflict = false;
             for obligation in &batch.rounds {
@@ -445,6 +478,7 @@ impl PaymentLedger {
                     tx.execute("INSERT INTO payment_ids(payment_id,instance,handle,period) VALUES(?1,?2,?3,?4)", params![&obligation.payment_id[..], &first.instance[..], &first.handle[..], period])?;
                 }
             }
+            storage::check_admission(&tx)?;
             outcome
         };
         tx.commit()?;
@@ -466,6 +500,7 @@ impl PaymentLedger {
         handle: Id16,
         period: u64,
     ) -> Result<Option<BatchReservation>> {
+        self.check_file_identity()?;
         let row: Option<(Vec<u8>,Vec<u8>,i64)> = self.connection.query_row("SELECT request_digest,decision,outcome FROM batches WHERE instance=?1 AND handle=?2 AND period=?3",params![&instance[..],&handle[..],sql_number(period)?],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
         row.map(|(request_digest, decision, outcome)| {
             Ok(BatchReservation {
@@ -487,6 +522,7 @@ impl PaymentLedger {
     /// Read financial authorization independently of live Tor state. A returned
     /// record is not proof of current activation or permission to create a path.
     pub fn get_authorization(&mut self, obligation: &Obligation) -> Result<Option<Authorization>> {
+        self.check_file_identity()?;
         let tx = self.connection.transaction()?;
         let (id, _) = find_registration(&tx, obligation)?;
         let result = read_authorization(&tx, id)?.map(|(authorization, _)| authorization);
@@ -503,6 +539,7 @@ impl PaymentLedger {
         handle: Id16,
         window: AcceptanceWindow,
     ) -> Result<()> {
+        self.check_file_identity()?;
         if window.opens_at_ms < 0 || window.closes_at_ms < window.opens_at_ms {
             return Err(LedgerError::InvalidInput);
         }
@@ -551,6 +588,7 @@ impl PaymentLedger {
         handle: Id16,
         anchor: ActivationAnchor,
     ) -> Result<()> {
+        self.check_file_identity()?;
         anchor.validate()?;
         let payload = encode(&anchor)?;
         let tx = self
@@ -589,6 +627,7 @@ impl PaymentLedger {
         decision: Id16,
         clock: ClockObservation,
     ) -> Result<Authorization> {
+        self.check_file_identity()?;
         if obligation.amount_msat == 0 {
             return Err(LedgerError::InvalidInput);
         }
@@ -626,6 +665,7 @@ impl PaymentLedger {
         decision: Id16,
         clock: ClockObservation,
     ) -> Result<Authorization> {
+        self.check_file_identity()?;
         if obligation.amount_msat != 0 {
             return Err(LedgerError::InvalidInput);
         }
@@ -688,6 +728,7 @@ impl PaymentLedger {
             tx.execute("INSERT INTO incoming_claims(account,payment_hash,registration_id,amount_msat,settled_at_ms,evidence) VALUES(?1,?2,?3,?4,?5,?6)", params![&self.account.0[..], &payment_hash[..], id, sql_number(e.amount_msat)?, e.settled_at_ms, evidence_payload])?;
         }
         tx.execute("INSERT INTO authorizations(registration_id,decision,record_digest,payment_hash,state,evidence) VALUES(?1,?2,?3,?4,0,?5)", params![id, &decision[..], &digest[..], &payment_hash[..], evidence_payload])?;
+        storage::release_incoming(&tx, id)?;
         tx.commit()?;
         Ok(Authorization {
             decision,
@@ -700,6 +741,7 @@ impl PaymentLedger {
     /// Record authenticated Tor activation confirmation. A stale decision or a
     /// closed live binding cannot consume/reassign a different obligation.
     pub fn mark_consumed(&mut self, obligation: &Obligation, decision: Id16) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -725,6 +767,7 @@ impl PaymentLedger {
     /// Tor process loss closes all old bindings without erasing claims or
     /// pretending ambiguous activation is an unspent/refundable failure.
     pub fn close_instance(&mut self, instance: Id16) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -843,8 +886,10 @@ fn insert_registration(tx: &rusqlite::Transaction<'_>, obligation: &Obligation) 
             Err(LedgerError::Conflict)
         };
     }
+    storage::check_admission(tx)?;
     require_open_instance(tx, obligation.instance)?;
     tx.execute("INSERT INTO registrations(circuit_binding,round,kind,instance,handle,payload) VALUES(?1,?2,?3,?4,?5,?6)", params![&obligation.circuit_binding[..], sql_number(obligation.round)?, obligation.kind.code(), &obligation.instance[..], &obligation.handle[..], payload])?;
+    storage::acquire_incoming(tx, tx.last_insert_rowid())?;
     Ok(())
 }
 

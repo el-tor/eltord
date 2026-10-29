@@ -145,7 +145,7 @@ pub struct Exposure {
 }
 
 impl PaymentLedger {
-    /// Explicit transactional v1->v2 upgrade; ordinary reopen never changes a
+    /// Explicit transactional v1->current upgrade; ordinary reopen never changes a
     /// schema. Receiving claims/authorizations remain intact. No lost-history
     /// reset or inferred wallet outcomes are part of migration.
     pub fn upgrade_from_v1(path: &Path, expected_account: AccountId) -> Result<Self> {
@@ -156,6 +156,10 @@ impl PaymentLedger {
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
+        }
+        if version == 2 {
+            drop(ledger);
+            return Self::upgrade_from_v2(path, expected_account);
         }
         let app: i64 = ledger
             .connection
@@ -190,6 +194,8 @@ impl PaymentLedger {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
+        storage::initialize(&tx, storage::DEFAULT_BUDGET_BYTES)?;
+        storage::reserve_legacy(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -197,6 +203,7 @@ impl PaymentLedger {
     }
 
     pub fn configure_account_budget(&mut self, budget: AccountBudget) -> Result<()> {
+        self.check_file_identity()?;
         validate_limits(budget.lifetime_limit_msat, budget.outstanding_limit_msat)?;
         if budget.max_queued_intents == 0
             || budget.max_queued_intents > 128
@@ -234,6 +241,7 @@ impl PaymentLedger {
     }
 
     pub fn configure_path_budget(&mut self, budget: &PathBudget) -> Result<()> {
+        self.check_file_identity()?;
         if budget.funding != FundingSource::OwnWallet {
             return Err(LedgerError::UnsupportedOperation);
         }
@@ -267,7 +275,9 @@ impl PaymentLedger {
         }
         require_open_instance(&tx, budget.instance)?;
         account_budget(&tx)?;
+        storage::check_admission(&tx)?;
         tx.execute("INSERT INTO path_budgets(local_budget_scope,instance,handle,payload,current_round,closed) VALUES(?1,?2,?3,?4,1,0)",params![&budget.local_budget_scope[..],&budget.instance[..],&budget.handle[..],payload])?;
+        storage::check_admission(&tx)?;
         tx.commit()?;
         Ok(())
     }
@@ -275,6 +285,7 @@ impl PaymentLedger {
     /// Register independently authenticated hop terms before any wallet intent.
     /// Retries recover the exact terms; changing C/Q/payee/prices is a conflict.
     pub fn configure_hop_spending_terms(&mut self, terms: &HopSpendingTerms) -> Result<()> {
+        self.check_file_identity()?;
         if [
             terms.local_budget_scope,
             terms.charge_reference,
@@ -314,7 +325,9 @@ impl PaymentLedger {
         if closed {
             return Err(LedgerError::Closed);
         }
+        storage::check_admission(&tx)?;
         tx.execute("INSERT INTO hop_spending_terms(local_budget_scope,charge_reference,hop_circuit_binding,payload) VALUES(?1,?2,?3,?4)",params![&terms.local_budget_scope[..],&terms.charge_reference[..],&terms.hop_circuit_binding[..],payload])?;
+        storage::check_admission(&tx)?;
         tx.commit()?;
         Ok(())
     }
@@ -327,6 +340,7 @@ impl PaymentLedger {
         intent: &OutgoingIntent,
         clock: ClockObservation,
     ) -> Result<OutgoingRecord> {
+        self.check_file_identity()?;
         validate_intent(intent, self.account)?;
         let tx = self
             .connection
@@ -338,6 +352,7 @@ impl PaymentLedger {
                 Err(LedgerError::Conflict)
             };
         }
+        storage::check_dispatch(&tx)?;
         certain_time(clock.now_ms, clock.uncertainty_ms, intent.window)?;
         require_open_instance(&tx, intent.instance)?;
         let (account, blocked) = account_budget(&tx)?;
@@ -383,8 +398,10 @@ impl PaymentLedger {
         {
             return Err(LedgerError::BudgetExceeded);
         }
+        storage::acquire_outgoing(&tx, intent.operation)?;
         tx.execute("INSERT INTO outgoing_intents(operation,instance,local_budget_scope,round,kind,payee_reference,charge_reference,payment_id,payment_hash,payload,state,closed,reserved_msat,spent_msat,outstanding_msat,fee_breached) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,0,?11,0,?11,0)",params![&intent.operation[..],&intent.instance[..],&intent.local_budget_scope[..],sql_number(intent.round)?,intent.kind.code(),&intent.payee_reference[..],&intent.charge_reference[..],&intent.payment_id[..],&intent.payment_hash[..],encode(intent)?,sql_number(maximum)?])?;
         let record = read_outgoing(&tx, intent.operation)?.ok_or(LedgerError::InvalidLedger)?;
+        storage::check_dispatch(&tx)?;
         tx.commit()?;
         Ok(record)
     }
@@ -396,6 +413,7 @@ impl PaymentLedger {
         operation: Id16,
         clock: ClockObservation,
     ) -> Result<DispatchPermit> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -414,6 +432,7 @@ impl PaymentLedger {
         if blocked || exposure(&tx, None, None)?.wallet_rpcs >= account.max_wallet_rpcs {
             return Err(LedgerError::BudgetExceeded);
         }
+        storage::check_dispatch(&tx)?;
         allowed_round(&record.intent, current)?;
         certain_time(clock.now_ms, clock.uncertainty_ms, record.intent.window)?;
         tx.execute(
@@ -427,6 +446,7 @@ impl PaymentLedger {
     }
 
     pub fn mark_outgoing_unknown(&mut self, operation: Id16) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -451,6 +471,7 @@ impl PaymentLedger {
         &mut self,
         evidence: &OutgoingEvidence,
     ) -> Result<OutgoingRecord> {
+        self.check_file_identity()?;
         if evidence.account != self.account {
             return Err(LedgerError::WrongAccount);
         }
@@ -505,6 +526,7 @@ impl PaymentLedger {
             tx.execute("UPDATE account_budget SET blocked=1 WHERE singleton=1", [])?;
         }
         tx.execute("UPDATE outgoing_intents SET state=?2,reserved_msat=0,spent_msat=?3,outstanding_msat=?4,fee_breached=?5,outcome=?6 WHERE operation=?1",params![&evidence.operation[..],state,sql_number(spent)?,if state==3 {sql_number(spent)?}else{0},breach,payload])?;
+        storage::release_outgoing(&tx, evidence.operation)?;
         let result = read_outgoing(&tx, evidence.operation)?.ok_or(LedgerError::InvalidLedger)?;
         tx.commit()?;
         Ok(result)
@@ -512,6 +534,7 @@ impl PaymentLedger {
 
     /// Cancel only an intent whose durable dispatch latch was never claimed.
     pub fn cancel_before_dispatch(&mut self, operation: Id16) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -523,6 +546,7 @@ impl PaymentLedger {
             return Err(LedgerError::Conflict);
         }
         tx.execute("UPDATE outgoing_intents SET state=7,reserved_msat=0,outstanding_msat=0 WHERE operation=?1",params![&operation[..]])?;
+        storage::release_outgoing(&tx, operation)?;
         tx.commit()?;
         Ok(())
     }
@@ -530,6 +554,7 @@ impl PaymentLedger {
     /// Authenticated usage confirmation retires prepaid exposure, while actual
     /// spend continues counting toward lifetime caps. Closure cannot prove use.
     pub fn mark_outgoing_consumed(&mut self, operation: Id16) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -555,6 +580,7 @@ impl PaymentLedger {
     /// prepaid obligations must be accounted as used before advancing; a new
     /// round cannot hide their exposure or purchase an unadmitted eleventh round.
     pub fn advance_spending_round(&mut self, binding: Hash32, round: u64) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -581,12 +607,14 @@ impl PaymentLedger {
     }
 
     pub fn get_outgoing(&self, operation: Id16) -> Result<Option<OutgoingRecord>> {
+        self.check_file_identity()?;
         read_outgoing(&self.connection, operation)
     }
 
     /// Close financial admission for one failed live circuit. This does not send
     /// a Tor command and cannot turn an uncertain dispatched payment into failure.
     pub fn close_outgoing_path(&mut self, binding: Hash32) -> Result<()> {
+        self.check_file_identity()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -596,16 +624,20 @@ impl PaymentLedger {
             "UPDATE path_budgets SET closed=1 WHERE local_budget_scope=?1",
             params![&binding[..]],
         )?;
+        storage::release_cancelled(&tx)?;
         tx.commit()?;
         Ok(())
     }
     pub fn account_exposure(&self) -> Result<Exposure> {
+        self.check_file_identity()?;
         exposure(&self.connection, None, None)
     }
     pub fn path_exposure(&self, binding: Hash32) -> Result<Exposure> {
+        self.check_file_identity()?;
         exposure(&self.connection, Some(binding), None)
     }
     pub fn outgoing_admission_blocked(&self) -> Result<bool> {
+        self.check_file_identity()?;
         Ok(account_budget(&self.connection)?.1)
     }
 
@@ -616,6 +648,7 @@ impl PaymentLedger {
         after: Option<Id16>,
         limit: u64,
     ) -> Result<Vec<OutgoingRecord>> {
+        self.check_file_identity()?;
         if limit == 0 || limit > 128 {
             return Err(LedgerError::InvalidInput);
         }
@@ -837,6 +870,7 @@ pub(super) fn close_instance(tx: &rusqlite::Transaction<'_>, instance: Id16) -> 
         "UPDATE path_budgets SET closed=1 WHERE instance=?1",
         params![&instance[..]],
     )?;
+    storage::release_cancelled(tx)?;
     Ok(())
 }
 

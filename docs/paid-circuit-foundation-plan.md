@@ -136,3 +136,15 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   construction/activation, shared resource accounting and daemon orchestration
   remain outstanding. Embedded source mirrors are committed as `ac51be3` and
   `b80f0e2`; a new embedded build is still required before transport acceptance.
+
+- The storage gate implements the resource profile's 1 GiB ledger ceiling,
+  80% admission cutoff and 95% dispatch cutoff. Schema 3 reserves future write
+  headroom transactionally, checks database/sidecar allocation and filesystem
+  availability, and detects deletion or replacement of the live ledger file.
+  Explicit migrations retain replay claims and unresolved financial records;
+  ordinary reopen does not migrate or create a missing ledger. An independent
+  run of all 61 ledger tests passed, including physical storage pressure,
+  migration, recovery and uncertain wallet outcomes. The 256 KiB per-obligation
+  reserve is a conservative test estimate requiring deployment measurements;
+  it cannot guarantee space against unrelated writers on a shared filesystem.
+  Live daemon orchestration and paid network acceptance remain incomplete.
