@@ -25,3 +25,6 @@ pub use payment_snapshot::*;
 
 mod payment_event;
 pub use payment_event::*;
+
+mod payment_inventory;
+pub use payment_inventory::*;
