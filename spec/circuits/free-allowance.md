@@ -6,7 +6,7 @@
 
 ### Uniform per-hop payment payload
 
-For each hop, preserve the handshake payment hash/preimage fields and ten distinct 32-byte round payment identifiers in the existing `EXTENDPAIDCIRCUIT` construction. Generate independent identifiers for each hop, round, and new circuit, including when no real payment is expected for the free allowance. Preserve per-hop encryption and equal-size padding. A relay decrypts only its own payment information.
+For each hop, preserve the handshake payment hash/preimage fields and ten distinct 32-byte round payment identifiers in the existing `EXTENDPAIDCIRCUIT` construction. Generate independent identifiers for each hop, round, and new circuit, including when no real payment is expected for the free allowance. Preserve per-hop encryption and equal-size padding. A relay decrypts only its own payment information. The next hop's payment proof and identifiers MUST remain inside that hop's authenticated encrypted ntor payload; an EXTEND2 formatter MUST NOT append a plaintext duplicate for the preceding relay to inspect. An enabled foundation relay validates its own admitted context and the permitted child handshake instead of scanning for another hop's plaintext payment marker.
 
 Where no handshake fee applies, populate the existing handshake fields with fresh, correctly sized dummy hash/preimage values instead of omitting them. Where the agreed paid handshake fee applies, use its actual proof and verify it against the recipient's settled invoice records. A relay's advertised paid rate and paid handshake fee remain under operator control; a new relay may advertise a zero-sat handshake fee as before.
 
@@ -88,6 +88,46 @@ substitution, duplicate/malformed fields, suffix boundaries, missing ACK,
 reservation failure/cancellation and worker completion races, plus paid/free
 payload-shape parity. This contract is a proposed implementation target, not
 completed live admission or anonymity validation.
+
+### Bounded one-hop directory bootstrap
+
+Before an origin has enough directory information to build a capability-checked
+ordinary path, it may use Tor's existing one-hop directory bootstrap. This is a
+restricted local lifecycle class, not an alternative application path or a
+requester-supplied purpose bit. It does not advertise or imply successful
+foundation admission. Ordinary application and relay-maintenance paths still
+require the uniform authenticated profile above.
+
+On a foundation-enabled relay, every accepted handshake type reserves shared
+setup, pending-state, CPU and memory capacity before cryptographic work. A
+successful handshake without the authenticated resource-profile extension may
+retain only an immutable bootstrap-only resource context. It MUST NOT release
+that context and become unrestricted legacy traffic. Apply the same free cell
+rate/burst, both-direction accounting, aggregate link/process ceilings, bounded
+queue and original free-lifetime rules to this context. Admission failure or a
+failed handshake releases actual reservations once; it does not refund attempted
+work or create fresh credit.
+
+Bootstrap-only circuits permit BEGIN_DIR and the existing directory stream's
+DATA, END and SENDME, plus permitted circuit-level SENDME and DROP maintenance.
+Normal Tor stream validation still applies. They MUST reject EXTEND/EXTEND2,
+application BEGIN/RESOLVE, hidden-service commands and payment-control commands.
+They cannot acquire paid authority, be promoted into ordinary application
+circuits or be cannibalized into longer paths. A normal admitted context and
+ntor-v3 child handshake are required before extension. Legacy behavior when the
+foundation profile is disabled remains separately scoped and is not conformance
+evidence for the enabled profile.
+
+**Privacy/timing assessment:** this restriction adds no wire purpose flag,
+payment identifier or new bootstrap handshake field. Tor directory commands
+remain visible at their endpoint; a one-hop directory fetch is not anonymous
+application transport. Normal foundation paths retain equal-size encrypted
+per-hop fields, with no plaintext child-proof suffix. Refusals, queueing and
+bootstrap timing remain observable. Validate FAST, older ntor and ntor-v3
+non-negotiated dispatch, legitimate directory traffic, rejected extension and
+application/hidden-service commands, both-direction limits, cancellation and
+honest recovery. Focused native handler tests and local transport runs are
+separate from production load or independent privacy validation.
 
 ### Native relay reachability
 
