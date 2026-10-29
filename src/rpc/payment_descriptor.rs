@@ -7,6 +7,7 @@ use std::io;
 pub struct FoundationDescriptor {
     pub fingerprint: [u8; 20],
     pub terms: [u8; 55],
+    pub bolt12_offer: Option<String>,
 }
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid foundation descriptor")
@@ -23,6 +24,7 @@ impl FoundationDescriptor {
         let mut renew = None;
         let mut free = false;
         let mut routers = 0;
+        let mut bolt12_offer = None;
         for line in raw.lines() {
             let fields: Vec<_> = line.split_whitespace().collect();
             match fields.first().copied() {
@@ -40,6 +42,21 @@ impl FoundationDescriptor {
                     let mut bytes = [0; 20];
                     hex::decode_to_slice(value, &mut bytes).map_err(|_| invalid())?;
                     fingerprint = Some(bytes);
+                }
+                Some("PaymentBolt12Offer") => {
+                    if bolt12_offer.is_some()
+                        || fields.len() != 2
+                        || fields[1].len() > 2048
+                        || !fields[1].starts_with("lno1")
+                        || !fields[1]
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                    {
+                        return Err(invalid());
+                    }
+                    // Signature/offer semantics are checked by the native wallet
+                    // adapter before funding. Preserve the exact signed string.
+                    bolt12_offer = Some(fields[1].to_owned());
                 }
                 Some("eltor-payment-start") => {
                     if start.is_some()
@@ -76,6 +93,7 @@ impl FoundationDescriptor {
         Ok(Self {
             fingerprint: expected,
             terms: start.unwrap(),
+            bolt12_offer,
         })
     }
 }
@@ -141,11 +159,7 @@ fn terms(value: &str) -> io::Result<[u8; 55]> {
     }
     let mut out = [0; 55];
     hex::decode_to_slice(value, &mut out).map_err(|_| invalid())?;
-    // Full semantic validation is performed by Tor and compared against the
-    // constructor's validated policy; reject unsupported profile identifiers here.
-    if out[..3] != [1, 1, 10] {
-        return Err(invalid());
-    }
+    super::FoundationPolicy::decode(&out)?;
     Ok(out)
 }
 #[cfg(test)]
@@ -155,9 +169,33 @@ mod tests {
     fn signed_profile_selection_requires_complete_matching_capabilities() {
         let mut terms = [0; 55];
         terms[..3].copy_from_slice(&[1, 1, 10]);
+        terms[11..15].copy_from_slice(&60000u32.to_be_bytes());
+        terms[15..19].copy_from_slice(&60000u32.to_be_bytes());
+        terms[31..39].copy_from_slice(&1800000u64.to_be_bytes());
+        terms[39..43].copy_from_slice(&3u32.to_be_bytes());
+        terms[51..55].copy_from_slice(&30000u32.to_be_bytes());
         let terms = hex::encode(terms);
         let raw = format!("router fixture 127.0.0.1 1 0 0\nfingerprint {}\neltor-payment-start 1 226 227 228 229 {}\neltor-payment-renew 1 224 225 {}\neltor-free-capacity 1 2 128 600000\n", hex::encode([1;20]), terms, terms);
         assert!(FoundationDescriptor::parse(&raw, [1; 20]).is_ok());
+        let with_offer = format!("{}PaymentBolt12Offer lno1fixture\n", raw);
+        assert_eq!(
+            FoundationDescriptor::parse(&with_offer, [1; 20])
+                .unwrap()
+                .bolt12_offer
+                .as_deref(),
+            Some("lno1fixture")
+        );
+        assert!(FoundationDescriptor::parse(
+            &(with_offer.clone() + "PaymentBolt12Offer lno1another\n"),
+            [1; 20]
+        )
+        .is_err());
+        assert!(FoundationDescriptor::parse(
+            &with_offer.replace("lno1fixture", "lno1fixture extra"),
+            [1; 20]
+        )
+        .is_err());
+
         let response = format!(
             "250 OK\r\n250+desc/id/{}=\r\n{}.\r\n250 OK\r\n221 closing\r\n",
             hex::encode([1; 20]),

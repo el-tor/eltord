@@ -2,7 +2,7 @@
 //! permission to pay. The coordinator must accept pinned policy/budget terms.
 use super::{OriginBinding, PaymentControl};
 use sha2::{Digest, Sha256};
-use std::{convert::TryInto, io};
+use std::io;
 fn bad() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "Invalid origin registration")
 }
@@ -33,12 +33,6 @@ fn digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
         h.update(p)
     }
     h.finalize().into()
-}
-fn u32_at(t: &[u8; 55], at: usize) -> u32 {
-    u32::from_be_bytes(t[at..at + 4].try_into().unwrap())
-}
-fn u64_at(t: &[u8; 55], at: usize) -> u64 {
-    u64::from_be_bytes(t[at..at + 8].try_into().unwrap())
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct OriginRegistration {
@@ -104,16 +98,7 @@ impl OriginRegistration {
             return Err(bad());
         }
         let terms = bytes::<55>(p[1])?;
-        if terms[..3] != [1, 1, 10]
-            || u32_at(&terms, 11) != 60000
-            || u32_at(&terms, 15) != 60000
-            || u32_at(&terms, 19) > 60000
-            || u64_at(&terms, 31) == 0
-            || u32_at(&terms, 39) < 2
-            || u32_at(&terms, 51) == 0
-        {
-            return Err(bad());
-        }
+        super::FoundationPolicy::decode(&terms)?;
         let q = bytes::<32>(p[2])?;
         let a0 = bytes::<32>(p[3])?;
         let b = &rows[2];
@@ -246,15 +231,22 @@ mod tests {
     }
     #[tokio::test]
     async fn registration_socket_reads_only_and_poisoned_metadata_cannot_be_reused() {
-        use tokio::{io::{AsyncBufReadExt, AsyncWriteExt, BufReader}, net::TcpListener};
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::TcpListener,
+        };
         let (binding, ids, reply) = fixture();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config = crate::types::RpcConfig {
             addr: listener.local_addr().unwrap().to_string(),
-            rpc_password: None, command: String::new(),
+            rpc_password: None,
+            command: String::new(),
         };
-        let command = format!("ELTOR_INITIAL_REGISTRATION_GET 1 {} {} 2\r\n",
-            hex::encode(binding.instance), hex::encode(binding.handle));
+        let command = format!(
+            "ELTOR_INITIAL_REGISTRATION_GET 1 {} {} 2\r\n",
+            hex::encode(binding.instance),
+            hex::encode(binding.handle)
+        );
         let server = tokio::spawn(async move {
             let mut socket = BufReader::new(listener.accept().await.unwrap().0);
             for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
@@ -265,19 +257,34 @@ mod tests {
             }
             // Exact valid metadata is read without an activation or payment command.
             // A substituted constructor binding on the next read poisons the client.
-            for response in [&reply, &reply.replace(&hex::encode([3; 32]), &hex::encode([9; 32]))] {
+            for response in [
+                &reply,
+                &reply.replace(&hex::encode([3; 32]), &hex::encode([9; 32])),
+            ] {
                 let mut line = String::new();
                 socket.read_line(&mut line).await.unwrap();
                 assert_eq!(line, command);
-                socket.get_mut().write_all((response.replace('\n', "\r\n") + "\r\n").as_bytes()).await.unwrap();
+                socket
+                    .get_mut()
+                    .write_all((response.replace('\n', "\r\n") + "\r\n").as_bytes())
+                    .await
+                    .unwrap();
             }
         });
         let mut control = PaymentControl::connect(&config).await.unwrap();
-        let record = control.origin_registration(&binding, 2, &ids).await.unwrap();
+        let record = control
+            .origin_registration(&binding, 2, &ids)
+            .await
+            .unwrap();
         assert_eq!(record.circuit_binding(), [3; 32]);
-        assert!(control.origin_registration(&binding, 2, &ids).await.is_err());
-        assert!(control.origin_registration(&binding, 2, &ids).await.is_err());
+        assert!(control
+            .origin_registration(&binding, 2, &ids)
+            .await
+            .is_err());
+        assert!(control
+            .origin_registration(&binding, 2, &ids)
+            .await
+            .is_err());
         server.await.unwrap();
     }
-
 }
