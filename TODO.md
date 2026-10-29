@@ -27,6 +27,13 @@ on uncertainty. These tasks remain unchecked until integrated and validated.
 Snapshots must include the per-hop C binding required by the recovery ledger;
 test missing/duplicate/changed `BINDING` rows and reject substitutes based on
 numeric circuit IDs. Keep C confined to the privileged local verifier and ledger.
+ET-02/08/33 also require the [origin constructor registration](spec/control/lifecycle.md#origin-constructor-registration)
+in `tor`, `eltord`, and the embedded source mirror: bounded read-only origin
+C/Q/A0, exact pinned policy and ten ordered IDs before COMMIT/outgoing accounting.
+Test recomputed digests, retained constructor-ID comparison, changed descriptor
+terms, malformed/duplicate rows, wrong instance/role/hop, incomplete/free-only
+profiles, output budgets and no wallet/state mutation. Keep keys/preimages and
+per-hop metadata out of logs; implementation and live acceptance remain pending.
 ET-08/33 must also validate ACTIVE status when the accepted hard lifetime ends
 inside a round: enforcement may be shorter than its nominal remaining time, but
 never exceed the pinned lifetime or extend deadlines through a query/retry.

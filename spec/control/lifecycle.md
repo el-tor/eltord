@@ -94,6 +94,56 @@ Local errors use the renewal table; missing commit returns
 from an earlier trustworthy observation. Contradictory authenticated observations
 stop new funding and are reported as protocol failure.
 
+## Origin constructor registration
+
+Before choosing COMMIT or recording outgoing obligations, the daemon retrieves
+constructor-pinned metadata for each owned origin hop:
+
+```text
+ELTOR_INITIAL_REGISTRATION_GET 1 instance handle hop
+```
+
+This privileged local read requires the exact process instance and origin handle,
+a completed authenticated foundation handshake, and a pinned financial profile.
+A base-capacity-only hop returns `551 UNSUPPORTED_PROFILE`; incomplete handshake
+state returns `551 INITIAL_STATE_UNCONFIRMED`. It never creates a profile,
+commits terms, activates a round, starts a timer, or contacts a wallet.
+
+```text
+250-ELTOR_INITIAL_REGISTRATION 1 instance handle hop revision
+250-POLICY terms terms_digest initial_allocation
+250-BINDING circuit_binding
+250-ROUND 1 payment_id_1
+... exactly ten ordered ROUND rows, through round 10 ...
+250 OK
+```
+
+The actual response has exactly 14 lines, at most 2048 bytes. `terms` is the
+constructor-pinned 55-byte policy encoded as 110 lowercase hex characters.
+Digests, C (`circuit_binding`), and each independent payment ID are 32-byte
+lowercase hex; instance/handle are 16-byte lowercase hex, hop is one-based u16,
+and revision is a nonzero u64. The daemon rejects duplicate or zero IDs,
+noncanonical values, wrong ownership, extra/missing rows, and inconsistent Q or
+A0. Recompute Q from the exact policy and A0 from C, Q and the ten ordered IDs
+using the existing wire digest domains. Compare the returned IDs to the retained
+constructor inputs and the policy to the accepted signed-descriptor terms and
+budgets before COMMIT or spending. A new descriptor cannot replace this pinned
+policy. The snapshot itself is not a relay COMMITTED/ACTIVE acknowledgment.
+
+The response omits preimages, handshake payment proofs, native traffic keys,
+exporter material and authentication keys. C must not be replaced by a numeric
+circuit ID or a daemon-generated correlation token. Queries share the existing
+authenticated control query-rate and output/resource budgets. An expired,
+unknown, or stale binding never causes a replacement circuit or a payment.
+
+**Privacy/timing assessment:** this adds only a bounded authenticated local
+snapshot of per-hop data already held by the originating Tor process. It adds no
+relay-wire field, common cross-hop identifier, network request, payment, or
+visible retry schedule. Keep these values out of routine logs; a compromised
+privileged controller already has access to the local circuit. Validate exact
+framing/ownership/digests, stale and incomplete states, resource exhaustion and
+absence of state mutation; live interoperability remains an acceptance gate.
+
 ## Relay registration snapshot
 
 ### Durable admission before registration
