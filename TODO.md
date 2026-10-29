@@ -219,3 +219,17 @@ Validation artifacts: public service codec fixtures and `spec/tools/check_codec_
 Implementation handoff: [version-one handoff](spec/validation/handoff.md) maps all twelve design items to chapters and required V1-CODEC/CRYPTO/LEDGER/SETUP/RENEW/WALLET/LOAD-PRIVACY suites, pins inspected source revisions and defines app/operator consent/status expectations. All implementation boxes remain unchecked. Editorial consistency review removes superseded open-schema/lifetime wording without treating runtime validation as complete. ET-20/21/22/33 track these handoff requirements.
 
 Design completion audit: all twelve design checklist items now link to concrete proposed contracts and handoff evidence. The cross-chapter audit traces success, refusal, reply loss, timeout, cancellation, restart, partial renewal and refund, records privacy observers and corrected gaps, and preserves independent-review/runtime gates. ET-01 through ET-33 remain unchecked implementation work; design signoff is not implementation, payment execution or deployment validation.
+
+
+ET-03/04/05/21/33 also require the [local aggregate observation](spec/validation/resource-profile.md#local-aggregate-observation)
+contract in `tor`, its exact embedded mirror and the finite native runner in
+`docs/foundation-resource-acceptance.md`. Keep GETINFO local/authenticated,
+single-key and bounded; snapshot without initialization, refill, expiry,
+activation or wallet work. Acceptance includes largest-integer framing under
+1KiB, denied unauthenticated/nonlocal authority, repeated-key rejection,
+nonreading-controller bounds and unchanged owner counters across reads. Deploy
+explicit smaller aggregate test caps separately from production defaults, then
+record actual native binary hashes, independently running origins, observed cap
+saturation, cross-origin refusal, existing honest traffic and post-teardown
+honest recovery. Sampled peaks are not proof of unsampled maxima or privacy;
+no live overload result is claimed by adding instrumentation or the runner.
