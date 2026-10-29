@@ -273,6 +273,41 @@ pub async fn get_pending_admission(
     PendingAdmission::parse(&reply, instance, handle, period).map_err(Into::into)
 }
 
+/// Persist an admission decision before notifying Tor. The caller supplies an
+/// already provisioned, verified recipient-account ledger; this function never
+/// creates a ledger or contacts a wallet. A failed notification leaves the
+/// reservation intact for exact recovery, and never authorizes payment.
+pub async fn reserve_pending_admission(
+    config: &crate::types::RpcConfig,
+    ledger: &mut crate::payment_ledger::PaymentLedger,
+    instance: [u8; 16],
+    handle: [u8; 16],
+    period: u64,
+    decision: [u8; 16],
+) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>> {
+    if decision == [0; 16] {
+        return Err("Invalid admission decision".into());
+    }
+    let sent = std::time::Instant::now();
+    let candidate = get_pending_admission(config, instance, handle, period).await?;
+    // Anchor remaining time to request dispatch, conservatively including the
+    // whole round trip. A later retry never manufactures a fresh window.
+    let lifetime = std::time::Duration::from_millis(candidate.remaining_ms);
+    if sent.elapsed() >= lifetime {
+        return Err("Admission candidate expired".into());
+    }
+    let reservation = ledger.reserve_batch(&candidate.registration(), decision)?;
+    // A slow durable commit may cross the deadline. Preserve its decision but
+    // do not attempt to admit expired work. Reconciliation retains those IDs.
+    if sent.elapsed() >= lifetime {
+        return Err("Admission candidate expired after reservation".into());
+    }
+    let receipt =
+        super::send_admission_decision(config, &super::AdmissionDecision::from(&reservation))
+            .await?;
+    Ok((reservation, receipt))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,7 +395,9 @@ mod tests {
             altered[row] = fields.join(" ");
             assert!(
                 PendingAdmission::parse(&altered.join("\n"), [1; 16], [2; 16], 0).is_err(),
-                "row {} token {}", row, token
+                "row {} token {}",
+                row,
+                token
             );
         }
         assert!(PendingAdmission::parse(&wire, [9; 16], [2; 16], 0).is_err());
@@ -371,5 +408,95 @@ mod tests {
         fields[2] = duplicate_id;
         altered[7] = fields.join(" ");
         assert!(PendingAdmission::parse(&altered.join("\n"), [1; 16], [2; 16], 0).is_err());
+    }
+    #[tokio::test]
+    async fn reservation_is_durable_before_notification_and_survives_lost_receipt() {
+        use crate::payment_ledger::{AccountId, PaymentLedger};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for lose_receipt in [false, true] {
+            let directory = std::env::temp_dir()
+                .join(format!("eltor-admission-{:032x}", rand::random::<u128>()));
+            std::fs::create_dir(&directory).unwrap();
+            let path = directory.join("ledger.sqlite");
+            let account = AccountId([7; 32]);
+            let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let config = crate::types::RpcConfig {
+                addr: listener.local_addr().unwrap().to_string(),
+                rpc_password: None,
+                command: String::new(),
+            };
+            let server_path = path.clone();
+            let (wire, _) = fixture(0);
+            let server = tokio::spawn(async move {
+                for step in 0..2 {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let (read, mut write) = stream.into_split();
+                    let mut lines = BufReader::new(read).lines();
+                    assert_eq!(lines.next_line().await.unwrap().unwrap(), "AUTHENTICATE");
+                    let command = lines.next_line().await.unwrap().unwrap();
+                    assert_eq!(lines.next_line().await.unwrap().unwrap(), "QUIT");
+                    if step == 0 {
+                        assert!(command.starts_with("ELTOR_PAYMENT_ADMISSION_GET 1 "));
+                        write
+                            .write_all(
+                                format!("250 OK\r\n{}\r\n", wire.replace('\n', "\r\n")).as_bytes(),
+                            )
+                            .await
+                            .unwrap();
+                    } else {
+                        assert!(command.starts_with("ELTOR_PAYMENT_ADMISSION_DECIDE 1 "));
+                        // Reopen independently at the exact externally observable
+                        // dispatch boundary: all IDs and decision must be durable.
+                        let persisted = {
+                            let check = PaymentLedger::reopen(&server_path, account).unwrap();
+                            check
+                                .get_batch_reservation([1; 16], [2; 16], 0)
+                                .unwrap()
+                                .unwrap()
+                        };
+                        assert_eq!(persisted.decision, [4; 16]);
+                        assert_eq!(
+                            command,
+                            super::super::AdmissionDecision::from(&persisted)
+                                .command()
+                                .unwrap()
+                        );
+                        if !lose_receipt {
+                            write
+                                .write_all(
+                                    format!(
+                                        "250 OK\r\n250 ELTOR_ADMISSION_DECIDED 1 {} {} 0 {} 2\r\n",
+                                        hex::encode([1; 16]),
+                                        hex::encode([2; 16]),
+                                        hex::encode([4; 16])
+                                    )
+                                    .as_bytes(),
+                                )
+                                .await
+                                .unwrap();
+                        }
+                    }
+                }
+            });
+            let result =
+                reserve_pending_admission(&config, &mut ledger, [1; 16], [2; 16], 0, [4; 16]).await;
+            assert_eq!(result.is_ok(), !lose_receipt);
+            server.await.unwrap();
+            let recovered = ledger
+                .get_batch_reservation([1; 16], [2; 16], 0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(recovered.decision, [4; 16]);
+            let (wire, _) = fixture(0);
+            let batch = PendingAdmission::parse(&wire, [1; 16], [2; 16], 0)
+                .unwrap()
+                .registration();
+            for obligation in &batch.rounds {
+                assert!(ledger.get_authorization(obligation).unwrap().is_none());
+            }
+            drop(ledger);
+            std::fs::remove_dir_all(directory).unwrap();
+        }
     }
 }
