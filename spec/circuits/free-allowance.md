@@ -22,6 +22,73 @@ Limits MUST bound per-circuit sustained/burst traffic in both directions, total 
 
 Paid bandwidth beyond the allowance requires the agreed handshake and recurring payments. A circuit with a required paid round MUST close if that payment misses its bounded deadline/grace; it MUST NOT continue by falling back to free capacity. An independently admitted circuit using only the free allowance remains subject to the same small limits and aggregate budget. A dummy handshake proof or unused round identifier never counts as settled funds and cannot authorize paid capacity. Paid-round enforcement and free-resource accounting must therefore be explicit, without using a purpose-specific construction.
 
+### Authenticated base-resource admission
+
+The foundation profile uses one purpose-independent encrypted ntor-v3 extension,
+`ELTOR_RESOURCE_PROFILE`, for **every** foundation circuit, whether it remains
+free-only or later requests paid activation. It does not encode a paid/free or
+onion-service selector. Origins require the signed `eltor-free-capacity`
+capability from the [resource profile](../validation/resource-profile.md) at each
+hop before requesting it; advertising support does not itself reserve capacity.
+
+The local fork allocates extension field type **224 (0xe0)** in ntor-v3's
+`trn_extension` namespace. This is separate from relay-command numbering and is
+not an upstream allocation. The inspected source uses types 1 and 2 for congestion
+control and 3 for SUBPROTO; recheck conflicts on upstream integration. The field
+has length **2**, body **`01 01`** (version 1, resource profile 1). Request and
+successful response use the identical field bytes **`e0 02 01 01`** exactly once
+inside their normal counted extension containers. Profile 1 pins the advertised
+2-cell/second, 128-cell burst, 600000 ms free lifetime candidate and the shared
+aggregate accounting requirements. Existing congestion-control/SUBPROTO fields
+keep their existing semantics; this extension does not enable the incompatible
+small-cell format.
+
+Append the existing canonical per-hop payment payload after the request's
+extension container as before. Preserve all original hash/preimage fields and
+ten independent identifiers, including fresh dummy fields where no fee applies.
+The new extension and acknowledgement have the same shape for all foundation
+uses. Duplicate fields, wrong length, unsupported version/profile, unsolicited
+acknowledgements, malformed payment suffixes, and missing or changed required
+acknowledgements fail the foundation handshake. Parse the exact extension length
+and suffix boundaries rather than scanning arbitrary ciphertext/plaintext for a
+marker. Successful ntor authentication binds the acknowledgement; client-side
+exposure of the hop occurs only after authentication and exact acknowledgement
+validation. Existing exporter transcript binding includes this exchange.
+
+Before queueing handshake work, the relay main loop reserves provisional
+aggregate and actual-link setup, CPU, pending-circuit and memory capacity. Because
+the request is encrypted, this pre-work reservation cannot depend on trusting an
+unverified requested profile. Pass an immutable reservation eligibility flag into
+the worker; workers do not access or refill the shared resource owner. The worker
+may return the acknowledgement only for a valid request with that reservation.
+Before sending CREATED, the main loop must transfer the reservation into the
+live admitted context; allocation failure, cancellation, stale completion or
+handshake failure releases reservations exactly once after their actual work
+ends. A stale worker completion cannot access freed circuit/context memory.
+Admission/attempt rate charges are not refunded by early failure or reconnect.
+
+Base admission does not require a positive paid-handshake charge and does not
+validate dummy proof as payment. The acknowledged circuit begins within the
+bounded allowance, with the original ten-minute free lifetime. Paid COMMIT,
+recipient-backed verification of any required actual handshake proof, and paid
+round activation remain separate. The immutable original dummy proof cannot be
+replaced through this exchange to acquire paid authority. Once paid obligations
+are accepted, their failure/expiry closes the circuit rather than reverting to
+free service. No missing acknowledgement, unsupported profile or resource
+exhaustion silently falls back to unrestricted legacy traffic or charges a wallet.
+
+**Privacy/timing assessment:** all foundation uses share the same encrypted
+extension and payment fields; the acknowledgement introduces no service identity,
+cross-hop identifier or purpose bit. It can distinguish this protocol version
+from legacy peers, not prove that all traffic patterns are indistinguishable.
+Admission rejection and worker delay remain observable under load. Keep existing
+padding, use aggregate bounded work, and measure successful/refused handshake
+sizes and timing. Tests must cover exact request/ack bytes, authenticated
+substitution, duplicate/malformed fields, suffix boundaries, missing ACK,
+reservation failure/cancellation and worker completion races, plus paid/free
+payload-shape parity. This contract is a proposed implementation target, not
+completed live admission or anonymity validation.
+
 ### Use cases and rationale
 
 The purpose-independent allowance supports the following use cases within the same ordinary circuit construction. These are reasons for providing the allowance, not new circuit-purpose flags or promises of unlimited free traffic.

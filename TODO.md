@@ -43,6 +43,17 @@ caller-requested REFRESH respects shared limits, and late replies cannot reopen
 or extend a circuit. Measure the candidate under delayed/lost responses; do not
 confuse the one-second query rate floor with an adequate response window.
 
+ET-02/03/04 must implement [authenticated base-resource admission](spec/circuits/free-allowance.md#authenticated-base-resource-admission)
+in Tor, its vendored copy and origin bindings: exact encrypted ntor field224,
+version/profile1 ACK for every foundation circuit, signed capability pinning,
+canonical unchanged payment suffix, provisional main-loop reservation before
+worker dispatch, immutable worker eligibility and safe completion transfer.
+Test missing/duplicate/changed ACK, malformed suffix/fields, actual-link aggregate
+limits, cancellation/stale-worker lifetime, no paid proof from dummies, no paid
+failure fallback, and paid/free size and timing parity. Recheck extension-number
+conflicts whenever upstream changes; independent review and measured limits
+remain deployment gates.
+
 - [ ] **ET-01 — Recipient-backed payment validation and single redemption.** Projects: `eltord`, `tor`, `lni`. Spec: [payment authorization](spec/onion-services/authorization.md#1-bind-payment-authorization-to-the-client), [renewal admission](spec/01a_circuit_renewal_wire.md#6-timing-retransmission-and-state-transitions). Preserve the already saved Codex task **“Deferred: paid circuit replay protection”** as the detailed investigation; do not create a duplicate or start it. Earlier source review found incomplete handshake validation, observation-time windows, and no demonstrated atomic used-by-circuit enforcement. These are source findings, not a proven replay exploit. Acceptance: recipient-node settlement/amount/time verification, durable atomic circuit/round consumption, duplicate callbacks, old settled-payment reuse on a fresh circuit, concurrent attempts, and restart tests. New payment/renewal features depend on this work.
 
 - [ ] **ET-02 — Uniform per-hop construction and identifier privacy.** Projects: `tor`, `eltord`, bindings as needed. Spec: [uniform payload](spec/01_paid_circuits.md#uniform-per-hop-payment-payload). Verify all ordinary/free/onion circuits retain the same initial hash/preimage fields, ten independent identifiers per hop, encryption, and equal-size padding, using fresh correctly sized dummy values only where no fee applies. No shared dummy constants, omitted fields, or onion-service-purpose payment header. Preserve operator-selected handshake fees and zero-sat handshakes for new relays; do not introduce the rejected paid-activation/trial-fee idea. Acceptance: wire-size comparisons, hop-isolation checks, dummy-versus-required-payment rejection, and unchanged paid bandwidth testing.
