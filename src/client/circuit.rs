@@ -250,6 +250,103 @@ mod tests {
         bad[1].fingerprint = bad[0].fingerprint.clone();
         assert!(super::foundation_constructor(&bad).is_err());
     }
+    #[tokio::test]
+    async fn lost_constructor_reply_cannot_rebuild_after_ledger_restart() {
+        use crate::{
+            client::construction::PreparedConstruction,
+            payment_ledger::{AccountId, ClockObservation, PaymentLedger},
+            rpc::PaymentControl,
+            types::RpcConfig,
+        };
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::TcpListener,
+        };
+        let directory = std::env::temp_dir().join(format!(
+            "eltor-constructor-recovery-{}",
+            rand::random::<u128>()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ledger.sqlite");
+        let account = AccountId([9; 32]);
+        let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+        let prepared = PreparedConstruction::new(
+            [4; 32],
+            [1; 16],
+            &[foundation_relay(1)],
+            b"accepted fixture terms",
+            ClockObservation {
+                now_ms: 100000,
+                uncertainty_ms: 0,
+            },
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+                for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                    let mut line = String::new();
+                    socket.read_line(&mut line).await.unwrap();
+                    assert_eq!(line, expected);
+                    socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+                }
+                if attempt == 1 {
+                    let mut line = String::new();
+                    assert_eq!(socket.read_line(&mut line).await.unwrap(), 0);
+                    continue;
+                }
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "ELTOR_PAYMENT_LIST 1 - -\r\n");
+                socket
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "250-ELTOR_PAYMENT_LIST 1 {} 0 -\r\n250 OK\r\n",
+                            hex::encode([1; 16])
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                let mut line = String::new();
+                socket.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "+EXTENDPAIDCIRCUIT 0\r\n");
+                loop {
+                    let mut line = String::new();
+                    socket.read_line(&mut line).await.unwrap();
+                    if line == ".\r\n" {
+                        break;
+                    }
+                }
+                // Tor received the whole constructor, but its reply is lost.
+            }
+        });
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        assert!(prepared.dispatch(&mut ledger, &mut control).await.is_err());
+        drop(control);
+        drop(ledger);
+        let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
+        assert!(
+            ledger
+                .get_origin_construction([4; 32])
+                .unwrap()
+                .unwrap()
+                .dispatch_claimed
+        );
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        assert!(prepared.dispatch(&mut ledger, &mut control).await.is_err());
+        drop(control);
+        server.await.unwrap();
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
     #[test]
     fn circuit_ui_metadata_excludes_payment_material() {
         let mut value = serde_json::json!([{"fingerprint":"public relay", "payment_rate_msats":1000,
