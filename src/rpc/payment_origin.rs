@@ -316,7 +316,55 @@ impl InitialOriginSnapshot {
         })
     }
 }
+/// Local submission or recovered observation. Neither variant authorizes wallet
+/// dispatch; the coordinator must separately establish every hop's commitment.
+pub enum DurableInitialResult {
+    Queued { revision: u64 },
+    Recovered(InitialOriginSnapshot),
+}
 impl PaymentControl {
+    /// Persist exact arguments and claim dispatch before writing the socket.
+    /// After any prior claim (including a lost reply), only query the original
+    /// operation. UNKNOWN_OPERATION remains uncertainty, never a new START.
+    pub async fn durable_initial_operation(
+        &mut self,
+        ledger: &mut crate::payment_ledger::PaymentLedger,
+        operation: &InitialOperation,
+    ) -> Result<DurableInitialResult, Box<dyn std::error::Error>> {
+        let saved = ledger.save_origin_operation(operation)?;
+        if saved.dispatch_claimed {
+            let op = saved.operation;
+            let snapshot = self
+                .initial_snapshot(&op.binding, op.hop, Some(op.operation))
+                .await?;
+            if snapshot.operation.as_ref().map(|state| state.kind) != Some(op.kind) {
+                self.invalidate();
+                return Err(bad().into());
+            }
+            if let Some(terms) = op.terms {
+                use sha2::{Digest, Sha256};
+                let domain = b"eltor/payment-renew/v1/terms";
+                let mut hash = Sha256::new();
+                hash.update((domain.len() as u16).to_be_bytes());
+                hash.update(domain);
+                hash.update(terms);
+                let expected: [u8; 32] = hash.finalize().into();
+                if snapshot.terms_digest != Some(expected) {
+                    self.invalidate();
+                    return Err(bad().into());
+                }
+            }
+            return Ok(DurableInitialResult::Recovered(snapshot));
+        }
+        let op = ledger.claim_origin_dispatch(
+            operation.binding.instance,
+            operation.binding.handle,
+            operation.hop,
+            operation.operation,
+        )?;
+        let revision = self.initial_operation(&op).await?;
+        Ok(DurableInitialResult::Queued { revision })
+    }
     /// Bind a newly owned live circuit. Never use this to recover an old numeric
     /// circuit ID after losing its process instance/handle.
     pub async fn bind_origin(&mut self, circuit_id: u32) -> io::Result<OriginBinding> {
@@ -469,6 +517,121 @@ mod tests {
             hex::encode([2; 16])
         ))
         .is_err());
+    }
+    #[tokio::test]
+    async fn durable_origin_recovers_lost_reply_without_second_start() {
+        use crate::payment_ledger::{AccountId, PaymentLedger};
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::TcpListener,
+        };
+        async fn line(s: &mut BufReader<tokio::net::TcpStream>) -> String {
+            let mut value = String::new();
+            tokio::time::timeout(std::time::Duration::from_secs(5), s.read_line(&mut value))
+                .await
+                .unwrap()
+                .unwrap();
+            value
+        }
+        for response_kind in ["START", "QUERY", "UNKNOWN"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let config = crate::types::RpcConfig {
+                addr: listener.local_addr().unwrap().to_string(),
+                rpc_password: None,
+                command: String::new(),
+            };
+            let op = InitialOperation {
+                binding: binding(),
+                hop: 2,
+                operation: [5; 16],
+                nonce: [6; 16],
+                kind: InitialOperationKind::Start,
+                terms: None,
+            };
+            let expected = op.command().unwrap() + "\r\n";
+            let server = tokio::spawn(async move {
+                for attempt in 0..2 {
+                    let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+                    for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                        assert_eq!(line(&mut socket).await, expected);
+                        socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+                    }
+                    let command = line(&mut socket).await;
+                    if attempt == 0 {
+                        assert_eq!(command, expected);
+                        // Tor could have dispatched START before this socket died.
+                        // Deliberately lose the receipt, preserving that ambiguity.
+                    } else {
+                        assert_eq!(
+                            command,
+                            format!(
+                                "ELTOR_INITIAL_GET 1 {} {} 2 {}\r\n",
+                                hex::encode([1; 16]),
+                                hex::encode([2; 16]),
+                                hex::encode([5; 16])
+                            )
+                        );
+                        if response_kind == "UNKNOWN" {
+                            socket
+                                .get_mut()
+                                .write_all(b"552 UNKNOWN_OPERATION\r\n")
+                                .await
+                                .unwrap();
+                            continue;
+                        }
+                        let reply = snapshot(
+                            "WAIT_PAYMENT",
+                            "0 0 60000 75000 3000",
+                            &format!(
+                                "{} {} VERIFIED {} 1",
+                                hex::encode([5; 16]),
+                                response_kind,
+                                hex::encode([7; 32])
+                            ),
+                        )
+                        .replace('\n', "\r\n")
+                            + "\r\n";
+                        socket.get_mut().write_all(reply.as_bytes()).await.unwrap();
+                    }
+                }
+            });
+            let path = std::env::temp_dir().join(format!(
+                "eltor-origin-socket-{}.sqlite",
+                rand::random::<u128>()
+            ));
+            let account = AccountId([9; 32]);
+            let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+            let mut control = PaymentControl::connect(&config).await.unwrap();
+            assert!(control
+                .durable_initial_operation(&mut ledger, &op)
+                .await
+                .is_err());
+            drop(control);
+            drop(ledger);
+            let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
+            let mut control = PaymentControl::connect(&config).await.unwrap();
+            let result = control.durable_initial_operation(&mut ledger, &op).await;
+            if response_kind == "START" {
+                match result.unwrap() {
+                    DurableInitialResult::Recovered(snapshot) => {
+                        assert_eq!(snapshot.state, InitialOriginState::WaitPayment)
+                    }
+                    DurableInitialResult::Queued { .. } => panic!("must query existing operation"),
+                }
+            } else {
+                assert!(result.is_err());
+            }
+            assert!(
+                ledger
+                    .origin_operation(op.binding.instance, op.binding.handle, op.hop, op.operation)
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_claimed
+            );
+            server.await.unwrap();
+            drop(ledger);
+            std::fs::remove_file(path).unwrap();
+        }
     }
     #[tokio::test]
     async fn origin_socket_binds_queries_and_rejects_substituted_receipt() {

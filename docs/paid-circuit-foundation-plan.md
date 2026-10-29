@@ -175,3 +175,13 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   identity, and corruption checks. These local tests do not establish live
   activation, renewal, or real Lightning settlement acceptance. The live relay
   coordinator and origin orchestration remain in progress.
+
+- The origin control client now saves exact operation arguments and claims its
+  dispatch in the durable journal before sending. Reopening after a lost receipt
+  queries the original operation, validates its kind and (for COMMIT) policy
+  digest, and never automatically sends a replacement START. An unknown remote
+  operation remains unresolved. Four origin RPC tests pass, including a real
+  local socket disconnect followed by database reopen and read-only recovery,
+  substituted operation kind, and unknown-operation responses. A recovered
+  VERIFIED operation still does not imply ACTIVE or authorize wallet spending;
+  full-path commitment and live client orchestration remain outstanding.
