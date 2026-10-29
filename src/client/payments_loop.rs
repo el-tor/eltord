@@ -352,6 +352,9 @@ mod stability_tests {
     struct Wallet(Arc<Mutex<Vec<String>>>);
     #[async_trait::async_trait]
     impl LightningNode for Wallet {
+        async fn get_permissions(&self) -> Result<Permissions, ApiError> {
+            unimplemented!()
+        }
         async fn get_info(&self) -> Result<NodeInfo, ApiError> {
             unimplemented!()
         }
@@ -382,10 +385,13 @@ mod stability_tests {
         async fn decode(&self, _: String) -> Result<String, ApiError> {
             unimplemented!()
         }
+        async fn decode_offer(&self, _: String) -> Result<String, ApiError> {
+            unimplemented!()
+        }
         async fn on_invoice_events(
             &self,
             _: OnInvoiceEventParams,
-            _: Box<dyn OnInvoiceEventCallback>,
+            _: Arc<dyn OnInvoiceEventCallback>,
         ) {
             unimplemented!()
         }
