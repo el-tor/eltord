@@ -143,13 +143,19 @@ impl ClientFoundation {
             {
                 Ok(snapshot) => snapshot,
                 Err(error)
-                    if PaymentRejection::from_io(&error)
-                        == Some(PaymentRejection::StateTransitionPending) =>
+                    if matches!(
+                        PaymentRejection::from_io(&error),
+                        Some(
+                            PaymentRejection::StateTransitionPending
+                                | PaymentRejection::Capacity
+                        )
+                    ) =>
                 {
                     // A pushed activation or an in-flight QUERY must first
                     // restore coherent current clocks. Do not claim another
-                    // QUERY while its exact predecessor may still be pending;
-                    // a complete CAPACITY rejection cannot undo that claim.
+                    // QUERY while its exact predecessor may still be pending.
+                    // A read-only CAPACITY rejection likewise defers this exact
+                    // lookup on the same connection; it never retries PREPARE.
                     continue;
                 }
                 Err(error) => return Err(error.into()),

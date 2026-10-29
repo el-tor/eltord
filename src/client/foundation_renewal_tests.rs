@@ -18,6 +18,7 @@ struct RenewalTor {
     refuse: AtomicBool,
     lose: AtomicBool,
     pending: AtomicBool,
+    capacity: AtomicBool,
     revision: AtomicUsize,
     admission_expired: AtomicBool,
 }
@@ -137,7 +138,9 @@ async fn renewal_tor(
                             )
                         }
                         "ELTOR_PAYMENT_GET" => {
-                            if state.pending.swap(false, Ordering::SeqCst) {
+                            if state.capacity.swap(false, Ordering::SeqCst) {
+                                "451 CAPACITY".into()
+                            } else if state.pending.swap(false, Ordering::SeqCst) {
                                 "551 STATE_TRANSITION_PENDING".into()
                             } else {
                                 let hop = f[4].parse::<usize>().unwrap() - 1;
@@ -227,6 +230,48 @@ async fn ready_zero(
     state.base.active.store(true, Ordering::SeqCst);
     state.round.store(7, Ordering::SeqCst);
     (r, config, server)
+}
+#[tokio::test]
+async fn renewal_get_capacity_defers_same_connection_without_repreparing_or_funding() {
+    let d = Directory::new();
+    let state = Arc::new(RenewalTor::default());
+    state.round.store(7, Ordering::SeqCst);
+    let req = requirements(false);
+    let (config, server) = renewal_tor(req.clone(), state.clone()).await;
+    let (l, c, p) = accepted_seeded(&d, &config, &req).await;
+    let mut r = ClientFoundation::new(l, c, None, p).unwrap();
+    r.last_clock = Some((
+        ClockObservation {
+            now_ms: NOW,
+            uncertainty_ms: 0,
+        },
+        Instant::now(),
+    ));
+    assert!(!r.reconcile_renewal(1).await.unwrap());
+    let first = r.renewal_operation(0, 1).unwrap();
+    state.capacity.store(true, Ordering::SeqCst);
+    assert!(!r.reconcile_renewal(1).await.unwrap());
+    assert!(!r.ledger.origin_period_admitted([8; 32], 1).unwrap());
+    assert!(r.payment_id(0, 11).is_err());
+    assert!(r.reconcile_renewal(1).await.unwrap());
+    let commands = state.base.commands.lock().unwrap();
+    assert_eq!(
+        commands.iter().filter(|c| c.starts_with("AUTHENTICATE")).count(),
+        1
+    );
+    assert_eq!(
+        commands.iter().filter(|c| c.starts_with("ELTOR_RENEW_PREPARE")).count(),
+        2
+    );
+    let original_get = format!(
+        "ELTOR_PAYMENT_GET 1 {} {} 1 {}",
+        hex::encode(first.binding.instance),
+        hex::encode(first.binding.handle),
+        hex::encode(first.operation),
+    );
+    assert_eq!(commands.iter().filter(|c| **c == original_get).count(), 2);
+    assert_eq!(r.ledger.account_exposure().unwrap().spent_msat, 0);
+    server.abort();
 }
 #[tokio::test]
 async fn partial_renewal_and_lost_receipt_restore_only_exact_operations_before_round_eleven() {

@@ -57,6 +57,11 @@ impl PaymentLedger {
         tx.execute_batch(origin_artifacts::SCHEMA)?;
         tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
+        // New retained-history ceilings must accept every existing record
+        // before schema identity changes, just as on the v6 upgrade path.
+        origin_artifacts::validate_schema(&tx, account)?;
+        outgoing_renewal::validate_schema(&tx)?;
+        handshake::validate_schema(&tx, account)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -118,6 +123,11 @@ impl PaymentLedger {
         tx.execute_batch(origin_artifacts::SCHEMA)?;
         tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
+        // Refuse incompatible retained history atomically, without pruning or
+        // leaving the account marked as upgraded after a failed reopen.
+        origin_artifacts::validate_schema(&tx, account)?;
+        outgoing_renewal::validate_schema(&tx)?;
+        handshake::validate_schema(&tx, account)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
@@ -192,7 +202,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v6_over_cap_history_refusal_rolls_back_schema_and_preserves_all_records() {
+    fn v4_v5_v6_over_cap_history_refusal_rolls_back_schema_and_preserves_all_records() {
+        for version in [4, 5, 6] {
+            over_cap_history_refusal(version);
+        }
+    }
+    fn over_cap_history_refusal(version: i64) {
         let path = std::env::temp_dir().join(format!(
             "eltor-migration-cap-{:032x}.sqlite",
             rand::random::<u128>()
@@ -208,7 +223,7 @@ mod tests {
                 max_unresolved_intents: 128,
             })
             .unwrap();
-        // A v6 account may have >4096 resolved cancelled attempts accumulated
+        // An older account may have >4096 resolved cancelled attempts accumulated
         // over time while concurrent pending work remains under its caps. Build
         // valid private financial rows in one fixture transaction, no wallet.
         let tx = ledger.connection.transaction().unwrap();
@@ -262,10 +277,23 @@ mod tests {
             tx.execute("INSERT INTO hop_spending_terms(local_budget_scope,charge_reference,hop_circuit_binding,payload) VALUES(?1,?2,?3,?4)",params![&scope[..],&terms.charge_reference[..],&terms.hop_circuit_binding[..],encode(&terms).unwrap()]).unwrap();
             tx.execute("INSERT INTO outgoing_intents(operation,instance,local_budget_scope,round,kind,payee_reference,charge_reference,payment_id,payment_hash,payload,state,closed,reserved_msat,spent_msat,outstanding_msat,fee_breached) VALUES(?1,?2,?3,1,1,?4,?5,?6,?6,?7,7,1,0,0,0,0)",params![&handle[..],&budget.instance[..],&scope[..],&terms.payee_reference[..],&terms.charge_reference[..],&scope[..],encode(&intent).unwrap()]).unwrap();
         }
-        tx.execute_batch("DROP TABLE handshake_intents;DROP TABLE handshake_initial_ids;DROP TABLE handshake_hops;DROP TABLE handshake_scopes;PRAGMA user_version=6;").unwrap();
+        tx.execute_batch("DROP TABLE handshake_intents;DROP TABLE handshake_initial_ids;DROP TABLE handshake_hops;DROP TABLE handshake_scopes;").unwrap();
+        if version < 6 {
+            tx.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;").unwrap();
+        }
+        if version == 4 {
+            tx.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;").unwrap();
+        }
+        tx.pragma_update(None, "user_version", version).unwrap();
         tx.commit().unwrap();
         fn snapshot(c: &Connection) -> Hash32 {
             let mut digest = Sha256::new();
+            let mut schema = c
+                .prepare("SELECT sql FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap();
+            for row in schema.query_map([], |r| r.get::<_, String>(0)).unwrap() {
+                digest.update(row.unwrap());
+            }
             for table in ["path_budgets", "hop_spending_terms", "outgoing_intents"] {
                 let mut query = c
                     .prepare(&format!("SELECT payload FROM {table} ORDER BY payload"))
@@ -278,15 +306,18 @@ mod tests {
         }
         let original = snapshot(&ledger.connection);
         drop(ledger);
-        assert!(matches!(
-            PaymentLedger::upgrade_from_v6(&path, account),
-            Err(LedgerError::InvalidLedger)
-        ));
+        let result = match version {
+            4 => PaymentLedger::upgrade_from_v4(&path, account),
+            5 => PaymentLedger::upgrade_from_v5(&path, account),
+            6 => PaymentLedger::upgrade_from_v6(&path, account),
+            _ => unreachable!(),
+        };
+        assert!(matches!(result, Err(LedgerError::InvalidLedger)));
         let c = Connection::open(&path).unwrap();
         assert_eq!(
             c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            6
+            version
         );
         assert_eq!(
             c.query_row("SELECT count(*) FROM outgoing_intents", [], |r| r
