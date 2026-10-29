@@ -148,6 +148,19 @@ impl PaymentControl {
         self.failed = true;
         Err(invalid())
     }
+    /// Build the bounded query worklist from a complete subscribed inventory.
+    /// This does not authorize payment; callers must query and validate each row.
+    pub async fn recover(&mut self) -> io::Result<super::PaymentRecovery> {
+        let inventory = self.inventory().await?;
+        let events = self.take_events()?;
+        match super::PaymentRecovery::new(inventory, &events) {
+            Ok(recovery) => Ok(recovery),
+            Err(_) => {
+                self.failed = true;
+                Err(invalid())
+            }
+        }
+    }
     /// Forward only an authorization already committed by recipient verification
     /// (or explicit zero-price accounting). A receipt is not consumption proof.
     pub async fn notify_authorization(
@@ -264,12 +277,16 @@ mod tests {
             command: String::new(),
         };
         let mut client = PaymentControl::connect(&config).await.unwrap();
-        let inventory = client.inventory().await.unwrap();
-        assert_eq!(inventory.rows.len(), 129);
-        assert_eq!(inventory.sequence, 200);
-        let events = client.take_events().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sequence, 201);
+        let mut recovery = client.recover().await.unwrap();
+        assert_eq!(recovery.instance(), 1u128.to_be_bytes());
+        assert_eq!(recovery.next_query().unwrap().unwrap().revision, 2);
+        let mut queried = 0;
+        while let Some(row) = recovery.next_query().unwrap() {
+            assert!(recovery.queried(recovery.instance(), &row).unwrap());
+            queried += 1;
+        }
+        assert_eq!(queried, 129);
+        assert!(client.take_events().unwrap().is_empty());
         server.await.unwrap();
     }
     #[tokio::test]

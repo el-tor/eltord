@@ -31,3 +31,6 @@ pub use payment_inventory::*;
 
 mod payment_control;
 pub use payment_control::*;
+
+mod payment_recovery;
+pub use payment_recovery::*;
