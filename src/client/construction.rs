@@ -5,11 +5,14 @@ use crate::{
     rpc::PaymentControl,
     types::Relay,
 };
+use sha2::{Digest, Sha256};
 use std::io;
 pub(crate) struct PreparedConstruction {
     scope: [u8; 32],
     instance: [u8; 16],
-    command: String,
+    command: Option<String>,
+    command_digest: String,
+    template: String,
     payload: Vec<u8>,
 }
 fn invalid() -> io::Error {
@@ -17,6 +20,43 @@ fn invalid() -> io::Error {
         io::ErrorKind::InvalidData,
         "Invalid or uncertain origin construction",
     )
+}
+// The preimage occupies bytes 32..64 of each hop's binary constructor material.
+// Keep hashes and round IDs for exact recovery, but never persist this secret.
+fn sanitized(command: &str) -> io::Result<String> {
+    let mut lines = command.split("\r\n");
+    if lines.next() != Some("+EXTENDPAIDCIRCUIT 0") {
+        return Err(invalid());
+    }
+    let mut result = String::from("+EXTENDPAIDCIRCUIT 0\r\n");
+    let mut hops = 0;
+    for line in lines.by_ref() {
+        if line == "." {
+            if hops == 0 || lines.next() != Some("") || lines.next().is_some() {
+                return Err(invalid());
+            }
+            result.push_str(".\r\n");
+            return Ok(result);
+        }
+        if line.len() != 809
+            || line.as_bytes()[40] != b' '
+            || !line
+                .bytes()
+                .enumerate()
+                .all(|(i, b)| i == 40 || b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(invalid());
+        }
+        hops += 1;
+        if hops > 16 {
+            return Err(invalid());
+        }
+        result.push_str(&line[..105]);
+        result.push_str(&"0".repeat(64));
+        result.push_str(&line[169..]);
+        result.push_str("\r\n");
+    }
+    Err(invalid())
 }
 impl PreparedConstruction {
     pub(crate) fn new(
@@ -40,8 +80,10 @@ impl PreparedConstruction {
             return Err(invalid());
         }
         let command = super::circuit::foundation_constructor(relays)?;
+        let template = sanitized(&command)?;
+        let command_digest = hex::encode(Sha256::digest(command.as_bytes()));
         let payload = serde_json::to_vec(&serde_json::json!({
-            "version":1,"instance":hex::encode(instance),"command":command,
+            "version":2,"instance":hex::encode(instance),"command_digest":command_digest,"template":template,
             "accepted_context":hex::encode(accepted_context),"construction_clock":{"now_ms":clock.now_ms,"uncertainty_ms":clock.uncertainty_ms},
         }))
         .map_err(|_| invalid())?;
@@ -51,7 +93,9 @@ impl PreparedConstruction {
         Ok(Self {
             scope,
             instance,
-            command,
+            command: Some(command),
+            command_digest,
+            template,
             payload,
         })
     }
@@ -75,14 +119,19 @@ impl PreparedConstruction {
         struct Envelope {
             version: u8,
             instance: String,
-            command: String,
+            #[serde(default)]
+            command: Option<String>,
+            #[serde(default)]
+            command_digest: Option<String>,
+            #[serde(default)]
+            template: Option<String>,
             accepted_context: String,
             construction_clock: Clock,
         }
         let envelope: Envelope = serde_json::from_slice(&saved.payload).map_err(|_| invalid())?;
         let clock = &envelope.construction_clock;
         let context = hex::decode(&envelope.accepted_context).map_err(|_| invalid())?;
-        if envelope.version != 1
+        if !matches!(envelope.version, 1 | 2)
             || envelope.instance != hex::encode(saved.instance)
             || context.is_empty()
             || context.len() > 16384
@@ -93,18 +142,51 @@ impl PreparedConstruction {
                 .now_ms
                 .checked_add(clock.uncertainty_ms as i64)
                 .is_none()
-            || envelope.command.len() > 16384
-            || !envelope.command.starts_with("+EXTENDPAIDCIRCUIT 0\r\n")
-            || !envelope.command.ends_with("\r\n.\r\n")
         {
             return Err(invalid());
         }
+        let (command_digest, template) = match (
+            envelope.version,
+            envelope.command,
+            envelope.command_digest,
+            envelope.template,
+        ) {
+            // Compatibility only for previously retained zero-fee fixture records.
+            (1, Some(command), None, None) => (
+                hex::encode(Sha256::digest(command.as_bytes())),
+                sanitized(&command)?,
+            ),
+            (2, None, Some(digest), Some(template))
+                if digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    && sanitized(&template)? == template =>
+            {
+                (digest, template)
+            }
+            _ => return Err(invalid()),
+        };
         Ok(Some(Self {
             scope,
             instance: saved.instance,
-            command: envelope.command,
+            command: None,
+            command_digest,
+            template,
             payload: saved.payload,
         }))
+    }
+    /// Supply proof material obtained by lookup only. A changed path, proof or
+    /// round ID cannot replace the exact constructor committed before dispatch.
+    pub(crate) fn restore_proofs(&mut self, relays: &[Relay]) -> io::Result<()> {
+        let command = super::circuit::foundation_constructor(relays)?;
+        if hex::encode(Sha256::digest(command.as_bytes())) != self.command_digest
+            || sanitized(&command)? != self.template
+        {
+            return Err(invalid());
+        }
+        self.command = Some(command);
+        Ok(())
     }
     pub(crate) fn accepted_context(&self) -> io::Result<Vec<u8>> {
         let envelope: serde_json::Value =
@@ -125,6 +207,7 @@ impl PreparedConstruction {
         if saved.dispatch_claimed {
             return Err(invalid());
         }
+        let command = self.command.as_deref().ok_or_else(invalid)?;
         if control.inventory().await?.instance != self.instance {
             return Err(invalid());
         }
@@ -133,6 +216,6 @@ impl PreparedConstruction {
             .map_err(|_| invalid())?;
         // Same TCP connection pins the process through dispatch. Any error after
         // this point leaves the durable claim set, including malformed receipts.
-        control.construct_origin(&self.command).await
+        control.construct_origin(command).await
     }
 }

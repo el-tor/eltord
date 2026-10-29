@@ -270,10 +270,14 @@ mod tests {
         let path = directory.join("ledger.sqlite");
         let account = AccountId([9; 32]);
         let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+        let mut relay = foundation_relay(1);
+        use sha2::{Digest, Sha256};
+        relay.payment_handshake_fee_preimage = Some(hex::encode([77; 32]));
+        relay.payment_handshake_fee_payhash = Some(hex::encode(Sha256::digest([77; 32])));
         let prepared = PreparedConstruction::new(
             [4; 32],
             [1; 16],
-            &[foundation_relay(1)],
+            &[relay.clone()],
             b"accepted fixture terms",
             ClockObservation {
                 now_ms: 100000,
@@ -333,7 +337,7 @@ mod tests {
         drop(control);
         drop(ledger);
         let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
-        let prepared = PreparedConstruction::restore(&ledger, [4; 32])
+        let mut prepared = PreparedConstruction::restore(&ledger, [4; 32])
             .unwrap()
             .unwrap();
         assert!(
@@ -343,6 +347,17 @@ mod tests {
                 .unwrap()
                 .dispatch_claimed
         );
+        let saved = ledger.get_origin_construction([4; 32]).unwrap().unwrap();
+        let persisted = String::from_utf8(saved.payload).unwrap();
+        assert!(!persisted.contains(&hex::encode([77; 32])));
+        let record: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(record["version"], 2);
+        assert!(record.get("command").is_none());
+        let mut altered = relay.clone();
+        altered.payment_id_hashes_10.as_mut().unwrap()[0] = hex::encode([99; 32]);
+        assert!(prepared.restore_proofs(&[altered]).is_err());
+        prepared.restore_proofs(&[relay]).unwrap();
+        // Even exact recovered proofs cannot clear the original dispatch claim.
         let mut control = PaymentControl::connect(&config).await.unwrap();
         assert!(prepared.dispatch(&mut ledger, &mut control).await.is_err());
         drop(control);
