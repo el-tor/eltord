@@ -16,6 +16,16 @@ For every new or changed specification requirement, add or update a stable TODO 
 
 ## Shared paid-circuit requirements
 
+ET-02/03/04/33 must implement [native relay reachability](spec/circuits/free-allowance.md#native-relay-reachability)
+in `tor` and the embedded mirror using uniform authenticated base admission,
+fresh per-hop proofs/IDs, pinned signed capabilities and shared pre-crypto leases.
+No maintenance purpose bit, automatic paid funding, enlarged allowance or legacy
+fallback is permitted. Test immutable retries, missing metadata/ACK, aggregate
+refusal, burst exhaustion, application attachment/cannibalization exclusion and
+live self-test timing/recovery. The self-selected last hop may use its current
+locally signed descriptor; all other hops require verified peer metadata.
+Local source/unit coverage does not complete live acceptance or production review.
+
 ET-04/05/07/33 must implement the [paid byte quota contract](spec/01a_circuit_renewal_wire.md#paid-byte-quota-accounting)
 in `tor` and the embedded `libeltor-sys` source mirror. Count both physical
 directions at actual ingress/egress, including headers/control/padding, with

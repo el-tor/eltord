@@ -89,6 +89,40 @@ reservation failure/cancellation and worker completion races, plus paid/free
 payload-shape parity. This contract is a proposed implementation target, not
 completed live admission or anonymity validation.
 
+### Native relay reachability
+
+An explicitly foundation-enabled relay may originate its native internal
+reachability circuit using the same bounded base allowance. This is a local
+constructor decision, not a new on-wire purpose, free/paid flag, or exemption.
+Require the completed path's signed free capability and ntor-v3 support at every
+hop, fresh correctly sized hash/preimage fields and ten independent identifiers
+per hop, the exact authenticated base-resource acknowledgement, and the same
+shared constructor/setup/CPU/memory/traffic/queue limits. The self-selected last
+hop uses the relay's current locally signed descriptor snapshot; do not replace
+missing peer metadata with unauthenticated hints. Preserve the selected path and
+original material on retries instead of creating fresh free credit.
+
+The local maintenance owner must never COMMIT, automatically fund a round,
+become eligible for application attachment, or be cannibalized into an application
+path. An ordinary application constructor with missing material remains an
+error. The existing one-hop directory-bootstrap transition remains separately
+scoped. Unsupported paths or exhausted free capacity fail the self-test; a
+bandwidth self-test exceeding the allowance is not entitled to paid throughput.
+Do not add a purpose-based legacy/unpaid fallback or relax aggregate limits to
+make it succeed. Production advertisement remains gated by review and acceptance.
+
+**Privacy/timing assessment:** native reachability uses the same encrypted
+extension, canonical fields and padding as other foundation base admission, with
+independent hop identifiers and no shared dummy constant or new purpose signal.
+Local purpose/ownership stays in Tor. A relay testing its own address and its
+reachability/overload timing can still be recognized by adjacent or colluding
+observers; equal construction size does not establish indistinguishability.
+Test authenticated-capability failure, immutable retry material, fresh proofs and
+cross-hop IDs, aggregate refusal, fixed-cell/burst accounting, and application
+selection/cannibalization exclusion. Signed-descriptor and local regression
+checks are separate evidence; live reachability, overload recovery and timing
+measurements remain required.
+
 ### Use cases and rationale
 
 The purpose-independent allowance supports the following use cases within the same ordinary circuit construction. These are reasons for providing the allowance, not new circuit-purpose flags or promises of unlimited free traffic.
