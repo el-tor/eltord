@@ -308,6 +308,23 @@ pub async fn reserve_pending_admission(
     Ok((reservation, receipt))
 }
 
+/// Recover only a previously persisted decision. This sends no GET that could
+/// be mistaken for a new admission window and creates no new ledger record.
+/// Tor must resolve an exact retained replay before expiry checks; if the
+/// original decision never arrived before expiry, it must reject this request.
+pub async fn recover_admission_decision(
+    config: &crate::types::RpcConfig,
+    ledger: &crate::payment_ledger::PaymentLedger,
+    instance: [u8; 16],
+    handle: [u8; 16],
+    period: u64,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let reservation = ledger
+        .get_batch_reservation(instance, handle, period)?
+        .ok_or("No durable admission decision to recover")?;
+    super::send_admission_decision(config, &super::AdmissionDecision::from(&reservation)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,7 +446,7 @@ mod tests {
             let server_path = path.clone();
             let (wire, _) = fixture(0);
             let server = tokio::spawn(async move {
-                for step in 0..2 {
+                for step in 0..if lose_receipt { 3 } else { 2 } {
                     let (stream, _) = listener.accept().await.unwrap();
                     let (read, mut write) = stream.into_split();
                     let mut lines = BufReader::new(read).lines();
@@ -462,7 +479,7 @@ mod tests {
                                 .command()
                                 .unwrap()
                         );
-                        if !lose_receipt {
+                        if !lose_receipt || step == 2 {
                             write
                                 .write_all(
                                     format!(
@@ -482,7 +499,20 @@ mod tests {
             let result =
                 reserve_pending_admission(&config, &mut ledger, [1; 16], [2; 16], 0, [4; 16]).await;
             assert_eq!(result.is_ok(), !lose_receipt);
+            if lose_receipt {
+                assert_eq!(
+                    recover_admission_decision(&config, &ledger, [1; 16], [2; 16], 0)
+                        .await
+                        .unwrap(),
+                    2
+                );
+            }
             server.await.unwrap();
+            assert!(
+                recover_admission_decision(&config, &ledger, [1; 16], [9; 16], 0)
+                    .await
+                    .is_err()
+            );
             let recovered = ledger
                 .get_batch_reservation([1; 16], [2; 16], 0)
                 .unwrap()
