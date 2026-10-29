@@ -465,3 +465,16 @@ This diagnosis is not a successful renewal or transport result. Closed scopes,
 claims and failed supervisor logs remain retained; no replacement scope is
 created automatically. A narrow scheduling regression and rebuilt live run are
 still required.
+
+The scheduler correction is committed locally as `a718169`: coalesced actionable
+queries and durable financial follow-ups get at most four consecutive selections
+before an eligible background probe. Ordinary authoritative no-work replies
+sleep until a newer revision; an idle inventory read continues ingesting events.
+Durable closed bindings are filtered before the live-work cap, and same-instance
+inventory replacement does not erase absent financial records. Typed authority,
+existing 1100 ms read pacing and original deadlines remain unchanged. The
+50-candidate socket regression passed, including a legitimate CAPACITY retry,
+fairness, stale-hint suppression, closed-history filtering and dormant inventory
+reads. Safe receiver error categories (`5615ad6`) also passed their narrow privacy
+check. Chutney transmission passed before deployment. Final source builds and
+live activation/renewal remain separate acceptance gates.
