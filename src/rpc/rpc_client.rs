@@ -2,7 +2,7 @@ use crate::types::{EventCallback, RpcConfig};
 use lni::LightningNode;
 use log::{debug, error, info, warn};
 use std::error::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 // TOR RPC Commands
@@ -13,12 +13,23 @@ unsafe impl Send for RpcConfig {}
 
 // Returns an RPC client response
 pub async fn rpc_client(config: RpcConfig) -> Result<String, Box<dyn Error>> {
-    tokio::time::timeout(std::time::Duration::from_secs(15), rpc_client_inner(config))
+    tokio::time::timeout(std::time::Duration::from_secs(15), rpc_client_inner(config, None))
         .await
         .map_err(|_| -> Box<dyn Error> { "Tor control request timed out".into() })?
 }
 
-async fn rpc_client_inner(config: RpcConfig) -> Result<String, Box<dyn Error>> {
+/// Use for fixed-profile control messages whose total response has a strict
+/// bound. The reader cannot allocate an unbounded line before checking it.
+pub async fn rpc_client_limited(config: RpcConfig, limit: usize) -> Result<String, Box<dyn Error>> {
+    if limit == 0 || limit > 1024 * 1024 {
+        return Err("Invalid control response limit".into());
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(15), rpc_client_inner(config, Some(limit)))
+        .await
+        .map_err(|_| -> Box<dyn Error> { "Tor control request timed out".into() })?
+}
+
+async fn rpc_client_inner(config: RpcConfig, limit: Option<usize>) -> Result<String, Box<dyn Error>> {
     // info!("Connecting to Tor control port at {}...", config.addr);
     let stream = TcpStream::connect(config.addr).await?;
     let (reader, mut writer) = tokio::io::split(stream);
@@ -37,6 +48,15 @@ async fn rpc_client_inner(config: RpcConfig) -> Result<String, Box<dyn Error>> {
     };
     writer.write_all(content.as_bytes()).await?;
     writer.flush().await?;
+
+    if let Some(limit) = limit {
+        let mut response = String::new();
+        reader.take(limit as u64 + 1).read_to_string(&mut response).await?;
+        if response.len() > limit {
+            return Err("Tor control response exceeds profile limit".into());
+        }
+        return Ok(response);
+    }
 
     // Read until EOF
     let mut response = String::new();
