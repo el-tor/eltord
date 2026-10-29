@@ -307,8 +307,8 @@ deadline is unchanged: nominal setup spacing, refill, transfer deadlines and
 recovery consume 84 seconds, leaving 36 seconds for construction/control/echo.
 A phase requires 43 seconds of remaining original budget before starting;
 slower actual work fails rather than extending the deadline. Preparation only
-writes a new private directory. No `process-v4` deployment or live result is
-claimed here; previous profiles, claims and failures retain their meaning.
+writes a new private directory. The subsequent one-shot `process-v4` result is
+recorded below; previous profiles, claims and failures retain their meaning.
 
 The earlier `small-v1` deployment reached only target 95%, and a separate fresh
 unchanged runner failed its baseline build before pressure. Those private
@@ -403,7 +403,7 @@ setup pressure, and a new circuit after normal refill. The target was initially
 reachability status. All fixture origins were stopped and its exact original
 configuration was restored, after which it reached 100% bootstrap.
 
-Traffic acceptance remains **failed/incomplete**. The original `small-v1`
+The earlier traffic profiles failed before pressure. The original `small-v1`
 deployment did not meet an operator-added target-100% gate; it did not run the
 workload. A fresh `traffic-fwd-20261029T0702` fixture used descriptor-ready target
 status and the unchanged runner, but genuinely failed its mandatory baseline
@@ -414,12 +414,68 @@ the planned workload, and safe log counts showed native directory and self-test
 activity during the lowered-cap interval. A ten-second observation with the
 original target limits and no fixture origins had zero serialized-link-byte
 delta, so that quiet baseline must not be confused with the startup/rebuild
-interval. Investigate and explicitly isolate unrelated fixture work before
-another experiment; do not keep enlarging limits or weakening acceptance gates.
+interval. The separately named retry-paced v3 also failed its baseline, as
+recorded above. None of those failures is relabeled by the later profile.
+
+The reviewed `process-v4-20261029` fixture then **passed** once on that same
+native image, with all mandatory gates intact. It used exactly four dedicated
+origins, fifteen owned constructors, the reviewed 64 KiB/s process rate and
+512 KiB burst, 128 KiB/s connection rate and 1 MiB burst, 64 KiB queue and v3
+retry isolation. The target reached 100% before dispatch; origins had full
+signed descriptors at 75% and the honest origin reached 100% on its explicitly
+built circuit. The claim-to-result interval was 71.338 seconds, within the
+unchanged 120-second experiment deadline. No attachment-deadline failure was
+observed.
+
+Each direction attached six owned streams and offered 638976 payload bytes
+(104 KiB each), for 1277952 bytes across both phases. Actual delivered
+application bytes are distinct from serialized-link accounting:
+
+| Phase | Actual pressure payload received | Serialized received / sent | Stored process credit before / minimum (milli-bytes) | Native closures |
+| --- | ---: | ---: | ---: | ---: |
+| Upload | 439700 B at the temporary sink | 492720 / 55431 B | 489234544 / 0 | 6/6 |
+| Download | 401383 B at the owned clients | 59537 / 445501 B | 488841328 / 0 | 6/6 |
+
+Both 701 ms monotonic phase brackets include snapshot/control overhead and the
+post-transfer observation delay; they are not exact payload-send durations.
+Each phase observed the required positive-to-insufficient stored process-credit
+transition with increasing serialized counters, stayed within the outgoing
+burst/rate envelope, transferred actual payload and independently observed all
+six pressure circuits close. The upload phase sampled 6336 queued packed-cell
+bytes; download sampled zero queued bytes. This is a positive bounded queue
+observation, **not** evidence that the 64 KiB queue ceiling was saturated.
+
+No pressure stream completed its entire 104 KiB payload; this was bounded
+closure under exhaustion, not a completed large-file checksum demonstration.
+The complete-payload checksum checks remained active, with no mismatch reported.
+Five tiny honest echoes did complete and matched their exact bytes: baseline,
+pre-pressure checks and newly built recovery circuits after each direction.
+Their measured times were 6.364, 6.225, 5.462, 5.679 and 5.725 ms. Fresh recovery
+used ordinary teardown/refill, without a process/identity reset or alternative
+route.
+
+Across 701 requested-100-ms observations, sampled peaks were 20/64 live
+circuits, 6336/65536 queue bytes and 1783861/67108864 protocol arena bytes;
+running, waiting and slot peaks were zero. The retained result summarizes the
+snapshot counts, peaks, phase counters and credit minima; it does not retain a
+per-sample time series. The process counter includes concurrent native
+background traffic, so not every serialized byte is attributable to these
+pressure streams. TCP fragmentation and the independent per-circuit cell/queue
+bounds remain possible contributors to individual closures. The observed
+process-credit transitions establish real shared process exhaustion; they do
+not establish a unique reason for every circuit closure, every transient peak,
+full queue/CPU/host-memory saturation or production performance.
+
+All four `process-v4` origin units were stopped. The target's exact original
+configuration was restored and authenticated bootstrap was verified at 100%.
+Original and restored configuration SHA-256 were both
+`8bd9e3c4cfbc662b42f6db11dd55816b62d4918e23ac537685edcd7e527faaff`;
+the restored process used the same pinned native image. The experiment used no
+wallet calls, payment commands, app mappings or financial history changes.
 
 All claims, results, operator receipts and private logs remain under the
 workspace's `.runtime/foundation-resource/` directories. Both affected relay
-configurations were restored byte-for-byte and reached 100%; all twelve origins
-from the setup and two executed traffic fixtures were stopped. No wallet or
+configurations were restored byte-for-byte and reached 100%; all twenty origins
+from setup and the four executed traffic fixtures were stopped. No wallet or
 financial payment commands were used. This local evidence is not production,
 whole-host memory, privacy, or Lightning-settlement acceptance.
