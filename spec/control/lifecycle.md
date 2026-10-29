@@ -70,6 +70,65 @@ stop new funding and are reported as protocol failure.
 
 ## Relay registration snapshot
 
+### Durable admission before registration
+
+COMMIT and renewal admission require a durable reservation before a successful
+wire reply. Tor first retains one bounded pending candidate per live relay
+handle, with its authenticated request digest and original deadline. It emits
+`ADMISSION_PENDING` through the existing revisioned event/inventory mechanism.
+The privileged verifier retrieves it using:
+
+```text
+ELTOR_PAYMENT_ADMISSION_GET 1 instance handle period
+```
+
+The response uses the registration snapshot grammar below, preceded by
+`250-ELTOR_ADMISSION 1 instance handle revision period request_digest remaining_ms`.
+It contains the immutable policy, allocation and exactly ten ordered IDs. Pending
+state is `ADMISSION_PENDING`; all decisions are `-`, authorization is NONE and
+no round is payable (opening and closing fields are `- -`). The request digest
+is the authenticated wire request digest for the exact COMMIT or RENEW. The
+candidate may be queried until its original admission deadline, even if a
+notification was lost. GET performs no reservation or wallet operation.
+
+The daemon atomically reserves all ten identifiers under its verified receiving
+account and the exact local instance/handle/period/request digest. A conflict
+on any identifier rolls back the whole batch. Exact retries recover the original
+reservation decision. It persists a decision before sending:
+
+```text
+ELTOR_PAYMENT_ADMISSION_DECIDE 1 instance handle period request_digest decision result
+```
+
+`decision` is a nonzero 16-byte identifier. `result` is RESERVED, CONFLICT or
+CAPACITY. Tor accepts the command only from the privileged verifier, for the
+exact retained candidate while live and before its original deadline. RESERVED
+permits COMMITTED/ADMITTED; it never implies settlement or activates capacity.
+CONFLICT/CAPACITY produces the corresponding fixed-size wire refusal. Success:
+`250 ELTOR_ADMISSION_DECIDED 1 instance handle period decision revision`.
+Changed arguments or a second decision return `553 OPERATION_CONFLICT`; exact
+replays return the original decision without another wire transmission or timer
+reset. Normal query/retry rules recover a lost response.
+
+Daemon loss leaves the candidate pending only until its existing deadline;
+Tor never admits on timeout. Tor loss invalidates the candidate and its handle.
+Persisted reservations remain accounted for and cannot be assigned elsewhere
+on reconnect. Reconciliation may retire them only when the original process
+and all relevant payment windows are terminal. No pending candidate permits
+paid traffic, payment dispatch or replacement construction.
+
+Both candidate and retained decision count against the existing active/pending
+operation limits. Exhaustion refuses before allocating another record. This
+bridge is required for initial and renewal admission; a C-only identifier map
+does not satisfy durable uniqueness.
+
+Privacy/timing assessment: this is a local privileged control exchange; it
+introduces no cross-hop identifier or new public message shape. It exposes the
+same financial bindings already required by the local verifier. Ledger latency
+can affect reply timing within the original bounded window; no deadline is
+extended to conceal it. Test lost events/replies, duplicate/conflicting
+decisions, concurrent batch reservation, ledger failure and process restart.
+
 ```text
 ELTOR_PAYMENT_REGISTRATION_GET 1 instance handle period
 ```
@@ -157,7 +216,7 @@ connection. The proposed event is:
 ```
 
 `sequence` is a process-wide u64 starting at one; increment for each event;
-`revision` is the local circuit revision. `kind` is REGISTERED, COMMITTED,
+`revision` is the local circuit revision. `kind` is ADMISSION_PENDING, REGISTERED, COMMITTED,
 START_REQUESTED, AUTHORIZED, ROUND_ACTIVE, RENEW_ADMITTED, RENEW_REFUSED,
 GRACE, EXPIRED or CLOSED. Emit after the associated state transition is visible
 to queries. Multiple transitions may occur before a query; event handlers fetch

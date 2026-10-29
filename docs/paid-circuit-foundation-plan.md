@@ -1,0 +1,95 @@
+# Paid circuit foundation implementation plan
+
+Status: active implementation planning; no foundation capability is implemented
+or validated by this document. Work stays local on `paid-circuit-foundation` in
+each affected repository. Paid onion-service implementation follows this work.
+
+## Baseline
+
+The implementation starts from the merged reliability and Tor 0.5 upgrade,
+not the older revisions recorded during specification drafting:
+
+| Repository | Starting commit |
+| --- | --- |
+| tor | 7f6086c31d1674ad11ba69659cda8ef715cd40e0 |
+| libeltor-sys | abeed0e4af241fd8e07d28073f2da4c89236185d |
+| libeltor | d5eb363404082632e186b246bce6cefedcf47c0f |
+| eltord | f87b2184a854a0591d19bfc28bc6bfeb2296dbba |
+| eltor-app | 87e3733729a344376376914e7afe20788064f08c |
+| lni | ac6e0eeb5b9103fdc2610c313535baf639145191 |
+
+Record actual source revisions, lockfiles, build configuration and executable
+digests with each integration run. Existing sibling Cargo overrides are explicit
+local build inputs; ordinary remote dependency pins do not automatically select
+these sibling revisions. Preserve the committed native application lockfile.
+
+## Dependency order and completion evidence
+
+1. **Durable accounting and recipient evidence (ET-01, ET-05).** Introduce a
+   transactional ledger with unique account/payment-hash and circuit/round/charge
+   claims. Record outgoing intent before dispatch, retain ambiguous outcomes,
+   and refuse new paid work on unavailable/corrupt storage. Recipient-node
+   settlement, amount, time and registered identifier association must be
+   independently verified. Test concurrent claims, delayed callbacks, restart,
+   corruption and every dispatch/authorization crash boundary. Preserve the
+   separate deferred replay investigation as supporting tracking context.
+2. **Initial construction, activation and controller recovery (ET-02, ET-08,
+   ET-33).** Implement the specified instance-scoped registration, immutable
+   initial terms, verifier authorization and activation contracts. Test stale
+   handles, changed retries, event gaps and lost replies without duplicate
+   authorization or restarted deadlines. Keep per-hop identifiers independent.
+3. **Renewal (ET-06–10).** Implement reviewed key derivation, canonical codecs,
+   per-hop admission, prepare/status RPCs and incremental scheduling. Begin
+   preparation at rounds 7, 17 and so on. Demonstrate an existing stream through
+   rounds 10–11 and 20–21, partial refusal, lost acknowledgments and finite
+   lifetime termination. Registering identifiers does not buy future rounds.
+4. **Bounded free capacity (ET-03–05).** Advertise and admit the capability at
+   every hop, enforce both-direction traffic and overhead plus aggregate relay
+   state/CPU/setup/queue ceilings. Test concurrent circuits and identities,
+   saturation and honest recovery. The Chutney unpaid testing exception does
+   not count as implementing this allowance.
+5. **Bindings, application and integrated validation.** Synchronize standalone
+   and vendored C deliberately, expose required controller contracts, and make
+   client status reflect actual activation and failures. Preserve wallet polling
+   reliability. Run native codec/state tests and deterministic payment fault
+   tests, then correlated local Chutney, desktop activation and Firefox checks.
+   Label simulated wallet evidence separately from real Lightning settlement;
+   do not spend real wallet funds without authorization.
+
+The authoritative requirements remain [the implementation TODO](../TODO.md),
+[initial profile](../spec/circuits/initial-profile.md),
+[renewal wire](../spec/01a_circuit_renewal_wire.md),
+[durable recovery](../spec/control/recovery.md), and
+[resource profile](../spec/validation/resource-profile.md). Passing an isolated
+module test does not complete a task until its production path is integrated.
+
+## Initial source findings
+
+`src/database.rs` stores independent in-memory snapshots and truncates JSON on
+save; it cannot provide atomic cross-worker redemption. The received ledger
+initializer can reset malformed storage to an empty array. The payment watcher
+still has a handshake-verification TODO. These paths must not serve as the
+authority for the new profile. Migration must not invent missing settlement
+evidence or treat an existing receiving account as safe empty state.
+
+The source reviews identified two admission gaps: durable reservation must precede
+Tor's COMMITTED/ADMITTED reply, and free-only admission needs an explicit
+authenticated contract distinct from paid activation. The former is now specified
+in the lifecycle chapter; the latter remains an integration decision. Initial
+implementation slices are the transactional ledger, strict C profile codecs and
+shared free-capacity accounting. These are foundations for live integration, not
+standalone completion of the goal.
+
+Wallet review also found that generic BOLT12 search and pay-offer interfaces do
+not prove exact recipient association or provide invoice-before-dispatch and
+uncertain-outcome recovery. Implement capability-specific adapters; do not
+advertise a payment method until its required evidence and recovery are verified.
+
+## Privacy and timing assessment
+
+This plan changes no wire format, timing rule or runtime behavior. Implementation
+must retain uniform construction, independent hop identifiers, bounded fixed
+control framing, explicit clocks and idempotent retries. Financial associations
+remain local and must not appear in routine logs. Storage and overload failures
+must stop new paid work without discarding unresolved accounting. Independent
+cryptographic/privacy review and measurements remain distinct from local tests.
