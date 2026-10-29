@@ -10,7 +10,9 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
-const MAX_BINDINGS: usize = 128;
+// The lifecycle contract permits 128 rows per page and 4096 per complete native
+// inventory. The page size is not a live-binding or financial-work ceiling.
+const MAX_BINDINGS: usize = 4096;
 const MAX_RECOVERY_HISTORY: usize = 4096;
 const ACTIONABLE_BURST: u8 = 4;
 
@@ -143,6 +145,51 @@ impl RelayFoundation {
         }
         Ok(())
     }
+    /// Keep financial work ahead of ephemeral candidates even when a retained
+    /// missing financial handle overlaps a full fresh native inventory. An
+    /// omitted candidate remains in bounded recovery bookkeeping; no financial
+    /// record, dispatch claim or closure history is removed here.
+    fn track_work(
+        &mut self,
+        row: PaymentInventoryRow,
+        financial: bool,
+        actionable: bool,
+    ) -> Result<bool> {
+        if !self.live.contains_key(&row.handle) && self.live.len() >= MAX_BINDINGS {
+            if !financial && !actionable {
+                return Ok(false);
+            }
+            let replace = self
+                .live
+                .keys()
+                .copied()
+                .find(|handle| {
+                    !self.financial.contains(handle) && !self.actionable.contains(handle)
+                })
+                .or_else(|| {
+                    self.live
+                        .keys()
+                        .copied()
+                        .find(|handle| !self.financial.contains(handle))
+                });
+            if let Some(handle) = replace {
+                self.forget_work(handle);
+            } else if financial {
+                return Err("Foundation financial work capacity exceeded".into());
+            } else {
+                return Ok(false);
+            }
+        }
+        let handle = row.handle;
+        self.live.insert(handle, row);
+        if financial {
+            self.financial.insert(handle);
+        }
+        if financial || actionable {
+            self.schedule_actionable(handle)?;
+        }
+        Ok(true)
+    }
     async fn synchronize(&mut self) -> Result<()> {
         let inventory = self.control.inventory().await?;
         let events = self.control.take_events()?;
@@ -158,38 +205,57 @@ impl RelayFoundation {
             self.actionable_streak = 0;
             self.next = 0;
         }
-        let mut live = BTreeMap::new();
-        for row in recovery.tracked_rows_for(PaymentRole::Relay)? {
-            // Recovery can retain 4096 historical hints. The 128 work ceiling
-            // counts only bindings not already durably closed.
-            if !self.binding_closed(instance, row.handle)? {
-                live.insert(row.handle, row);
-            }
-        }
         // An absent inventory row never releases accounting. Retain only
         // previously known durable financial work for an authoritative terminal
         // query; ordinary absent candidates do not accumulate across recovery.
+        let mut retained = Vec::new();
         for handle in &self.financial {
             if let Some(row) = self.live.get(handle) {
                 if !self.ledger.binding_is_closed(instance, *handle)? {
-                    live.entry(*handle).or_insert_with(|| row.clone());
+                    retained.push(row.clone());
                 }
             }
         }
-        if live.len() > MAX_BINDINGS {
-            return Err("Foundation relay work capacity exceeded".into());
-        }
-        self.live = live;
-        let live = &self.live;
-        self.financial.retain(|h| live.contains_key(h));
-        self.probed.retain(|h, _| live.contains_key(h));
-        self.actionable.retain(|h| live.contains_key(h));
-        for handle in self.live.keys().copied().collect::<Vec<_>>() {
-            if self.has_financial_work(instance, handle)? {
-                self.financial.insert(handle);
-                self.schedule_actionable(handle)?;
+        let mut financial = Vec::new();
+        let mut ordinary = Vec::new();
+        for row in recovery.tracked_rows_for(PaymentRole::Relay)? {
+            if self.binding_closed(instance, row.handle)? {
+                continue;
+            }
+            if self.has_financial_work(instance, row.handle)? {
+                financial.push(row);
+            } else {
+                ordinary.push(row);
             }
         }
+        let prior_actionable: BTreeSet<_> = self.actionable.iter().copied().collect();
+        self.live.clear();
+        self.financial.clear();
+        self.actionable.clear();
+        for row in retained.into_iter().chain(financial) {
+            self.track_work(row, true, true)?;
+        }
+        // Matching buffered lifecycle hints can prioritize a first probe, but
+        // cannot create financial authority or revive an already probed row.
+        let is_actionable = |row: &PaymentInventoryRow| {
+            self.probed.get(&row.handle).copied().unwrap_or(0) < row.revision
+                && (prior_actionable.contains(&row.handle)
+                    || events.iter().any(|event| {
+                        event.role == PaymentRole::Relay
+                            && event.handle == row.handle
+                            && event.revision == row.revision
+                            && event.kind != PaymentEventKind::Registered
+                    }))
+        };
+        let (urgent, background): (Vec<_>, Vec<_>) = ordinary.into_iter().partition(is_actionable);
+        for row in urgent {
+            self.track_work(row, false, true)?;
+        }
+        for row in background {
+            self.track_work(row, false, false)?;
+        }
+        let live = &self.live;
+        self.probed.retain(|h, _| live.contains_key(h));
         self.instance = Some(instance);
         self.recovery = Some(recovery);
         self.last_inventory = Instant::now();
@@ -198,6 +264,9 @@ impl RelayFoundation {
     }
     fn drain_hints(&mut self) -> Result<()> {
         let events = self.control.take_events()?;
+        if events.is_empty() {
+            return Ok(());
+        }
         let recovery = self
             .recovery
             .as_mut()
@@ -206,16 +275,30 @@ impl RelayFoundation {
             recovery.observe(event)?;
         }
         let instance = recovery.instance();
+        let changed: BTreeSet<_> = events
+            .iter()
+            .filter(|event| event.role == PaymentRole::Relay)
+            .map(|event| event.handle)
+            .collect();
         let rows = recovery.tracked_rows_for(PaymentRole::Relay)?;
         for row in rows {
+            if !changed.contains(&row.handle) {
+                continue;
+            }
             if self.binding_closed(instance, row.handle)? {
                 self.forget_work(row.handle);
                 continue;
             }
-            self.live.insert(row.handle, row);
-        }
-        if self.live.len() > MAX_BINDINGS {
-            return Err("Foundation relay work capacity exceeded".into());
+            let financial = self.financial.contains(&row.handle)
+                || self.has_financial_work(instance, row.handle)?;
+            let actionable = self.probed.get(&row.handle).copied().unwrap_or(0) < row.revision
+                && events.iter().any(|event| {
+                    event.handle == row.handle
+                        && event.role == PaymentRole::Relay
+                        && event.revision == row.revision
+                        && event.kind != PaymentEventKind::Registered
+                });
+            self.track_work(row, financial, actionable)?;
         }
         self.schedule_hints(&events)?;
         Ok(())

@@ -121,6 +121,7 @@ struct ControlState {
     commands: Mutex<Vec<String>>,
     inventory_count: AtomicU64,
     many_candidates: AtomicBool,
+    ordinary_candidates: AtomicU64,
     hints_on_idle: AtomicBool,
     empty_inventory: AtomicBool,
     registration_capacity_once: AtomicBool,
@@ -291,17 +292,46 @@ async fn controller(
                                 } else {
                                     12
                                 };
-                                let mut rows =
-                                    vec![format!("250-ELTOR_PAYMENT_LIST 1 {i} {sequence} -")];
+                                let mut candidates = Vec::new();
                                 if !state.empty_inventory.load(Ordering::SeqCst) {
-                                    rows.push(format!("250-CIRCUIT {h} RELAY 1"));
-                                    for value in (3..53).chain(100..110) {
-                                        rows.push(format!(
-                                            "250-CIRCUIT {} RELAY 1",
-                                            hex::encode([value; 16])
-                                        ));
+                                    candidates.push(format!("250-CIRCUIT {h} RELAY 1"));
+                                    let ordinary = state.ordinary_candidates.load(Ordering::SeqCst);
+                                    if ordinary != 0 {
+                                        assert!(ordinary < 4096);
+                                        for value in 1000..1000 + ordinary as u128 {
+                                            candidates
+                                                .push(format!("250-CIRCUIT {value:032x} RELAY 1"));
+                                        }
+                                    } else {
+                                        for value in (3..53).chain(100..110) {
+                                            candidates.push(format!(
+                                                "250-CIRCUIT {} RELAY 1",
+                                                hex::encode([value; 16])
+                                            ));
+                                        }
                                     }
                                 }
+                                candidates.sort();
+                                let page = if fields[3] == "-" {
+                                    0
+                                } else {
+                                    usize::from_str_radix(fields[3], 16).unwrap()
+                                };
+                                let begin = page * 128;
+                                assert!(
+                                    begin < candidates.len()
+                                        || (page == 0 && candidates.is_empty())
+                                );
+                                let end = (begin + 128).min(candidates.len());
+                                let cursor = if end == candidates.len() {
+                                    "-".into()
+                                } else {
+                                    format!("{:032x}", page + 1)
+                                };
+                                let mut rows = vec![format!(
+                                    "250-ELTOR_PAYMENT_LIST 1 {i} {sequence} {cursor}"
+                                )];
+                                rows.extend_from_slice(&candidates[begin..end]);
                                 rows.push("250 OK".into());
                                 rows.join("\n")
                             } else {
@@ -547,6 +577,118 @@ async fn setup(
         native,
     )
 }
+#[tokio::test]
+async fn full_inventory_candidates_preserve_known_financial_progress_and_bounds() {
+    let dir = Directory::new();
+    let state = Arc::new(ControlState::default());
+    state.many_candidates.store(true, Ordering::SeqCst);
+    state.ordinary_candidates.store(200, Ordering::SeqCst);
+    state
+        .registration_capacity_once
+        .store(true, Ordering::SeqCst);
+    let n = Arc::new(NativeState::default());
+    let (mut coordinator, _, _, controller, native) = setup(&dir, state.clone(), n.clone()).await;
+    // Persist through the actual typed admission bridge before inventory. A
+    // recovering controller must service this obligation even when unrelated
+    // ordinary candidates span more than one 128-row inventory page.
+    coordinator
+        .control
+        .admit_pending(&mut coordinator.ledger, [1; 16], [2; 16], 0, clock)
+        .await
+        .unwrap();
+    let original = coordinator
+        .ledger
+        .get_batch_reservation([1; 16], [2; 16], 0)
+        .unwrap()
+        .unwrap();
+    let handshake = coordinator
+        .ledger
+        .get_handshake_obligation([1; 16], [2; 16])
+        .unwrap()
+        .unwrap();
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Recovered);
+    assert_eq!(state.inventory_count.load(Ordering::SeqCst), 2);
+    assert_eq!(coordinator.live.len(), 201);
+    assert!(coordinator.financial.contains(&[2; 16]));
+    assert!(coordinator.actionable.contains(&[2; 16]));
+    assert_eq!(coordinator.step(clock).await.unwrap(), RelayStep::Deferred);
+    assert_eq!(
+        coordinator.step(clock).await.unwrap(),
+        RelayStep::Reconciled {
+            notifications: 2,
+            consumed: 0,
+        }
+    );
+    let reads = state.read_times.lock().unwrap();
+    assert_eq!(reads.len(), 3); // admission, rejected registration, registration
+    assert!(reads
+        .iter()
+        .all(|(handle, _)| *handle == hex::encode([2; 16])));
+    for pair in reads.windows(2) {
+        assert!(pair[1].1.duration_since(pair[0].1) >= Duration::from_millis(1100));
+    }
+    drop(reads);
+    assert_eq!(n.lookups.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        coordinator
+            .ledger
+            .get_batch_reservation([1; 16], [2; 16], 0)
+            .unwrap()
+            .unwrap()
+            .decision,
+        original.decision
+    );
+    // The complete native inventory bound is still finite. At capacity only
+    // ephemeral ordinary bookkeeping may yield to actionable work; neither
+    // financial ownership nor its durable claim can be evicted.
+    for value in 2000u128..2000 + MAX_BINDINGS as u128 {
+        if coordinator.live.len() == MAX_BINDINGS {
+            break;
+        }
+        coordinator
+            .track_work(
+                PaymentInventoryRow {
+                    handle: value.to_be_bytes(),
+                    role: PaymentRole::Relay,
+                    revision: 1,
+                },
+                false,
+                false,
+            )
+            .unwrap();
+    }
+    let extra = PaymentInventoryRow {
+        handle: u128::MAX.to_be_bytes(),
+        role: PaymentRole::Relay,
+        revision: 1,
+    };
+    assert!(!coordinator.track_work(extra.clone(), false, false).unwrap());
+    assert!(coordinator.track_work(extra.clone(), false, true).unwrap());
+    assert_eq!(coordinator.live.len(), MAX_BINDINGS);
+    assert!(coordinator.financial.contains(&[2; 16]));
+    assert!(coordinator.live.contains_key(&[2; 16]));
+    assert!(coordinator.actionable.len() <= MAX_BINDINGS);
+    assert!(
+        coordinator
+            .ledger
+            .get_handshake_obligation([1; 16], [2; 16])
+            .unwrap()
+            == Some(handshake)
+    );
+    // Missing financial work survives a full same-instance replacement, while
+    // the ephemeral candidate pool is discarded without altering accounting.
+    state.empty_inventory.store(true, Ordering::SeqCst);
+    coordinator.synchronize().await.unwrap();
+    assert_eq!(coordinator.live.len(), 1);
+    assert!(coordinator.live.contains_key(&[2; 16]));
+    assert!(!coordinator
+        .ledger
+        .binding_is_closed([1; 16], [2; 16])
+        .unwrap());
+    controller.abort();
+    native.abort();
+}
+
 #[tokio::test]
 async fn actionable_work_preempts_idle_candidates_without_resurrecting_closed_history() {
     let dir = Directory::new();
