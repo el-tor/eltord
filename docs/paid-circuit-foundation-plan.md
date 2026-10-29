@@ -1,8 +1,11 @@
 # Paid circuit foundation implementation plan
 
-Status: active implementation planning; no foundation capability is implemented
-or validated by this document. Work stays local on `paid-circuit-foundation` in
-each affected repository. Paid onion-service implementation follows this work.
+Status: implementation is under local acceptance. The dependency order and
+historical checkpoints below retain their original scope; current results and
+remaining gates are maintained in the
+[acceptance status](foundation-acceptance-status.md). Work stays local on
+`paid-circuit-foundation` in each affected repository. Paid onion-service
+implementation follows this work.
 
 ## Baseline
 
