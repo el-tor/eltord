@@ -1,17 +1,30 @@
-//! Construction-to-coordinator orchestration. This routine performs no wallet
-//! payment. Setup-fee prefunding is a separate prerequisite for nonzero fees.
+//! One accepted construction: pin descriptors/IDs, durably prefund required
+//! handshake fees, then inject transient proofs into one sanitized constructor.
+//! Existing claimed construction never causes a replacement path or payment.
 use super::{
     construction::PreparedConstruction,
     foundation::{ClientFoundation, FoundationDraft, FoundationHop, FoundationLimits},
-    path_terms::{acquire_path_terms, PathPriceLimits},
+    handshake::{fund_handshake_hop, handshake_construction_proof},
+    path_terms::{acquire_path_terms, AcceptedPathTerms, PathPriceLimits},
 };
 use crate::{
-    payment_ledger::{ClockObservation, PaymentLedger},
-    rpc::{FoundationPolicy, PaymentControl, PaymentRejection},
+    payment_ledger::{
+        handshake::{HandshakeHop, HandshakeScope},
+        outgoing::OutgoingState,
+        AcceptanceWindow, ClockObservation, PaymentLedger,
+    },
+    rpc::{FoundationDescriptor, FoundationPolicy, PaymentControl, PaymentRejection},
     types::{Relay, RpcConfig},
 };
 use lni::cln::foundation::ClnFoundation;
-use std::{convert::TryInto, error::Error, sync::Arc, time::Duration};
+use rand::RngCore;
+use std::{
+    convert::{TryFrom, TryInto},
+    error::Error,
+    io,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::time::Instant;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 /// Begin one explicitly selected path under finite, caller-approved limits.
@@ -25,10 +38,12 @@ pub(crate) async fn begin_path<F>(
     scope: [u8; 32],
     limits: FoundationLimits,
     per_hop_routing_fee_msat: u64,
+    handshake_cap_msat: u64,
+    handshake_funding_timeout_ms: Option<u64>,
     mut observe: F,
 ) -> Result<ClientFoundation>
 where
-    F: FnMut() -> Result<ClockObservation>,
+    F: FnMut() -> Result<ClockObservation> + Send,
 {
     if scope == [0; 32] || ledger.get_origin_construction(scope)?.is_some() {
         return Err("Existing or invalid construction scope requires recovery".into());
@@ -38,15 +53,66 @@ where
     {
         return Err("Invalid client spending limits".into());
     }
-    let quoted = acquire_path_terms(
-        config,
-        &relays,
-        PathPriceLimits {
-            round_msat: limits.per_round_msat,
-            handshake_msat: 0,
-        },
-    )
-    .await?;
+    let inventory = control.inventory().await?;
+    let saved_funding = ledger.get_handshake_scope(scope)?;
+    let quoted = if let Some(saved) = &saved_funding {
+        if saved.instance != inventory.instance
+            || saved.account != ledger.account_id()
+            || saved.lifetime_limit_msat != limits.lifetime_msat
+            || saved.outstanding_limit_msat != limits.outstanding_msat
+            || saved.per_round_limit_msat != limits.per_round_msat
+            || saved.hops.len() != relays.len()
+            || Some((saved.window.closes_at_ms - saved.window.opens_at_ms) as u64)
+                != handshake_funding_timeout_ms
+        {
+            return Err("Saved prefunding differs from original accepted path".into());
+        }
+        let mut round_msat = 0u64;
+        let mut handshake_msat = 0u64;
+        let mut descriptors = Vec::new();
+        for (saved, relay) in saved.hops.iter().zip(&relays) {
+            if hex::encode(saved.fingerprint) != relay.fingerprint.to_ascii_lowercase()
+                || saved.fee_limit_msat != per_hop_routing_fee_msat
+            {
+                return Err("Saved prefunding path differs".into());
+            }
+            let terms: [u8; 55] = saved
+                .terms
+                .as_slice()
+                .try_into()
+                .map_err(|_| "Invalid saved prefunding policy")?;
+            let p = FoundationPolicy::decode(&terms)?;
+            round_msat = round_msat
+                .checked_add(p.rate_msat)
+                .ok_or("Round cap overflow")?;
+            handshake_msat = handshake_msat
+                .checked_add(p.handshake_fee_msat)
+                .ok_or("Setup cap overflow")?;
+            descriptors.push(FoundationDescriptor {
+                fingerprint: saved.fingerprint,
+                terms,
+                bolt12_offer: saved.offer.clone(),
+            });
+        }
+        if handshake_msat > handshake_cap_msat {
+            return Err("Saved setup fees exceed explicit acceptance".into());
+        }
+        AcceptedPathTerms {
+            descriptors,
+            round_msat,
+            handshake_msat,
+        }
+    } else {
+        acquire_path_terms(
+            config,
+            &relays,
+            PathPriceLimits {
+                round_msat: limits.per_round_msat,
+                handshake_msat: handshake_cap_msat,
+            },
+        )
+        .await?
+    };
     let routing = per_hop_routing_fee_msat
         .checked_mul(relays.len() as u64)
         .ok_or("Routing cap overflow")?;
@@ -58,14 +124,12 @@ where
     {
         return Err("Path exceeds accepted round cap including routing".into());
     }
-    if quoted.handshake_msat != 0 {
-        return Err("Nonzero handshake requires durable prefunding".into());
-    }
-    if quoted.round_msat > 0 && wallet.is_none() {
+    if (quoted.round_msat > 0 || quoted.handshake_msat > 0) && wallet.is_none() {
         return Err("Paid path requires verified outgoing wallet".into());
     }
     for descriptor in &quoted.descriptors {
-        if FoundationPolicy::decode(&descriptor.terms)?.rate_msat > 0
+        let policy = FoundationPolicy::decode(&descriptor.terms)?;
+        if (policy.rate_msat > 0 || policy.handshake_fee_msat > 0)
             && descriptor.bolt12_offer.is_none()
         {
             return Err("Paid hop has no supported signed receiving offer".into());
@@ -79,11 +143,20 @@ where
         .into_iter()
         .min()
         .ok_or("Empty path")?;
-    let inventory = control.inventory().await?;
     super::circuit::pregen_extend_paid_circuit_hashes(&mut relays, 10);
+    // A saved scope is authoritative before the first constructor claim too:
+    // restore exact descriptors, note IDs and ten IDs, never requote/regenerate.
+    if let Some(saved) = &saved_funding {
+        for (relay, hop) in relays.iter_mut().zip(&saved.hops) {
+            relay.payment_id_hashes_10 =
+                Some(hop.initial_payment_ids.iter().map(hex::encode).collect());
+        }
+    }
+
     let expected = quoted
         .descriptors
-        .into_iter()
+        .iter()
+        .cloned()
         .zip(&relays)
         .map(|(descriptor, relay)| -> Result<FoundationHop> {
             let ids = relay
@@ -106,11 +179,162 @@ where
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let funding = if quoted.handshake_msat > 0 {
+        let timeout = handshake_funding_timeout_ms
+            .filter(|ms| (1..=300000).contains(ms))
+            .ok_or("Positive setup fees require an explicit finite funding timeout")?;
+        let fee_count = quoted
+            .descriptors
+            .iter()
+            .try_fold(0u64, |n, d| -> Result<u64> {
+                Ok(n + u64::from(FoundationPolicy::decode(&d.terms)?.handshake_fee_msat > 0))
+            })?;
+        let setup_max = quoted
+            .handshake_msat
+            .checked_add(
+                per_hop_routing_fee_msat
+                    .checked_mul(fee_count)
+                    .ok_or("Setup routing cap overflow")?,
+            )
+            .ok_or("Setup cap overflow")?;
+        let initial_max = setup_max
+            .checked_add(quoted.round_msat)
+            .and_then(|n| n.checked_add(routing))
+            .ok_or("Initial funding cap overflow")?;
+        if initial_max > limits.lifetime_msat || initial_max > limits.outstanding_msat {
+            return Err("Setup plus first-round exposure exceeds accepted limits".into());
+        }
+        let saved = if let Some(saved) = saved_funding {
+            saved
+        } else {
+            let clock = observe()?;
+            if clock.now_ms < 0 || clock.uncertainty_ms > 5000 {
+                return Err("Invalid trusted funding clock".into());
+            }
+            let opens = clock
+                .now_ms
+                .checked_sub(i64::try_from(clock.uncertainty_ms)?)
+                .filter(|n| *n >= 0)
+                .ok_or("Funding clock overflow")?;
+            let closes = opens
+                .checked_add(i64::try_from(timeout)?)
+                .ok_or("Funding deadline overflow")?;
+            let mut hops = Vec::new();
+            for h in &expected {
+                let mut operation = [0; 16];
+                let mut payment_id = [0; 32];
+                rand::rngs::OsRng.fill_bytes(&mut operation);
+                rand::rngs::OsRng.fill_bytes(&mut payment_id);
+                hops.push(HandshakeHop {
+                    fingerprint: h.descriptor.fingerprint,
+                    terms: h.descriptor.terms.to_vec(),
+                    offer: h.descriptor.bolt12_offer.clone(),
+                    operation,
+                    payment_id,
+                    initial_payment_ids: h.payment_ids,
+                    fee_limit_msat: h.fee_limit_msat,
+                });
+            }
+            let saved = HandshakeScope {
+                scope,
+                instance: inventory.instance,
+                account: ledger.account_id(),
+                lifetime_limit_msat: limits.lifetime_msat,
+                outstanding_limit_msat: limits.outstanding_msat,
+                per_round_limit_msat: limits.per_round_msat,
+                window: AcceptanceWindow {
+                    opens_at_ms: opens,
+                    closes_at_ms: closes,
+                },
+                hops,
+            };
+            ledger.save_handshake_scope(&saved)?;
+            saved
+        };
+        let wallet = wallet.as_ref().ok_or("Missing native setup wallet")?;
+        for (index, h) in expected.iter().enumerate() {
+            if FoundationPolicy::decode(&h.descriptor.terms)?.handshake_fee_msat == 0 {
+                continue;
+            }
+            let record =
+                fund_handshake_hop(&mut ledger, wallet, scope, index as u16 + 1, &mut || {
+                    observe().map_err(|_| {
+                        io::Error::new(io::ErrorKind::Other, "Trusted clock unavailable")
+                    })
+                })
+                .await?;
+            if record.state != OutgoingState::Settled || record.closed || record.fee_limit_breached
+            {
+                return Err("Setup funding remains uncertain or unusable; recover exact original operations".into());
+            }
+        }
+        Some(saved)
+    } else {
+        None
+    };
+    // Recover only ephemeral proof from the exact settled native operation. No
+    // proof enters saved context, financial records, status replies or logs.
+    let mut proofs = Vec::new();
+    if let Some(funding) = &funding {
+        let wallet = wallet.as_ref().ok_or("Missing native setup wallet")?;
+        for (index, h) in expected.iter().enumerate() {
+            if FoundationPolicy::decode(&h.descriptor.terms)?.handshake_fee_msat == 0 {
+                continue;
+            }
+            let now = observe()?;
+            let proof = handshake_construction_proof(
+                &mut ledger,
+                wallet,
+                scope,
+                index as u16 + 1,
+                now,
+                &mut || {
+                    observe().map_err(|_| {
+                        io::Error::new(io::ErrorKind::Other, "Trusted clock unavailable")
+                    })
+                },
+            )
+            .await?;
+            if proof.settlement().amount_msat
+                != FoundationPolicy::decode(&h.descriptor.terms)?.handshake_fee_msat
+            {
+                return Err("Setup proof amount mismatch".into());
+            }
+            proofs.push((index, proof));
+        }
+        if funding.instance != control.inventory().await?.instance {
+            return Err("Tor instance changed after prefunding".into());
+        }
+    }
     let context = serde_json::to_vec(
-        &serde_json::json!({"limits":limits,"routing_fee_per_hop_msat":per_hop_routing_fee_msat,
+        &serde_json::json!({"limits":limits,"routing_fee_per_hop_msat":per_hop_routing_fee_msat,"handshake_msat":handshake_cap_msat,"handshake_funding_timeout_ms":handshake_funding_timeout_ms,
         "hops":expected.iter().map(|hop|serde_json::json!({"fingerprint":hex::encode(hop.descriptor.fingerprint),"terms":hex::encode(hop.descriptor.terms),"offer":hop.descriptor.bolt12_offer})).collect::<Vec<_>>() }),
     )?;
     let construction = observe()?;
+    if construction.now_ms < 0 || construction.uncertainty_ms > 5000 {
+        return Err("Invalid trusted construction clock".into());
+    }
+    let uncertainty = i64::try_from(construction.uncertainty_ms)?;
+    for (index, proof) in &proofs {
+        let paid = proof.settlement();
+        let policy = FoundationPolicy::decode(&expected[*index].descriptor.terms)?;
+        let opens = construction
+            .now_ms
+            .checked_add(uncertainty)
+            .and_then(|n| n.checked_sub(300000))
+            .ok_or("Construction clock overflow")?;
+        let closes = construction
+            .now_ms
+            .checked_sub(uncertainty)
+            .and_then(|n| n.checked_add(i64::from(policy.setup_timeout_ms)))
+            .ok_or("Construction clock overflow")?;
+        if paid.settled_earliest_ms < opens || paid.settled_latest_ms > closes {
+            return Err("Setup proof became too old or uncertain before construction".into());
+        }
+        relays[*index].payment_handshake_fee_payhash = Some(hex::encode(paid.payment_hash));
+        relays[*index].payment_handshake_fee_preimage = Some(hex::encode(proof.preimage()));
+    }
+
     let deadline = Instant::now() + Duration::from_millis(u64::from(setup_ms));
     let prepared =
         PreparedConstruction::new(scope, inventory.instance, &relays, &context, construction)?;
@@ -202,6 +426,8 @@ mod tests {
                 per_round_msat: 0,
             },
             0,
+            0,
+            None,
             || panic!("must not replace original construction clock"),
         )
         .await;
