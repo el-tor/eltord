@@ -35,6 +35,23 @@ wire-active; GET is strictly local and read-only. REFRESH requires committed
 terms and uses the original lifetime/deadline, with one dispatch and no automatic
 retry. Follow the initial wire QUERY rate limits. Origin-only handles are required.
 
+For the foundation implementation, use a configurable 7000 ms local QUERY
+response-wait candidate, selected before profile creation and bounded to at most
+60000 ms. This is a measurement candidate, not a guaranteed network latency or
+an extension of accepted paid time. Clip the wait to the original setup/hard
+lifetime deadline. On expiry, retain the operation, nonce and request as UNCERTAIN;
+a later explicitly requested REFRESH may use a fresh operation/nonce within the
+existing query-rate and aggregate operation limits. No automatic retransmission
+or new spending follows this timeout. A valid late response may refine retained
+state only while the circuit remains live and without increasing previously
+established deadlines. The one-second query rate floor is not a response timeout.
+
+Privacy/timing assessment: this local response wait adds no wire fields or
+variable-size responses. Fresh explicit queries still use the existing nonce,
+rate and retention rules; observer-visible retry timing requires measurement.
+Validate delayed/lost replies, fresh REFRESH after timeout, bounded retained
+operations, closure races and unchanged original deadlines before deployment.
+
 For each operation store exact arguments, kind and immutable wire request before
 dispatch. Same identity and bytes recover state without an immediate resend;
 changed arguments conflict. Allow one PREPARE and one START per hop, with distinct

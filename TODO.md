@@ -36,6 +36,12 @@ round boundary, require `551 STATE_TRANSITION_PENDING` without revision changes,
 activation, payment consumption, or timer scheduling by GET, then verify a coherent
 snapshot after normal timer progress. Retry only within existing local query
 budgets; this error grants no spending authority.
+ET-08/09/33 must also test the [bounded REFRESH response wait](spec/control/lifecycle.md#origin-initial-operations)
+in Tor and daemon integration: the configurable 7000 ms candidate is clipped by
+original deadlines, expiry preserves UNCERTAIN operation/nonce state, fresh
+caller-requested REFRESH respects shared limits, and late replies cannot reopen
+or extend a circuit. Measure the candidate under delayed/lost responses; do not
+confuse the one-second query rate floor with an adequate response window.
 
 - [ ] **ET-01 — Recipient-backed payment validation and single redemption.** Projects: `eltord`, `tor`, `lni`. Spec: [payment authorization](spec/onion-services/authorization.md#1-bind-payment-authorization-to-the-client), [renewal admission](spec/01a_circuit_renewal_wire.md#6-timing-retransmission-and-state-transitions). Preserve the already saved Codex task **“Deferred: paid circuit replay protection”** as the detailed investigation; do not create a duplicate or start it. Earlier source review found incomplete handshake validation, observation-time windows, and no demonstrated atomic used-by-circuit enforcement. These are source findings, not a proven replay exploit. Acceptance: recipient-node settlement/amount/time verification, durable atomic circuit/round consumption, duplicate callbacks, old settled-payment reuse on a fresh circuit, concurrent attempts, and restart tests. New payment/renewal features depend on this work.
 
