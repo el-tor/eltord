@@ -1,4 +1,4 @@
-//! Durable receiving-account accounting primitives for the paid-circuit foundation.
+//! Durable account accounting primitives for the paid-circuit foundation.
 //!
 //! This module is not connected to the legacy payment watcher or Tor admission.
 //! The caller must authenticate the recipient account, immutable Tor registration,
@@ -23,10 +23,12 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod outgoing;
+
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 const APPLICATION_ID: i64 = 0x454c5452;
-const VERSION: i64 = 1;
+const VERSION: i64 = 2;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -50,6 +52,12 @@ pub enum LedgerError {
     InvalidEvidence,
     #[error("settlement or authorization is outside its certain acceptance window")]
     OutsideWindow,
+    #[error("financial exposure or wallet work budget exhausted")]
+    BudgetExceeded,
+    #[error("wallet dispatch was already claimed; reconcile its outcome")]
+    DispatchAlreadyClaimed,
+    #[error("operation unsupported by the paid-circuit foundation")]
+    UnsupportedOperation,
 }
 
 type Result<T> = std::result::Result<T, LedgerError>;
@@ -264,6 +272,7 @@ impl PaymentLedger {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(SCHEMA)?;
+        tx.execute_batch(outgoing::SCHEMA)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
             params![&account.0[..]],
@@ -319,6 +328,7 @@ impl PaymentLedger {
         if broken_references {
             return Err(LedgerError::InvalidLedger);
         }
+        outgoing::validate_schema(&ledger.connection)?;
         Ok(ledger)
     }
 
@@ -726,6 +736,7 @@ impl PaymentLedger {
             "UPDATE registrations SET closed=1 WHERE instance=?1",
             params![&instance[..]],
         )?;
+        outgoing::close_instance(&tx, instance)?;
         tx.commit()?;
         Ok(())
     }
