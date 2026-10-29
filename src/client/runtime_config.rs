@@ -16,12 +16,18 @@ struct FilePlan {
     outstanding_msat: u64,
     per_round_msat: u64,
     routing_fee_per_hop_msat: u64,
+    #[serde(default)]
+    handshake_msat: u64,
+    #[serde(default)]
+    handshake_funding_timeout_ms: Option<u64>,
 }
 pub(crate) struct ClientPlanConfig {
     pub scope: [u8; 32],
     pub fingerprints: Vec<[u8; 20]>,
     pub limits: FoundationLimits,
     pub routing_fee_per_hop_msat: u64,
+    pub handshake_msat: u64,
+    pub handshake_funding_timeout_ms: Option<u64>,
 }
 fn invalid() -> io::Error {
     io::Error::new(
@@ -45,6 +51,17 @@ fn decode<const N: usize>(s: &str) -> io::Result<[u8; N]> {
     Ok(value)
 }
 impl ClientPlanConfig {
+    /// This single-path runtime uses the same financial ceiling account-wide.
+    /// The ledger refuses any change to a previously accepted account budget.
+    pub(crate) fn account_budget(&self) -> crate::payment_ledger::outgoing::AccountBudget {
+        crate::payment_ledger::outgoing::AccountBudget {
+            lifetime_limit_msat: self.limits.lifetime_msat,
+            outstanding_limit_msat: self.limits.outstanding_msat,
+            max_queued_intents: 128,
+            max_wallet_rpcs: 1,
+            max_unresolved_intents: 128,
+        }
+    }
     pub(crate) fn load(path: &Path) -> io::Result<Self> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
@@ -78,6 +95,11 @@ impl ClientPlanConfig {
             || value.fingerprints.len() > 16
             || value.per_round_msat > value.outstanding_msat
             || value.outstanding_msat > value.lifetime_msat
+            || value.handshake_msat > value.outstanding_msat
+            || (value.handshake_msat > 0 && value.handshake_funding_timeout_ms.is_none())
+            || value
+                .handshake_funding_timeout_ms
+                .map_or(false, |ms| !(1..=300_000).contains(&ms))
         {
             return Err(invalid());
         }
@@ -107,6 +129,8 @@ impl ClientPlanConfig {
                 per_round_msat: value.per_round_msat,
             },
             routing_fee_per_hop_msat: value.routing_fee_per_hop_msat,
+            handshake_msat: value.handshake_msat,
+            handshake_funding_timeout_ms: value.handshake_funding_timeout_ms,
         })
     }
     /// Old signed prices remain pinned by the saved plan. Only user-controlled
@@ -118,13 +142,19 @@ impl ClientPlanConfig {
         let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
         let limits = serde_json::to_value(self.limits).map_err(|_| invalid())?;
         let hops = value["hops"].as_array().ok_or_else(invalid)?;
-        Ok(value["limits"] == limits
-            && value["routing_fee_per_hop_msat"].as_u64() == Some(self.routing_fee_per_hop_msat)
-            && hops.len() == self.fingerprints.len()
-            && hops
-                .iter()
-                .zip(&self.fingerprints)
-                .all(|(hop, fp)| hop["fingerprint"].as_str() == Some(hex::encode(fp).as_str())))
+        Ok(
+            value["handshake_msat"].as_u64().unwrap_or(0) == self.handshake_msat
+                && value["handshake_funding_timeout_ms"].as_u64()
+                    == self.handshake_funding_timeout_ms
+                && value["limits"] == limits
+                && value["routing_fee_per_hop_msat"].as_u64()
+                    == Some(self.routing_fee_per_hop_msat)
+                && hops.len() == self.fingerprints.len()
+                && hops
+                    .iter()
+                    .zip(&self.fingerprints)
+                    .all(|(hop, fp)| hop["fingerprint"].as_str() == Some(hex::encode(fp).as_str())),
+        )
     }
 }
 #[cfg(test)]
@@ -157,6 +187,55 @@ mod tests {
         assert!(ClientPlanConfig::load(&path).is_err());
         assert!(ClientPlanConfig::load(&dir).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn handshake_spending_requires_explicit_cap_and_finite_window() {
+        let original = input();
+        let plan = ClientPlanConfig::parse(&serde_json::to_vec(&original).unwrap()).unwrap();
+        assert_eq!(plan.handshake_msat, 0);
+        assert_eq!(plan.handshake_funding_timeout_ms, None);
+        let mut paid = original;
+        paid["handshake_msat"] = serde_json::json!(10);
+        assert!(ClientPlanConfig::parse(&serde_json::to_vec(&paid).unwrap()).is_err());
+        for ms in [0, 300_001, u64::MAX] {
+            paid["handshake_funding_timeout_ms"] = serde_json::json!(ms);
+            assert!(ClientPlanConfig::parse(&serde_json::to_vec(&paid).unwrap()).is_err());
+        }
+        paid["handshake_funding_timeout_ms"] = serde_json::json!(60_000);
+        let plan = ClientPlanConfig::parse(&serde_json::to_vec(&paid).unwrap()).unwrap();
+        let saved = serde_json::json!({"limits":plan.limits,"routing_fee_per_hop_msat":1,"hops":[{"fingerprint":hex::encode([2;20])}]});
+        assert!(!plan
+            .matches_saved_context(&serde_json::to_vec(&saved).unwrap())
+            .unwrap());
+        paid["handshake_msat"] = serde_json::json!(21);
+        assert!(ClientPlanConfig::parse(&serde_json::to_vec(&paid).unwrap()).is_err());
+    }
+    #[test]
+    fn runtime_account_limits_cannot_increase_after_restart() {
+        use crate::payment_ledger::{AccountId, PaymentLedger};
+        let directory =
+            std::env::temp_dir().join(format!("eltor-plan-budget-{}", rand::random::<u128>()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ledger.sqlite");
+        let plan = ClientPlanConfig::parse(&serde_json::to_vec(&input()).unwrap()).unwrap();
+        let account = AccountId([11; 32]);
+        let mut ledger = PaymentLedger::provision(&path, account).unwrap();
+        ledger
+            .configure_account_budget(plan.account_budget())
+            .unwrap();
+        drop(ledger);
+        let mut ledger = PaymentLedger::reopen(&path, account).unwrap();
+        let mut changed = input();
+        changed["lifetime_msat"] = serde_json::json!(101);
+        let changed = ClientPlanConfig::parse(&serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(ledger
+            .configure_account_budget(changed.account_budget())
+            .is_err());
+        ledger
+            .configure_account_budget(plan.account_budget())
+            .unwrap();
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
     }
     #[test]
     fn explicit_finite_plan_and_exact_recovery_terms() {

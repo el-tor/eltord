@@ -244,8 +244,9 @@ path and original clock, and claims construction once on the same authenticated
 control connection. Recovery reuses the retained scope, signed prices, payment
 identifiers and limits. Changed plan settings are refused. A claimed construction
 without an accepted plan remains uncertain and cannot trigger another build.
-This initial integration supports zero handshake fees and up to the initial ten
-rounds; nonzero handshake funding and renewal orchestration remain required.
+The coordinator now supports recipient-backed handshake prefunding and renewal
+beyond the initial ten rounds. These paths have native adapter fixture coverage;
+live activation, renewal and full-stack acceptance remain required.
 
 Executed checkpoint: the combined client suite passes 16 tests, including
 positive-price native HTTP fixtures, all-hop commitment, loss of payment and
@@ -262,8 +263,8 @@ the original wallet payment, never from a replacement payment. Restoring proofs
 checks both the commitment and template; it does not clear a dispatch claim.
 Older version-1 local zero-fee fixture records remain readable for recovery;
 new construction records never store the full proof-bearing command. This is a
-prerequisite for nonzero handshake integration, not evidence that prefunding is
-already implemented. The opaque accepted context must likewise remain free of
+prerequisite for the nonzero handshake integration. Native fixture validation
+does not establish real Lightning settlement. The opaque accepted context must likewise remain free of
 preimages and credentials.
 
 Runtime financial recovery is independent of live circuit restoration. Startup
@@ -281,3 +282,25 @@ scope remain in private local files and ledger records, not diagnostics. Recover
 does not requote or generate replacement identifiers. Reconnect backoff is
 bounded and never extends the accepted payment window. Live traffic timing and
 resource measurements remain part of the acceptance work.
+
+### Current live integration configuration
+
+The client plan additionally accepts `handshake_msat` (default zero) and
+`handshake_funding_timeout_ms`. A positive setup cap requires an explicit finite
+funding window from 1 through 300000 milliseconds. The cap cannot exceed the
+outstanding limit. These are approved local spending bounds, not a promise of
+Lightning routing latency. Recovery compares these settings with the saved
+acceptance; it cannot silently widen them.
+
+The single-path runtime installs the same lifetime and outstanding financial
+limits account-wide before any dispatch. Existing different limits are refused,
+including after restart. The immutable account resource ceilings are 128 queued
+intents, one wallet RPC, and 128 unresolved intents. Handshake fees and regular
+rounds share these limits rather than receiving independent spending budgets.
+
+For live local acceptance, the private fixture configuration uses zero prices and
+a loopback CLN-shaped endpoint which refuses every payment and invoice-acquisition
+method. It exercises actual Tor construction, controller activation, stream
+gating and the desktop/browser path without contacting or funding a real wallet.
+Positive payment verification and uncertain-outcome recovery use separate native
+HTTP fixtures. Neither result may be reported as real Lightning settlement.
