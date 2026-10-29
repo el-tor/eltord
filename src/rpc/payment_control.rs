@@ -15,6 +15,51 @@ fn invalid() -> io::Error {
     )
 }
 
+/// Complete negative replies are distinct from a lost/partial exchange. They
+/// never prove settlement, consumption, or refund, and never trigger retries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("Payment control request rejected: {self:?}")]
+pub enum PaymentRejection {
+    Capacity,
+    StateTransitionPending,
+    InitialStateUnconfirmed,
+    DeadlineExpired,
+    UnsupportedProfile,
+    UnknownPeriod,
+    UnknownCircuit,
+    UnknownCursor,
+    UnknownOperation,
+    StaleInstance,
+    OperationConflict,
+    BadSequence,
+    BadArgument,
+    AuthenticationRequired,
+}
+impl PaymentRejection {
+    fn parse(reply: &str) -> Option<Self> {
+        Some(match reply {
+            "451 CAPACITY" => Self::Capacity,
+            "551 STATE_TRANSITION_PENDING" => Self::StateTransitionPending,
+            "551 INITIAL_STATE_UNCONFIRMED" => Self::InitialStateUnconfirmed,
+            "551 DEADLINE_EXPIRED" => Self::DeadlineExpired,
+            "551 UNSUPPORTED_PROFILE" => Self::UnsupportedProfile,
+            "552 UNKNOWN_PERIOD" => Self::UnknownPeriod,
+            "552 UNKNOWN_CIRCUIT" => Self::UnknownCircuit,
+            "552 UNKNOWN_CURSOR" => Self::UnknownCursor,
+            "552 UNKNOWN_OPERATION" => Self::UnknownOperation,
+            "552 STALE_INSTANCE" => Self::StaleInstance,
+            "553 OPERATION_CONFLICT" => Self::OperationConflict,
+            "553 BAD_SEQUENCE" => Self::BadSequence,
+            "512 BAD_ARGUMENT" => Self::BadArgument,
+            "514 AUTHENTICATION_REQUIRED" => Self::AuthenticationRequired,
+            _ => return None,
+        })
+    }
+    pub fn from_io(error: &io::Error) -> Option<Self> {
+        error.get_ref()?.downcast_ref::<Self>().copied()
+    }
+}
+
 pub struct PaymentControl {
     socket: BufReader<TcpStream>,
     events: VecDeque<PaymentEvent>,
@@ -22,6 +67,7 @@ pub struct PaymentControl {
     next_command: tokio::time::Instant,
 }
 impl PaymentControl {
+    pub(crate) fn invalidate(&mut self) { self.failed = true; }
     pub async fn connect(config: &RpcConfig) -> io::Result<Self> {
         let stream =
             tokio::time::timeout(Duration::from_secs(15), TcpStream::connect(&config.addr))
@@ -77,7 +123,7 @@ impl PaymentControl {
         })
             .await
             .map_err(|_| invalid())?;
-        if result.is_ok() {
+        if result.is_ok() || result.as_ref().err().and_then(PaymentRejection::from_io).is_some() {
             self.failed = false;
         }
         result
@@ -112,6 +158,11 @@ impl PaymentControl {
                 continue;
             }
             let body = line.strip_suffix("\r\n").ok_or_else(invalid)?;
+            if reply.is_empty() {
+                if let Some(rejection) = PaymentRejection::parse(body) {
+                    return Err(io::Error::new(io::ErrorKind::Other, rejection));
+                }
+            }
             if body.len() < 4
                 || !body.starts_with("250")
                 || !matches!(body.as_bytes()[3], b'-' | b' ')
@@ -297,6 +348,43 @@ mod tests {
         assert_eq!(queried, 129);
         assert!(client.take_events().unwrap().is_empty());
         server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn payment_control_complete_rejection_is_not_transport_loss() {
+        for (response, expected) in [
+            ("551 STATE_TRANSITION_PENDING\r\n", Some(PaymentRejection::StateTransitionPending)),
+            ("552 UNKNOWN_CIRCUIT\r\n", Some(PaymentRejection::UnknownCircuit)),
+            ("451 CAPACITY\r\n", Some(PaymentRejection::Capacity)),
+            ("551 UNKNOWN_ERROR\r\n", None),
+            ("551 STATE_TRANSITION_PENDING extra\r\n", None),
+            ("250-PARTIAL\r\n551 STATE_TRANSITION_PENDING\r\n", None),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+                for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                    assert_eq!(read(&mut socket).await, expected);
+                    socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+                }
+                assert_eq!(read(&mut socket).await, "ELTOR_PAYMENT_LIST 1 - -\r\n");
+                socket.get_mut().write_all(response.as_bytes()).await.unwrap();
+                if expected.is_some() {
+                    assert_eq!(read(&mut socket).await, "ELTOR_PAYMENT_LIST 1 - -\r\n");
+                    socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+                }
+            });
+            let config = RpcConfig { addr, rpc_password: None, command: String::new() };
+            let mut client = PaymentControl::connect(&config).await.unwrap();
+            let error = client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap_err();
+            assert_eq!(PaymentRejection::from_io(&error), expected);
+            if expected.is_some() {
+                assert_eq!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(), "250 OK");
+            } else {
+                assert!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.is_err());
+            }
+            server.await.unwrap();
+        }
     }
     #[tokio::test]
     async fn payment_control_recovery_burst_is_paced() {
