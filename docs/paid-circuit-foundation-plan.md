@@ -222,9 +222,41 @@ The client now requires an authenticated `GETCONF ElTorFoundation` result before
 loading a legacy wallet. Only an explicit disabled profile, with no foundation
 configuration requested, reaches the legacy loop. Unknown replies, lost control
 connections, and conflicting configuration stop wallet activity. The enabled
-profile currently stops at this boundary until the durable origin coordinator
-is connected; this is an intermediate safeguard, not completed activation.
+profile enters the durable origin coordinator only with an explicit private
+client plan and an existing account ledger. This startup wiring is still under
+integration test; it is not evidence of completed live activation.
 The socket regression covers disabled/enabled/unknown/rejected modes and checks
 that mode selection sends no activation or wallet command. Constructor and
 signed-descriptor preflight helpers are tested, but live construction, recovery,
 renewal, and end-to-end acceptance remain required.
+
+The private `ELTOR_FOUNDATION_CLIENT_PLAN` JSON file selects one path with
+`scope` (nonzero 32-byte lowercase hex), ordered unique `fingerprints` (20-byte
+lowercase hex), and integer `lifetime_msat`, `outstanding_msat`, `per_round_msat`,
+and `routing_fee_per_hop_msat` caps. The per-round cap includes relay prices and
+routing allowances. It must not exceed the outstanding cap, which must not
+exceed the lifetime cap. Zero caps allow only zero-cost work. The file is bounded
+to 8 KiB, rejects unknown fields and symlinks, and requires private Unix
+permissions. Account credentials remain in `ELTOR_FOUNDATION_CONFIG`.
+
+Startup reads signed relay prices before construction, persists the approved
+path and original clock, and claims construction once on the same authenticated
+control connection. Recovery reuses the retained scope, signed prices, payment
+identifiers and limits. Changed plan settings are refused. A claimed construction
+without an accepted plan remains uncertain and cannot trigger another build.
+This initial integration supports zero handshake fees and up to the initial ten
+rounds; nonzero handshake funding and renewal orchestration remain required.
+
+Executed checkpoint: the combined client suite passes 16 tests, including
+positive-price native HTTP fixtures, all-hop commitment, loss of payment and
+START replies, retained constructor ownership, and private-plan validation.
+The startup entry point compiles inside its spawned asynchronous task. A
+client-plan file alone also counts as foundation intent, so a missing account
+configuration cannot redirect that requested path into legacy payments.
+These tests do not establish live Tor activation or real Lightning settlement.
+
+Privacy/timing assessment: the selected path, wallet references, identifiers and
+scope remain in private local files and ledger records, not diagnostics. Recovery
+does not requote or generate replacement identifiers. Reconnect backoff is
+bounded and never extends the accepted payment window. Live traffic timing and
+resource measurements remain part of the acceptance work.

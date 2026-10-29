@@ -106,6 +106,12 @@ impl PreparedConstruction {
             payload: saved.payload,
         }))
     }
+    pub(crate) fn accepted_context(&self) -> io::Result<Vec<u8>> {
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&self.payload).map_err(|_| invalid())?;
+        hex::decode(envelope["accepted_context"].as_str().ok_or_else(invalid)?)
+            .map_err(|_| invalid())
+    }
     pub(crate) async fn dispatch(
         &self,
         ledger: &mut PaymentLedger,

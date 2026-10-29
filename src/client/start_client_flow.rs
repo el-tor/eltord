@@ -55,10 +55,14 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandl
 async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
     // No wallet access is permitted until Tor's authenticated mode is known.
     // The foundation coordinator is wired here independently of the legacy loop.
-    match super::mode::payment_mode(rpc_config, env::var_os("ELTOR_FOUNDATION_CONFIG").is_some()).await {
+    let foundation_requested = env::var_os("ELTOR_FOUNDATION_CONFIG").is_some()
+        || env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some();
+    match super::mode::payment_mode(rpc_config, foundation_requested).await {
         Ok(super::mode::ClientPaymentMode::Legacy) => (),
         Ok(super::mode::ClientPaymentMode::Foundation) => {
-            client_warn!("Foundation client activation awaits its durable coordinator; legacy payments are disabled");
+            if super::runtime::run(rpc_config).await.is_err() {
+                client_warn!("Foundation client stopped; verify its existing ledger, account, and accepted private plan");
+            }
             return false;
         }
         Err(_) => {
