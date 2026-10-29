@@ -230,7 +230,7 @@ def echo_probe(control, circuit, sink):
         stream, deadline = None, time.monotonic() + 5
         while time.monotonic() < deadline:
             matches = [f for row in control.info("stream-status")
-                       if len(f := row.split()) >= 4 and f[1] == "NEW"
+                       if len(f := shlex.split(row)) >= 4 and f[1] == "NEW"
                        and f[3] == f"127.0.0.1:{sink.port}"]
             if len(matches) == 1:
                 stream = matches[0][0]
@@ -252,7 +252,7 @@ def echo_probe(control, circuit, sink):
         sock.sendall(payload)
         require(read_exact(sock, len(payload)) == payload, "Native free echo payload mismatch")
         rows = control.info("stream-status")
-        require(any(len(f := row.split()) >= 3 and f[:3] == [stream, "SUCCEEDED", circuit]
+        require(any(len(f := shlex.split(row)) >= 3 and f[:3] == [stream, "SUCCEEDED", circuit]
                     for row in rows), "Honest stream used a different circuit")
     return round((time.monotonic() - started) * 1000, 3)
 
@@ -394,12 +394,15 @@ def run(args):
         thread = threading.Thread(target=sample, daemon=True)
         thread.start()
         sink = Echo()
+        summary["stage"] = "baseline-build"
         honest = controls[0].build(manifest["path"]); owned[0].append(honest)
         require(wait_built(controls[0], honest, time.monotonic() + 15),
                 "Baseline honest base circuit failed")
+        summary["stage"] = "baseline-bind"
         prove_base(controls[0], honest, len(manifest["path"]))
         require("PROGRESS=100" in " ".join(controls[0].info("status/bootstrap-phase")),
                 "Honest origin did not complete bootstrap on its explicit circuit")
+        summary["stage"] = "baseline-echo"
         latencies.append(echo_probe(controls[0], honest, sink))
         summary["stage"] = "saturation"
 
