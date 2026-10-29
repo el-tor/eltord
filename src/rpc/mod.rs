@@ -40,3 +40,6 @@ pub use payment_registration::*;
 
 mod payment_consumption;
 pub use payment_consumption::*;
+
+mod payment_origin;
+pub use payment_origin::*;
