@@ -25,5 +25,7 @@ mod runtime_config;
 
 mod runtime;
 pub use runtime::run_foundation_client_controller;
+mod foundation_status;
+pub use foundation_status::{foundation_client_status, FoundationClientStatus};
 
 pub mod handshake;

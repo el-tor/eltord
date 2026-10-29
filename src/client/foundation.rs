@@ -173,6 +173,7 @@ pub struct ClientFoundation {
     pending_renewal_period: Option<u64>,
     renewal_observations: Vec<Option<RenewalOriginSnapshot>>,
     wallet_status_failed: bool,
+    status: Option<super::foundation_status::StatusPublisher>,
 }
 impl ClientFoundation {
     pub fn new(
@@ -267,7 +268,69 @@ impl ClientFoundation {
             funded: BTreeSet::new(),
             last_clock: None,
             wallet_status_failed: false,
+            status: None,
         })
+    }
+    pub(super) fn attach_status(&mut self, publisher: super::foundation_status::StatusPublisher) {
+        self.status = Some(publisher);
+        self.report_status();
+    }
+    /// Display-only lease derived from the original conservative snapshots.
+    /// Neither a progress enum nor a payment receipt can create this lease.
+    fn active_status_deadline(&self) -> Option<Instant> {
+        if self.recovery.is_none()
+            || self.wallet_status_failed
+            || self.observations.is_empty()
+            || !self.start_observed.iter().all(|started| *started)
+        {
+            return None;
+        }
+        let mut deadline = None;
+        for observed in &self.observations {
+            let observed = observed.as_ref()?;
+            if observed.snapshot.state != InitialOriginState::Active {
+                return None;
+            }
+            let remaining = observed.snapshot.clocks[2]?.min(observed.snapshot.clocks[3]?);
+            let expires = observed.at.checked_add(Duration::from_millis(remaining))?;
+            deadline = Some(deadline.map_or(expires, |old: Instant| old.min(expires)));
+        }
+        deadline.filter(|expires| *expires > Instant::now())
+    }
+    pub(super) fn report_status(&self) {
+        use super::foundation_status::FoundationClientStatus as Phase;
+        let Some(publisher) = &self.status else {
+            return;
+        };
+        match self
+            .ledger
+            .binding_is_closed(self.plan.binding.instance, self.plan.binding.handle)
+        {
+            Ok(true) => publisher.publish(Phase::Closed, None),
+            Ok(false) => {
+                if let Some(deadline) = self.active_status_deadline() {
+                    publisher.publish(Phase::LastVerifiedActive, Some(deadline));
+                } else {
+                    publisher.publish(Phase::Recovering, None);
+                }
+            }
+            Err(_) => publisher.publish(Phase::Recovering, None),
+        }
+    }
+    pub(super) fn report_status_failure(&self) {
+        use super::foundation_status::FoundationClientStatus as Phase;
+        if let Some(publisher) = &self.status {
+            let phase = if self
+                .ledger
+                .binding_is_closed(self.plan.binding.instance, self.plan.binding.handle)
+                .unwrap_or(false)
+            {
+                Phase::Closed
+            } else {
+                Phase::Recovering
+            };
+            publisher.publish(phase, None);
+        }
     }
     pub fn binding(&self) -> &OriginBinding {
         &self.plan.binding
@@ -371,12 +434,14 @@ impl ClientFoundation {
         self.control = control;
         self.recovery = None;
         self.next_poll = Instant::now();
+        self.report_status_failure();
     }
     pub fn close(&mut self) -> Result<()> {
         self.ledger
             .close_binding(self.plan.binding.instance, self.plan.binding.handle)?;
         self.ledger.close_outgoing_path(self.plan.local_scope())?;
         self.recovery = None;
+        self.report_status_failure();
         Ok(())
     }
     fn clock<F>(&mut self, observe: &mut F) -> Result<ClockObservation>
@@ -1164,6 +1229,7 @@ impl ClientFoundation {
             }
             self.clock(observe)?;
         }
+        self.report_status();
         Ok(if minimum == 0 || minimum == u64::MAX {
             None
         } else {

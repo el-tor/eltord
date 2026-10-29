@@ -39,6 +39,7 @@ impl ClientFoundation {
                         // ordinary inventory recovery must validate capacity.
                         self.wallet_status_failed = true;
                         self.recovery = None;
+                        self.report_status_failure();
                         refresh = false;
                     } else {
                         let now = Instant::now();

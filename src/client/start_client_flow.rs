@@ -37,6 +37,11 @@ use std::env;
 /// - The function is designed to loop for building and managing multiple circuits, but the loop is currently commented out.
 pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandle<()> {
     let rpc_config = rpc_config.clone();
+    // Cover mode verification and startup retries before the runtime itself
+    // owns a generation. A later runtime generation supersedes this publisher.
+    let status = (env::var_os("ELTOR_FOUNDATION_CONFIG").is_some()
+        || env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some())
+        .then(super::foundation_status::StatusOwner::start);
     
     tokio::spawn(async move {
         loop {
@@ -44,6 +49,12 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandl
             if next {
                 client_info!("Next Circuit...");
             } else {
+                if let Some(status) = &status {
+                    status.publisher().publish(
+                        super::foundation_status::FoundationClientStatus::Recovering,
+                        None,
+                    );
+                }
                 // Retry after a short delay
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await; // 10 seconds
                 client_info!("Retrying due to payment loop error...");

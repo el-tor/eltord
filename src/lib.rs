@@ -368,6 +368,8 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 }
 
 pub mod client;
+mod controller_tasks;
+pub use client::{foundation_client_status, FoundationClientStatus};
 pub mod database;
 pub mod payment_ledger;
 pub mod lightning;
@@ -511,31 +513,35 @@ where
     }
 
     let mut tasks = Vec::new();
+    let mut controllers = controller_tasks::OwnedControllers::default();
 
     if mode == "client" {
         info!("[CLIENT] Starting Client-only Flow...");
         let client_handle = client::start_client_flow(&rpc_config.clone()).await;
+        controllers.track(&client_handle);
         tasks.push(client_handle);
     } else if mode == "both" {
         info!("[RELAY] Starting both Client + Relay Flows...");
         // Relay mode runs both client and relay flows
         info!("[CLIENT] Starting Client Flow (relay acts as client too)...");
         let client_handle = client::start_client_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&client_handle);
         tasks.push(client_handle);
         info!("[RELAY] Starting Relay Flow...");
         let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&relay_handle);
         tasks.push(relay_handle);
     } else if mode == "relay" {
         // Default case - should not happen with current parsing
         info!("[DEFAULT] Starting Relay Flow...");
         let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&relay_handle);
         tasks.push(relay_handle);
     } else {
         error!("Unknown mode: {}. Use 'client', 'relay', or 'both'", mode);
         std::process::exit(1);
     }
 
-    let abort_handles: Vec<_> = tasks.iter().map(|task| task.abort_handle()).collect();
     // The controller flows must never outlive their embedded Tor instance.
     // Dropping a JoinHandle detaches its task, so retain explicit cancellation.
     tokio::select! {
@@ -548,9 +554,7 @@ where
             }
         } => {}
     }
-    for handle in abort_handles {
-        handle.abort();
-    }
+    drop(controllers);
     
     // Clean up any spawned processes before exit
     cleanup_tor_processes();

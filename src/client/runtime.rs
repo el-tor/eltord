@@ -48,6 +48,7 @@ pub(crate) async fn run_with_paths(
     client_plan: &Path,
     account_config: &Path,
 ) -> Result<()> {
+    let status = super::foundation_status::StatusOwner::start();
     let request = ClientPlanConfig::load(client_plan)?;
     let config = FoundationConfig::load(account_config)?;
     let (mut ledger, wallet, uncertainty) = config.open_outgoing().await?;
@@ -111,6 +112,12 @@ pub(crate) async fn run_with_paths(
     let mut coordinator = if let Some((instance, handle, _)) =
         ledger.get_origin_plan_by_scope(request.scope)?
     {
+        if ledger.binding_is_closed(instance, handle)? {
+            status.publisher().publish(
+                super::foundation_status::FoundationClientStatus::Closed,
+                None,
+            );
+        }
         let saved = PreparedConstruction::restore(&ledger, request.scope)?
             .ok_or("Missing original construction")?;
         if !request.matches_saved_context(&saved.accepted_context()?)? {
@@ -162,6 +169,7 @@ pub(crate) async fn run_with_paths(
         )
         .await?
     };
+    coordinator.attach_status(status.publisher());
     let mut backoff = 1u64;
     let mut financial_cursor = None;
     let mut handshake_financial_cursor = None;
@@ -199,6 +207,7 @@ pub(crate) async fn run_with_paths(
             }
             next_financial = tokio::time::Instant::now() + Duration::from_secs(5);
             if recovery_failed {
+                coordinator.report_status_failure();
                 log::warn!("Foundation financial recovery incomplete; new work stopped");
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 continue;
@@ -206,10 +215,12 @@ pub(crate) async fn run_with_paths(
         }
         let failed = match coordinator.step(|| observe_clock(uncertainty)).await {
             Ok(_) => {
+                coordinator.report_status();
                 backoff = 1;
                 false
             }
             Err(_) => {
+                coordinator.report_status_failure();
                 log::warn!("Foundation client stopped new work; reconciling original path");
                 true
             }
