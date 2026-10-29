@@ -19,6 +19,7 @@ pub struct PaymentControl {
     socket: BufReader<TcpStream>,
     events: VecDeque<PaymentEvent>,
     failed: bool,
+    next_command: tokio::time::Instant,
 }
 impl PaymentControl {
     pub async fn connect(config: &RpcConfig) -> io::Result<Self> {
@@ -33,6 +34,7 @@ impl PaymentControl {
             socket: BufReader::new(stream),
             events: VecDeque::new(),
             failed: false,
+            next_command: tokio::time::Instant::now(),
         };
         let password = config.rpc_password.as_deref().unwrap_or("");
         if password.bytes().any(|b| b < 32 || b == 127) {
@@ -65,7 +67,14 @@ impl PaymentControl {
             return Err(invalid());
         }
         self.failed = true;
-        let result = tokio::time::timeout(Duration::from_secs(15), self.exchange(command))
+        let result = tokio::time::timeout(Duration::from_secs(15), async {
+            // One persistent authority stays below the shared 64 query/s ceiling.
+            // Server enforcement remains required across connections/processes.
+            // Queue delay consumes the command timeout, not a payment extension.
+            tokio::time::sleep_until(self.next_command).await;
+            self.next_command = tokio::time::Instant::now() + Duration::from_millis(16);
+            self.exchange(command).await
+        })
             .await
             .map_err(|_| invalid())?;
         if result.is_ok() {
@@ -287,6 +296,32 @@ mod tests {
         }
         assert_eq!(queried, 129);
         assert!(client.take_events().unwrap().is_empty());
+        server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn payment_control_recovery_burst_is_paced() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = tokio::spawn(async move {
+            let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+            for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                assert_eq!(read(&mut socket).await, expected);
+                socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            let mut first = None;
+            for _ in 0..8 {
+                assert_eq!(read(&mut socket).await, "ELTOR_PAYMENT_LIST 1 - -\r\n");
+                first.get_or_insert_with(std::time::Instant::now);
+                socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            // No catch-up burst even when all replies are immediately available.
+            assert!(first.unwrap().elapsed() >= Duration::from_millis(100));
+        });
+        let config = RpcConfig { addr, rpc_password: None, command: String::new() };
+        let mut client = PaymentControl::connect(&config).await.unwrap();
+        for _ in 0..8 {
+            assert_eq!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(), "250 OK");
+        }
         server.await.unwrap();
     }
     #[tokio::test]
