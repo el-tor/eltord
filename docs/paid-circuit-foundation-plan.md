@@ -377,3 +377,27 @@ operation no longer supplies direct proof of its former phase. Recovery handling
 and the status-refresh scheduling margin must be verified before another live
 acceptance claim. The earlier Firefox rendering remains valid short-duration
 transport evidence only.
+
+### Round-transition integration diagnosis
+
+Native source review identified a structural status-refresh deadlock in the
+failed sustained run: once the last authenticated ACTIVE observation expires,
+an outbound DATA cell can remain at the encrypted FIFO head while a subsequent
+QUERY waits behind it. More frequent daemon polling alone cannot guarantee a
+fresh proof across that boundary. Reordering encrypted cells or exempting control
+traffic from the quota is not an acceptable repair.
+
+The initial profile now specifies a retained-START-bound notification only after
+an actual funded ACTIVE transition, using the original conservative T0 bound.
+Native handling and daemon snapshot/recovery integration are in progress; this
+specification change is not evidence that the running stack has the fix. Wallet
+RPC status-refresh and bounded recovery from an uncertain QUERY are committed
+separately. They do not independently resolve the FIFO deadlock.
+
+The private sustained-transfer verifier now requires observed rounds 10, 11, 20
+and 21 on the same stream and native circuit, in addition to the complete expected
+length and checksum. It starts before round 10, never retries the HTTP request,
+and restores its temporary exact exit mapping. The previous failed run's evidence
+is marked failed rather than pending. A new deployed-source acceptance run is
+still required. These changes preserve the zero-cost fixture scope and do not
+establish real Lightning settlement or production privacy acceptance.
