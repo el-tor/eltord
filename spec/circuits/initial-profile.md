@@ -180,7 +180,9 @@ within the original grace. The relay MUST first commit the actual transition,
 consume the existing recipient authorization, and advance its state revision.
 It MUST NOT predict activation, create an authorization, or send another
 notification for a duplicate authorization, repeated timer tick or unchanged
-state. The notification echoes the retained START nonce and exact request digest,
+state. An immediate START response reporting that activation satisfies this
+notification; do not send a second copy for the same transition. The notification
+echoes the retained START nonce and exact request digest,
 Q and A0, uses the ordinary reply MAC, and has the existing fixed wire size.
 No new command, START, payment, query operation or cross-hop identifier is added.
 QUERY remains an explicit read-only request; it is not a subscription.

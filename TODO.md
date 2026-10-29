@@ -81,7 +81,12 @@ a QUERY trapped behind held DATA to recover. Test slow/lost/duplicate/late/repla
 proofs, no-funding and no-quota cases, read-only transition-pending snapshots,
 independent hop clocks and the same real stream through 10→11 and 20→21.
 Assess the added transition-timing signal under aggregate load; retain production
-and independent review gates. Implementation and live validation remain pending.
+and independent review gates. Native Tor `ce7a0d50b5` and exact embedded mirror
+`0c2eb69` implement the transition proof and fixed schedule bounds. Nine focused
+native tests pass, including real packed FIFO recovery, delayed/duplicate/late
+proofs, invalid renewal clock atomicity, funded-only transitions and control quota.
+Embedded rebuild and actual same-stream rollover validation remain pending;
+these tests do not constitute independent security/privacy review.
 
 ET-08/09/33 must also test the [bounded REFRESH response wait](spec/control/lifecycle.md#origin-initial-operations)
 in Tor and daemon integration: the configurable 7000 ms candidate is clipped by
