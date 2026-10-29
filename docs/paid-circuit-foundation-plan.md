@@ -148,3 +148,15 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   reserve is a conservative test estimate requiring deployment measurements;
   it cannot guarantee space against unrelated writers on a shared filesystem.
   Live daemon orchestration and paid network acceptance remain incomplete.
+
+- Schema 4 retains immutable uncertainty intervals for construction, COMMIT and
+  activation. Explicit migration preserves old financial history, but live
+  recovery refuses legacy initial windows without interval provenance. The
+  registration decoder binds C/Q/A0, ordered IDs, amounts and state to saved
+  reservations; observation brackets include the complete paced control exchange.
+  The consumption bridge preflights all reported authorizations against durable
+  recipient proofs before recording actual consumption, and replay after restart
+  is idempotent. The combined ledger suite passed 66 tests and the payment RPC
+  suite passed 34 tests, including registration sockets, clock discontinuities,
+  mismatched consumption proofs and closed bindings. These are local integration
+  tests; the production coordinator and live paid-network acceptance are pending.

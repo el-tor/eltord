@@ -34,3 +34,9 @@ pub use payment_control::*;
 
 mod payment_recovery;
 pub use payment_recovery::*;
+
+mod payment_registration;
+pub use payment_registration::*;
+
+mod payment_consumption;
+pub use payment_consumption::*;

@@ -516,7 +516,7 @@ fn explicit_v1_upgrade_preserves_incoming_history() {
         .authorize(&obligation, &receipt, [30; 16], clock())
         .unwrap();
     // Simulate the previous version's schema, with its durable account record.
-    ledger.connection.execute_batch("DROP TABLE storage_reservations; DROP TABLE storage_policy; DROP TABLE outgoing_intents; DROP TABLE hop_spending_terms; DROP TABLE path_budgets; DROP TABLE account_budget; PRAGMA user_version=1;").unwrap();
+    ledger.connection.execute_batch("DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;DROP TABLE storage_reservations; DROP TABLE storage_policy; DROP TABLE outgoing_intents; DROP TABLE hop_spending_terms; DROP TABLE path_budgets; DROP TABLE account_budget; PRAGMA user_version=1;").unwrap();
     drop(ledger);
     assert!(PaymentLedger::reopen(&dir.file(), account()).is_err());
     assert!(PaymentLedger::upgrade_from_v1(&dir.file(), AccountId([8; 32])).is_err());

@@ -23,6 +23,8 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod clock;
+pub use clock::{ActivationIntervalAnchor, InitialClockAnchor, UtcClockInterval};
 pub mod outgoing;
 pub mod storage;
 pub mod wallet;
@@ -30,7 +32,7 @@ pub mod wallet;
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 const APPLICATION_ID: i64 = 0x454c5452;
-const VERSION: i64 = 3;
+const VERSION: i64 = 4;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -204,7 +206,7 @@ impl ActivationAnchor {
         if self.started_at_ms < 0
             || self.round_ms != 60_000
             || self.early_ms > 60_000
-            || self.grace_ms > 15_000
+            || self.grace_ms > 60_000
         {
             return Err(LedgerError::InvalidInput);
         }
@@ -291,6 +293,7 @@ impl PaymentLedger {
         tx.execute_batch(SCHEMA)?;
         tx.execute_batch(outgoing::SCHEMA)?;
         storage::initialize(&tx, budget_bytes)?;
+        tx.execute_batch(clock::SCHEMA)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
             params![&account.0[..]],
@@ -349,6 +352,7 @@ impl PaymentLedger {
         }
         outgoing::validate_schema(&ledger.connection)?;
         storage::validate_schema(&ledger.connection)?;
+        clock::validate_schema(&ledger.connection)?;
         Ok(ledger)
     }
 
@@ -608,6 +612,9 @@ impl PaymentLedger {
                 Err(LedgerError::Conflict)
             };
         }
+        if clock::activation_anchor(&tx, instance, handle)?.is_some() {
+            return Err(LedgerError::Conflict);
+        }
         require_initial_registration(&tx, instance, handle, true)?;
         tx.execute(
             "INSERT INTO activation_anchors(instance,handle,payload) VALUES(?1,?2,?3)",
@@ -862,18 +869,9 @@ fn effective_window(
             .optional()?
             .ok_or(LedgerError::NotRegistered);
     }
-    let payload: Vec<u8> = tx
-        .query_row(
-            "SELECT payload FROM activation_anchors WHERE instance=?1 AND handle=?2",
-            params![&obligation.instance[..], &obligation.handle[..]],
-            |r| r.get(0),
-        )
-        .optional()?
+    let anchor = clock::activation_anchor(tx, obligation.instance, obligation.handle)?
         .ok_or(LedgerError::NotRegistered)?;
-    let anchor: ActivationAnchor =
-        serde_json::from_slice(&payload).map_err(|_| LedgerError::InvalidLedger)?;
-    anchor.validate()?;
-    anchor.window(obligation.round)
+    anchor.acceptance_window(obligation.round)
 }
 
 fn insert_registration(tx: &rusqlite::Transaction<'_>, obligation: &Obligation) -> Result<()> {

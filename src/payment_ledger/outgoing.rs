@@ -157,6 +157,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::reopen(path, expected_account);
         }
+        if version == 3 {
+            drop(ledger);
+            return Self::upgrade_from_v3(path, expected_account);
+        }
         if version == 2 {
             drop(ledger);
             return Self::upgrade_from_v2(path, expected_account);
@@ -196,6 +200,7 @@ impl PaymentLedger {
         tx.execute_batch(SCHEMA)?;
         storage::initialize(&tx, storage::DEFAULT_BUDGET_BYTES)?;
         storage::reserve_legacy(&tx)?;
+        tx.execute_batch(clock::SCHEMA)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);

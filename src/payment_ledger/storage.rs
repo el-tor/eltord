@@ -70,6 +70,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::reopen(path, expected_account);
         }
+        if version == 3 {
+            drop(ledger);
+            return Self::upgrade_from_v3(path, expected_account);
+        }
         let application: i64 =
             ledger
                 .connection
@@ -103,6 +107,7 @@ impl PaymentLedger {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         initialize(&tx, DEFAULT_BUDGET_BYTES)?;
         reserve_legacy(&tx)?;
+        tx.execute_batch(clock::SCHEMA)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
