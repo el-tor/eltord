@@ -22,3 +22,6 @@ pub use wait_for_circuit::*;
 
 mod payment_snapshot;
 pub use payment_snapshot::*;
+
+mod payment_event;
+pub use payment_event::*;
