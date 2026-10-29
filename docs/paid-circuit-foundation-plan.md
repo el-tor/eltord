@@ -331,3 +331,12 @@ the active app; final validation must name the actually deployed revision.
 All these live checks use zero-priced policies and a wallet fixture that rejects
 payment work. They do not prove real Lightning settlement. The production gate
 remains in place pending the remaining acceptance and requirement audit.
+
+Follow-up live evidence: the desktop's retained plan reached round 3, then its
+owned native circuit closed without a Tor-process restart. Later built circuits
+were one-hop internal directory tunnels; pending browser streams remained
+unattached. This confirms fail-closed behavior, but sustained paid-profile
+transport and renewal acceptance are not yet achieved. The short HTTPS success
+must not be generalized to successful continued operation. Diagnose the original
+clock/status transition before starting a fresh approved zero-cost test attempt;
+retain the closed attempt and all accounting history.
