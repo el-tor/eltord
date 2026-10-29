@@ -255,6 +255,27 @@ client-plan file alone also counts as foundation intent, so a missing account
 configuration cannot redirect that requested path into legacy payments.
 These tests do not establish live Tor activation or real Lightning settlement.
 
+Constructor journal version 2 retains the ordered nonsecret constructor template
+with preimage positions zeroed and a SHA-256 commitment to the exact transmitted
+command. Real proof material is held only in memory and must be recovered from
+the original wallet payment, never from a replacement payment. Restoring proofs
+checks both the commitment and template; it does not clear a dispatch claim.
+Older version-1 local zero-fee fixture records remain readable for recovery;
+new construction records never store the full proof-bearing command. This is a
+prerequisite for nonzero handshake integration, not evidence that prefunding is
+already implemented. The opaque accepted context must likewise remain free of
+preimages and credentials.
+
+Runtime financial recovery is independent of live circuit restoration. Startup
+scans existing outgoing records in pages of 16, stopping before new work if a
+bounded scan cannot finish; periodic pages continue while the coordinator is
+running, including after control failures. Pages perform native lookup only,
+never invoice acquisition or payment dispatch. Actual settled cost remains
+recorded even when capacity has closed; absence of a circuit cannot release
+unknown spending or mark unused capacity as consumed. The closed-instance native
+fixture covers this accounting rule; the runtime page scheduling still requires
+the full integration run.
+
 Privacy/timing assessment: the selected path, wallet references, identifiers and
 scope remain in private local files and ledger records, not diagnostics. Recovery
 does not requote or generate replacement identifiers. Reconnect backoff is

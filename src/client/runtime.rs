@@ -3,7 +3,7 @@
 use super::{
     activation::begin_path,
     construction::PreparedConstruction,
-    foundation::{ClientFoundation, FoundationPlan},
+    foundation::{reconcile_origin_financial, ClientFoundation, FoundationPlan},
     runtime_config::ClientPlanConfig,
 };
 use crate::{
@@ -21,6 +21,26 @@ pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
         .ok_or("Missing foundation account configuration")?;
     let config = FoundationConfig::load(Path::new(&account_path))?;
     let (mut ledger, wallet, uncertainty) = config.open_outgoing().await?;
+    // Financial uncertainty survives Tor process loss. Reconcile existing native
+    // records before attempting any live-path restoration, without fetch/pay.
+    // Bound work per page and per startup; never silently skip a truncated scan.
+    let mut cursor = None;
+    let mut recovery_finished = false;
+    for _ in 0..257 {
+        let page = reconcile_origin_financial(&mut ledger, &wallet, cursor, 16, || {
+            observe_clock(uncertainty)
+        })
+        .await?;
+        cursor = page.after;
+        if page.examined < 16 {
+            recovery_finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    if !recovery_finished {
+        return Err("Financial recovery scan exceeded startup bound".into());
+    }
     let mut control = PaymentControl::connect(rpc).await?;
     if control.command("GETCONF ElTorFoundation").await? != "250 ElTorFoundation=1" {
         return Err("Foundation mode changed".into());
@@ -78,7 +98,29 @@ pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
         .await?
     };
     let mut backoff = 1u64;
+    let mut financial_cursor = None;
+    let mut next_financial = tokio::time::Instant::now();
     loop {
+        if tokio::time::Instant::now() >= next_financial {
+            // This page runs even when Tor recovery fails; loss of capacity
+            // never implies a refund or releases an uncertain payment.
+            let recovery_failed = match coordinator
+                .reconcile_financial(financial_cursor, 16, || observe_clock(uncertainty))
+                .await
+            {
+                Ok(page) => {
+                    financial_cursor = if page.examined < 16 { None } else { page.after };
+                    false
+                }
+                Err(_) => true,
+            };
+            next_financial = tokio::time::Instant::now() + Duration::from_secs(5);
+            if recovery_failed {
+                log::warn!("Foundation financial recovery incomplete; new work stopped");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        }
         let failed = match coordinator.step(|| observe_clock(uncertainty)).await {
             Ok(_) => {
                 backoff = 1;
