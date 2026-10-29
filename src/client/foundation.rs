@@ -233,6 +233,25 @@ impl ClientFoundation {
         let wallet = self.wallet.as_ref().ok_or_else(invalid)?.clone();
         reconcile_origin_financial(&mut self.ledger, &wallet, after, limit, observe).await
     }
+    pub async fn reconcile_handshake_financial<F>(
+        &mut self,
+        after: Option<Id16>,
+        limit: u64,
+        observe: F,
+    ) -> Result<crate::client::handshake::HandshakeFinancialRecoveryPage>
+    where
+        F: FnMut() -> Result<ClockObservation>,
+    {
+        let wallet = self.wallet.as_ref().ok_or_else(invalid)?.clone();
+        crate::client::handshake::reconcile_handshake_financial(
+            &mut self.ledger,
+            &wallet,
+            after,
+            limit,
+            observe,
+        )
+        .await
+    }
     pub fn reconnect(&mut self, control: PaymentControl) {
         self.control = control;
         self.recovery = None;

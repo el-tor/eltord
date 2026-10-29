@@ -335,3 +335,65 @@ pub async fn handshake_construction_proof(
 #[cfg(test)]
 #[path = "handshake_tests.rs"]
 mod tests;
+
+pub struct HandshakeFinancialRecoveryPage {
+    pub after: Option<[u8; 16]>,
+    pub examined: usize,
+    pub reconciled: usize,
+    pub unresolved: usize,
+}
+/// Account-wide historical recovery, independent of a live Tor handle. Each
+/// page has at most 16 exact native lookups; expiry/closure never changes the
+/// original artifact, dispatch claim or accounting. Undispatched reservations
+/// remain pending for their owner and never acquire a new payment permit here.
+pub async fn reconcile_handshake_financial<F>(
+    ledger: &mut PaymentLedger,
+    wallet: &ClnFoundation,
+    after: Option<[u8; 16]>,
+    limit: u64,
+    mut observe_clock: F,
+) -> std::result::Result<HandshakeFinancialRecoveryPage, Box<dyn std::error::Error>>
+where
+    F: FnMut() -> std::result::Result<ClockObservation, Box<dyn std::error::Error>>,
+{
+    if limit == 0 || limit > 16 || ledger.account_id() != AccountId(wallet.account().fingerprint())
+    {
+        return Err(HandshakeError::Binding.into());
+    }
+    let records = ledger.unresolved_handshakes(after, limit)?;
+    let mut page = HandshakeFinancialRecoveryPage {
+        after,
+        examined: records.len(),
+        reconciled: 0,
+        unresolved: 0,
+    };
+    for (scope, record) in records {
+        let hop = scope
+            .hops
+            .get(usize::from(record.invoice.hop).wrapping_sub(1))
+            .ok_or(HandshakeError::Binding)?;
+        page.after = Some(hop.operation);
+        if record.state == OutgoingState::Prepared {
+            page.unresolved += 1;
+            continue;
+        }
+        let clock = observe_clock()?;
+        if clock.now_ms < 0 || clock.uncertainty_ms > 5000 {
+            return Err(HandshakeError::Clock.into());
+        }
+        let recovered =
+            recover_handshake_hop(ledger, wallet, scope.scope, record.invoice.hop, &mut || {
+                Ok(clock)
+            })
+            .await?;
+        if matches!(
+            recovered.state,
+            OutgoingState::Settled | OutgoingState::Consumed | OutgoingState::FailedFinal
+        ) {
+            page.reconciled += 1;
+        } else {
+            page.unresolved += 1;
+        }
+    }
+    Ok(page)
+}

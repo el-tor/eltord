@@ -4,6 +4,7 @@ use super::{
     activation::begin_path,
     construction::PreparedConstruction,
     foundation::{reconcile_origin_financial, ClientFoundation, FoundationPlan},
+    handshake::reconcile_handshake_financial,
     runtime_config::ClientPlanConfig,
 };
 use crate::{
@@ -21,18 +22,51 @@ pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
         .ok_or("Missing foundation account configuration")?;
     let config = FoundationConfig::load(Path::new(&account_path))?;
     let (mut ledger, wallet, uncertainty) = config.open_outgoing().await?;
+    ledger.configure_account_budget(request.account_budget())?;
     // Financial uncertainty survives Tor process loss. Reconcile existing native
     // records before attempting any live-path restoration, without fetch/pay.
     // Bound work per page and per startup; never silently skip a truncated scan.
     let mut cursor = None;
+    let mut handshake_cursor = None;
     let mut recovery_finished = false;
+    let mut rounds_finished = false;
+    let mut handshakes_finished = false;
     for _ in 0..257 {
-        let page = reconcile_origin_financial(&mut ledger, &wallet, cursor, 16, || {
-            observe_clock(uncertainty)
-        })
-        .await?;
-        cursor = page.after;
-        if page.examined < 16 {
+        let mut page_failed = false;
+        if !rounds_finished {
+            match reconcile_origin_financial(&mut ledger, &wallet, cursor, 16, || {
+                observe_clock(uncertainty)
+            })
+            .await
+            {
+                Ok(page) => {
+                    cursor = page.after;
+                    rounds_finished = page.examined < 16;
+                }
+                Err(_) => {
+                    page_failed = true;
+                }
+            }
+        }
+        if !handshakes_finished {
+            match reconcile_handshake_financial(&mut ledger, &wallet, handshake_cursor, 16, || {
+                observe_clock(uncertainty)
+            })
+            .await
+            {
+                Ok(page) => {
+                    handshake_cursor = page.after;
+                    handshakes_finished = page.examined < 16;
+                }
+                Err(_) => {
+                    page_failed = true;
+                }
+            }
+        }
+        if page_failed {
+            return Err("Financial recovery page failed; new work stopped".into());
+        }
+        if rounds_finished && handshakes_finished {
             recovery_finished = true;
             break;
         }
@@ -93,18 +127,21 @@ pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
             request.scope,
             request.limits,
             request.routing_fee_per_hop_msat,
+            request.handshake_msat,
+            request.handshake_funding_timeout_ms,
             || observe_clock(uncertainty),
         )
         .await?
     };
     let mut backoff = 1u64;
     let mut financial_cursor = None;
+    let mut handshake_financial_cursor = None;
     let mut next_financial = tokio::time::Instant::now();
     loop {
         if tokio::time::Instant::now() >= next_financial {
             // This page runs even when Tor recovery fails; loss of capacity
             // never implies a refund or releases an uncertain payment.
-            let recovery_failed = match coordinator
+            let mut recovery_failed = match coordinator
                 .reconcile_financial(financial_cursor, 16, || observe_clock(uncertainty))
                 .await
             {
@@ -114,6 +151,23 @@ pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
                 }
                 Err(_) => true,
             };
+            // Separate cursor: an outgoing-round operation must never skip an
+            // earlier handshake operation (or vice versa). Attempt this page
+            // even when round recovery failed, then stop new capacity work if
+            // either exact financial reconciliation encountered an error.
+            match coordinator
+                .reconcile_handshake_financial(handshake_financial_cursor, 16, || {
+                    observe_clock(uncertainty)
+                })
+                .await
+            {
+                Ok(page) => {
+                    handshake_financial_cursor = if page.examined < 16 { None } else { page.after };
+                }
+                Err(_) => {
+                    recovery_failed = true;
+                }
+            }
             next_financial = tokio::time::Instant::now() + Duration::from_secs(5);
             if recovery_failed {
                 log::warn!("Foundation financial recovery incomplete; new work stopped");

@@ -247,9 +247,14 @@ async fn lost_pay_restarts_with_exact_lookup_only_then_yields_ephemeral_bound_pr
             .is_err()
     );
     state.wrong_label.store(false, Ordering::SeqCst);
-    let settled = recover_handshake_hop(&mut l, &w, [2; 32], 1, &mut clock)
+    let page = reconcile_handshake_financial(&mut l, &w, None, 1, || Ok(clock()?))
         .await
         .unwrap();
+    assert_eq!(page.examined, 1);
+    assert_eq!(page.reconciled, 1);
+    assert_eq!(page.unresolved, 0);
+    assert_eq!(page.after, Some([5; 16]));
+    let settled = l.get_handshake([2; 32], 1).unwrap().unwrap();
     assert_eq!(settled.spent_msat, 2050);
     let proof = handshake_construction_proof(&mut l, &w, [2; 32], 1, clock().unwrap(), &mut clock)
         .await
