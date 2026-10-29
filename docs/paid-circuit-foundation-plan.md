@@ -401,3 +401,30 @@ and restores its temporary exact exit mapping. The previous failed run's evidenc
 is marked failed rather than pending. A new deployed-source acceptance run is
 still required. These changes preserve the zero-cost fixture scope and do not
 establish real Lightning settlement or production privacy acceptance.
+
+### Native startup and aggregate live-capacity acceptance
+
+The cold-constructor BIND regression passed, preserving the exact receipt,
+instance, original deadline and claimed dispatch while waiting for native
+registration. Native CBT coverage also passed: a learned 46 ms timeout cannot
+repurpose an explicitly approved 30-second foundation construction; the original
+monotonic deadline still expires a cold first-hop wait, and ordinary Tor timeout
+measurement remains unchanged. The native fix is `ae30248f14`, mirrored exactly
+by libeltor-sys `f7be648`; the daemon binding fix is `1cbe589`.
+
+The rebuilt native, daemon and desktop binaries completed successfully. Four
+separate native test origins then exercised a deliberately lowered 64-circuit
+relay cap. Actual authenticated counters reached 64/64, a further origin was
+refused, an already admitted honest circuit continued its tiny echo, and a new
+honest circuit succeeded after releasing owned stress circuits and normal refill.
+The 72 paced stress requests produced 50 built circuits and 22 refusals/closures;
+three honest echoes passed. Sampled queued bytes stayed zero and sampled arena
+use remained below its configured ceiling. The fixture made no wallet calls or
+payment commands. Earlier fixture failures are retained alongside the passing
+local result; none is represented as successful acceptance.
+
+This proves this bounded live-state saturation/recovery scenario, not saturation
+of every byte/CPU/queue budget, production latency, independent privacy review or
+Lightning settlement. All fixture clients were stopped and the relay's exact
+original configuration restored. Same-stream renewal and final desktop/Firefox
+acceptance on these rebuilt inputs remain required.
