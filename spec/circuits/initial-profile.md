@@ -171,6 +171,65 @@ funding decision. The relay's T0 is authoritative; controller callback receipt
 is not T0. The service's SCQ first-minute anchor uses the earliest actual
 service-side paid activation conservatively mapped to its local clock.
 
+## Authenticated activation notifications
+
+The accepted immutable START also authorizes the relay to send one
+`PAYMENT_STARTED_STATUS` when its independent schedule actually enters ACTIVE
+for an authorized round. This includes initial activation and late funding
+within the original grace. The relay MUST first commit the actual transition,
+consume the existing recipient authorization, and advance its state revision.
+It MUST NOT predict activation, create an authorization, or send another
+notification for a duplicate authorization, repeated timer tick or unchanged
+state. The notification echoes the retained START nonce and exact request digest,
+Q and A0, uses the ordinary reply MAC, and has the existing fixed wire size.
+No new command, START, payment, query operation or cross-hop identifier is added.
+QUERY remains an explicit read-only request; it is not a subscription.
+
+The origin accepts such a notification only for its original live transmitted
+START and pinned binding/terms/allocation, subject to monotonic revision/round,
+admitted-period and finite-lifetime checks. An event or local write is never an
+activation proof. An old or duplicate notification cannot reset quota, T0,
+remaining time, operation retries or financial state. A closed/expired profile
+cannot reopen. All-hop authenticated ACTIVE is still required for application
+traffic.
+
+For clock safety, retain a conservative local lower bound L on the original
+relay T0, established by an ordinary authenticated status observation: local
+request first-send time minus authenticated elapsed time, saturated at zero.
+Later ordinary observations may lower L; they MUST NOT move it later. A pushed
+status bound to that old START does not have a fresh round-trip interval and
+MUST NOT use its arrival as a new time origin, nor subtract the complete circuit
+age again from each remaining round. Instead, bound round r by the original
+schedule `L + r * 60000`, with checked arithmetic, and cap enforcement by the
+original hard lifetime and applicable original grace boundary. Honor any shorter
+reported bound as well. Same-round observations can only shorten learned ends.
+Authenticated elapsed time cannot exceed the conservative elapsed upper bound
+from L. Proof arriving after its safe round end grants no usable ACTIVE time.
+If no initial schedule observation exists yet, apply the ordinary conservative
+request/response rule to that first proof; no arrival-time anchor is inferred.
+
+When a cached ACTIVE observation reaches its safe round end before a new proof
+arrives, local GET returns `551 STATE_TRANSITION_PENDING`; it does not fabricate
+a new active round, transmit, activate, or reset a deadline. Bounded native DATA
+queues may await the proof under their unchanged original age/byte/cell limits.
+The notification travels through ordinary directional FIFO encryption and
+accounting. It MUST NOT bypass an earlier cell, become a quota-exempt control
+lane, or consume free credit as fallback for exhausted paid quota. If delay,
+quota or queue pressure prevents delivery, bounded closure remains valid.
+
+**Privacy/timing assessment:** this adds at most one fixed-size encrypted
+notification per actual funded ACTIVE transition and makes transition timing
+visible through its traffic pattern. Each recipient hop already knows its own
+START and funding schedule; no service role, wallet identity, key or new stable
+identifier is exposed. Repeated logical START bindings are per-hop and each
+notification receives fresh ordinary relay encryption; ciphertext is never
+replayed. Colluding timing observers may still correlate activation and traffic.
+Aggregate memory/byte/CPU, paid quota, original queue age and finite lifetime
+remain binding. Validate slow/duplicate/late/replayed notifications, missing
+funding, quota exhaustion, independent hop clocks and actual queued same-stream
+rollover; local tests are not independent cryptographic/privacy review or
+production acceptance.
+
 ## Round boundaries and observation rules
 
 For elapsed time `e >= 0`, the scheduled round is `floor(e/60000)+1`.

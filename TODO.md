@@ -71,6 +71,18 @@ explicit bounded REFRESH for missing remote status. GET must not transmit or
 change revisions; status catch-up and historical replies cannot reset T0,
 reopen admission or extend retained deadlines. Native/RPC regression coverage is
 partial implementation evidence; live daemon interoperability remains required.
+ET-07/08/09/21/33 also require [authenticated activation notifications](spec/circuits/initial-profile.md#authenticated-activation-notifications)
+in Tor, its embedded source and daemon snapshots: one existing-size START-bound
+proof only on an actual recipient-authorized ACTIVE transition, monotonic
+revision/round and admitted-period checks, fixed conservative original-T0 clock
+bounds, and no arrival-time reset. Preserve directional FIFO, quota accounting,
+all-hop activation and original queue ages; stale local status must not require
+a QUERY trapped behind held DATA to recover. Test slow/lost/duplicate/late/replayed
+proofs, no-funding and no-quota cases, read-only transition-pending snapshots,
+independent hop clocks and the same real stream through 10→11 and 20→21.
+Assess the added transition-timing signal under aggregate load; retain production
+and independent review gates. Implementation and live validation remain pending.
+
 ET-08/09/33 must also test the [bounded REFRESH response wait](spec/control/lifecycle.md#origin-initial-operations)
 in Tor and daemon integration: the configurable 7000 ms candidate is clipped by
 original deadlines, expiry preserves UNCERTAIN operation/nonce state, fresh
