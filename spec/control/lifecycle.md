@@ -148,6 +148,7 @@ ledger retains its accounting. No query recreates a retired allocation.
 ```text
 250-ELTOR_REGISTRATION 1 instance handle revision period
 250-POLICY terms initial_allocation allocation_digest first_round
+250-BINDING circuit_binding
 250-STATE state current_round elapsed_ms setup_remaining_ms enforcement_remaining_ms
 250-FEE amount_msat payment_hash decision authorization
 250-ROUND round payment_id amount_msat opens_in_ms closes_in_ms decision payment_hash authorization
@@ -162,6 +163,19 @@ repeats the same one-time fee state for each period; it does not create a new fe
 For a zero fee its hash is zero; the original dummy proof stays inside Tor.
 Unclaimed positive round hashes are `-`, since a generated round ID need not be
 the actual invoice hash. An authorized round reports the verifier's recorded hash.
+
+`circuit_binding` is the 32-byte per-hop binding C from the authenticated
+handshake, as required by the recovery ledger. Include this exact line in both
+pending admission and committed registration snapshots. It is not an exporter
+or MAC key. Reject missing, duplicate or changed bindings rather than deriving
+a substitute from a reused numeric circuit ID. The daemon retains C with its
+local instance/handle and obligations before reserving identifiers.
+
+Privacy/timing assessment: this completes the already-required privileged local
+registration disclosure. C remains local to this relay's verifier and ledger;
+never send it to another hop or routine logs. No public framing, retry schedule
+or payment window changes. Parser tests must reject omitted/changed bindings;
+live controller conformance remains required.
 
 Tor returns these snapshots only after the initial commit reserves its IDs.
 Before that return `551 INITIAL_STATE_UNCONFIRMED`. The initial allocation is A0;

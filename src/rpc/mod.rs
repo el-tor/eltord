@@ -19,3 +19,6 @@ pub use teardown_circuit::*;
 pub use torrc::*;
 pub use wait_for_bootstrap::*;
 pub use wait_for_circuit::*;
+
+mod payment_snapshot;
+pub use payment_snapshot::*;

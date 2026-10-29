@@ -108,3 +108,18 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   newline. No live Tor handler is enabled by adding this helper.
 - The durable admission bridge documentation passes the repository documentation
   checks. Its runtime ledger/C handshake remains under implementation.
+- LNI commit `b87d51b` additionally verifies the recipient settlement preimage
+  against the exact payment hash. The six focused adapter tests still pass.
+- Daemon commit `2cfa530` adds the receiving SQLite ledger with atomic batch
+  reservation, unique settlement redemption, explicit zero-charge decisions,
+  immutable activation windows and closed-instance tombstones. Twenty-one
+  ledger tests and the three admission-client tests pass. Production wallet
+  account binding, outgoing accounting and live controller integration remain
+  incomplete.
+- The new C schedule passes four focused tests for prerequisite-gated activation,
+  unchanged T0 through late funding, renewal across rounds 10–11 and 20–21,
+  setup/lifetime expiry, clock rollback and a delayed timer skipping an unpaid
+  round. These are state-machine tests, not proof that an actual network stream
+  survives renewal. Full ten-round renewal allocations must fit the accepted
+  lifetime, matching the existing wire validator. Live handlers, durable
+  consumption events and transport acceptance remain to be integrated.
