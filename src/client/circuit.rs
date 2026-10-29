@@ -1,7 +1,7 @@
 use crate::rpc;
 use crate::types::{Relay, RpcConfig};
 use crate::utils::get_random_payhash_and_preimage;
-use log::{debug, info};
+use log::info;
 
 struct ExtendPaidCircuitRow {
     relay_fingerprint: String,
@@ -55,13 +55,16 @@ pub async fn build_circuit(
         ));
     }
     command.push_str(".");
-    info!("EXTENDPAIDCIRCUIT Command: {}", command);
+    info!("Requesting paid circuit construction");
     let circuit_id = rpc::extend_paid_circuit(&rpc_config, command)
-        .await.map_err(|e| e.to_string())?;
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut public_relays = serde_json::to_value(relays)?;
+    redact_payment_material(&mut public_relays);
     let event_data = serde_json::json!({
         "event": "CIRCUIT_BUILT",
         "circuit_id": circuit_id,
-        "relays": relays
+        "relays": public_relays
     });
     info!("EVENT:{}:ENDEVENT", event_data.to_string());
     Ok(circuit_id)
@@ -78,8 +81,6 @@ pub fn pregen_extend_paid_circuit_hashes(
     for relay in selected_relays.iter_mut() {
         // Generate payhash and preimage for handshake fee
         let (handshake_payhash, handshake_preimage) = get_random_payhash_and_preimage();
-        info!("Handshake Payment Hash: {}\n", handshake_payhash);
-        info!("Handshake Payment Preimage: {}\n", handshake_preimage);
         relay.payment_handshake_fee_payhash = Some(handshake_payhash);
         relay.payment_handshake_fee_preimage = Some(handshake_preimage);
 
@@ -91,4 +92,35 @@ pub fn pregen_extend_paid_circuit_hashes(
         relay.payment_id_hashes_10 = Some(payment_id_hashes_10);
     }
     selected_relays
+}
+
+// UI path metadata must not export credentials or cross-round payment IDs to
+// the persistent log stream. Keep the original in-memory relay records intact.
+fn redact_payment_material(relays: &mut serde_json::Value) {
+    if let Some(rows) = relays.as_array_mut() {
+        for row in rows {
+            if let Some(object) = row.as_object_mut() {
+                for key in [
+                    "payment_handshake_fee_payhash",
+                    "payment_handshake_fee_preimage",
+                    "payment_id_hashes_10",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn circuit_ui_metadata_excludes_payment_material() {
+        let mut value = serde_json::json!([{"fingerprint":"public relay", "payment_rate_msats":1000,
+            "payment_handshake_fee_payhash":"private hash", "payment_handshake_fee_preimage":"private preimage", "payment_id_hashes_10":["private id"]}]);
+        super::redact_payment_material(&mut value);
+        assert_eq!(
+            value,
+            serde_json::json!([{"fingerprint":"public relay", "payment_rate_msats":1000}])
+        );
+    }
 }
