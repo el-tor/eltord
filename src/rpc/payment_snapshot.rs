@@ -507,7 +507,8 @@ impl super::PaymentControl {
                 saved
             };
         let decision = super::AdmissionDecision::from(&reservation);
-        let reply = self.command(&decision.command()?).await?;
+        let command = decision.command()?;
+        let reply = self.command(&command).await?;
         let revision = decision.receipt_revision(&reply)?;
         Ok((reservation, revision))
     }

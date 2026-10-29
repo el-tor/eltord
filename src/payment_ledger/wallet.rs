@@ -128,7 +128,7 @@ pub async fn authorize_cln(
     Ok(ledger.authorize(obligation, &evidence, decision, clock)?)
 }
 
-fn recipient_evidence(account: AccountId, proof: &IncomingSettlement) -> Result<RecipientEvidence> {
+pub(crate) fn recipient_evidence(account: AccountId, proof: &IncomingSettlement) -> Result<RecipientEvidence> {
     if account != AccountId(proof.account.fingerprint()) || proof.settled_earliest_ms < 0 {
         return Err(BridgeError::BindingMismatch);
     }
