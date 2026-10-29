@@ -1,6 +1,9 @@
 //! Strict decoding of the privileged pending-admission snapshot. No wallet or
 //! ledger mutation occurs here; a parsed candidate is not permission to pay.
-use crate::payment_ledger::{BatchRegistration, ChargeKind, Obligation};
+use super::RegistrationClockSample;
+use crate::payment_ledger::{
+    AcceptanceWindow, BatchRegistration, ChargeKind, ClockObservation, Obligation, PaymentLedger,
+};
 use sha2::{Digest, Sha256};
 use std::convert::TryInto;
 
@@ -14,6 +17,8 @@ pub struct PendingAdmission {
     period: u64,
     request_digest: [u8; 32],
     remaining_ms: u64,
+    constructed_elapsed_ms: u64,
+    fee_hash: [u8; 32],
     terms: [u8; 55],
     binding: [u8; 32],
     initial_allocation: [u8; 32],
@@ -153,17 +158,21 @@ impl PendingAdmission {
         }
         let constructed_age = number(clock[1])?;
         if period == 0 {
-            if clock[2] != "-" { return Err(INVALID); }
+            if clock[2] != "-" {
+                return Err(INVALID);
+            }
         } else if number(clock[2])? > constructed_age {
             return Err(INVALID);
         }
         let fee = &rows[6];
-        if fee.len() != 5
-            || fee[0] != "250-FEE"
-            || number(fee[1])? != u64_at(&terms, 43)
-            || fee[3] != "-"
-            || fee[4] != "NONE"
-        {
+        if fee.len() != 5 || fee[0] != "250-FEE" || number(fee[1])? != u64_at(&terms, 43) {
+            return Err(INVALID);
+        }
+        if period == 0 || fee[4] == "NONE" {
+            if fee[3] != "-" || fee[4] != "NONE" {
+                return Err(INVALID);
+            }
+        } else if !matches!(fee[4], "AUTHORIZED" | "CONSUMED") || bytes::<16>(fee[3])? == [0; 16] {
             return Err(INVALID);
         }
         let fee_hash = bytes::<32>(fee[2])?;
@@ -202,6 +211,8 @@ impl PendingAdmission {
             period,
             request_digest: bytes(a[6])?,
             remaining_ms,
+            constructed_elapsed_ms: constructed_age,
+            fee_hash,
             terms,
             binding,
             initial_allocation: bytes(p[2])?,
@@ -224,6 +235,71 @@ impl PendingAdmission {
     }
     pub fn policy_hash(&self) -> [u8; 32] {
         domain_hash(b"eltor/payment-renew/v1/terms", &[&self.terms])
+    }
+    /// Persist the one-time setup charge before any RESERVED decision. This ID
+    /// is a local ledger key, never a wire payer note or cross-hop identifier.
+    pub fn handshake(
+        &self,
+        clock: RegistrationClockSample,
+    ) -> Result<Obligation, Box<dyn std::error::Error>> {
+        let construction = clock.age(self.constructed_elapsed_ms)?;
+        let timeout = i64::from(u32_at(&self.terms, 51));
+        let window = AcceptanceWindow {
+            opens_at_ms: construction.latest_ms.saturating_sub(300_000).max(0),
+            closes_at_ms: construction
+                .earliest_ms
+                .checked_add(timeout)
+                .ok_or(INVALID)?,
+        };
+        if window.closes_at_ms < window.opens_at_ms {
+            return Err(INVALID.into());
+        }
+        Ok(Obligation {
+            instance: self.instance,
+            handle: self.handle,
+            circuit_binding: self.binding,
+            round: 0,
+            kind: ChargeKind::Handshake,
+            payment_id: domain_hash(
+                b"eltor/local-handshake-ledger/v1",
+                &[
+                    &self.instance,
+                    &self.handle,
+                    &self.binding,
+                    &self.policy_hash(),
+                    &self.initial_allocation,
+                ],
+            ),
+            amount_msat: u64_at(&self.terms, 43),
+            expected_payment_hash: if self.fee_hash == [0; 32] {
+                None
+            } else {
+                Some(self.fee_hash)
+            },
+            policy_hash: self.policy_hash(),
+            allocation_hash: self.initial_allocation,
+            window: Some(window),
+        })
+    }
+    fn persist_handshake(
+        &self,
+        ledger: &mut PaymentLedger,
+        clock: RegistrationClockSample,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut candidate = self.handshake(clock)?;
+        if let Some(old) = ledger.get_handshake_obligation(self.instance, self.handle)? {
+            // Retain the first window across retries, never replace its deadline.
+            candidate.window = old.window;
+            if candidate != old {
+                return Err(INVALID.into());
+            }
+            return Ok(());
+        }
+        if self.period != 0 {
+            return Err("Missing original handshake registration".into());
+        }
+        ledger.register_handshake(&candidate)?;
+        Ok(())
     }
     /// Reserve only. Windows remain absent until authenticated COMMIT/T0
     /// observations are anchored; this cannot authorize a charge or activation.
@@ -287,25 +363,46 @@ pub async fn get_pending_admission(
 /// already provisioned, verified recipient-account ledger; this function never
 /// creates a ledger or contacts a wallet. A failed notification leaves the
 /// reservation intact for exact recovery, and never authorizes payment.
-pub async fn reserve_pending_admission(
+pub async fn reserve_pending_admission<F>(
     config: &crate::types::RpcConfig,
     ledger: &mut crate::payment_ledger::PaymentLedger,
     instance: [u8; 16],
     handle: [u8; 16],
     period: u64,
     decision: [u8; 16],
-) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>> {
+    mut observe: F,
+) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>>
+where
+    F: FnMut() -> Result<ClockObservation, Box<dyn std::error::Error>>,
+{
     if decision == [0; 16] {
         return Err("Invalid admission decision".into());
     }
+    if let Some(old) = ledger.get_batch_reservation(instance, handle, period)? {
+        if old.decision != decision || ledger.get_handshake_obligation(instance, handle)?.is_none()
+        {
+            return Err(INVALID.into());
+        }
+        let receipt =
+            super::send_admission_decision(config, &super::AdmissionDecision::from(&old)).await?;
+        return Ok((old, receipt));
+    }
     let sent = std::time::Instant::now();
+    let before = observe()?;
     let candidate = get_pending_admission(config, instance, handle, period).await?;
+    let after = observe()?;
+    let clock = RegistrationClockSample {
+        sent: before,
+        received: after,
+        round_trip: sent.elapsed(),
+    };
     // Anchor remaining time to request dispatch, conservatively including the
     // whole round trip. A later retry never manufactures a fresh window.
     let lifetime = std::time::Duration::from_millis(candidate.remaining_ms);
     if sent.elapsed() >= lifetime {
         return Err("Admission candidate expired".into());
     }
+    candidate.persist_handshake(ledger, clock)?;
     let reservation = ledger.reserve_batch(&candidate.registration(), decision)?;
     // A slow durable commit may cross the deadline. Preserve its decision but
     // do not attempt to admit expired work. Reconciliation retains those IDs.
@@ -332,6 +429,9 @@ pub async fn recover_admission_decision(
     let reservation = ledger
         .get_batch_reservation(instance, handle, period)?
         .ok_or("No durable admission decision to recover")?;
+    if ledger.get_handshake_obligation(instance, handle)?.is_none() {
+        return Err("Missing original handshake registration".into());
+    }
     super::send_admission_decision(config, &super::AdmissionDecision::from(&reservation)).await
 }
 
@@ -339,13 +439,17 @@ impl super::PaymentControl {
     /// Recover an existing immutable reservation first; otherwise query and
     /// durably reserve all IDs before notifying Tor over this connection.
     /// This admits identifiers only, never settlement or paid capacity.
-    pub async fn admit_pending(
+    pub async fn admit_pending<F>(
         &mut self,
         ledger: &mut crate::payment_ledger::PaymentLedger,
         instance: [u8; 16],
         handle: [u8; 16],
         period: u64,
-    ) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>> {
+        mut observe: F,
+    ) -> Result<(crate::payment_ledger::BatchReservation, u64), Box<dyn std::error::Error>>
+    where
+        F: FnMut() -> Result<ClockObservation, Box<dyn std::error::Error>>,
+    {
         if instance == [0; 16]
             || handle == [0; 16]
             || period
@@ -357,9 +461,13 @@ impl super::PaymentControl {
         }
         let reservation =
             if let Some(old) = ledger.get_batch_reservation(instance, handle, period)? {
+                if ledger.get_handshake_obligation(instance, handle)?.is_none() {
+                    return Err("Missing original handshake registration".into());
+                }
                 old
             } else {
                 let sent = std::time::Instant::now();
+                let before = observe()?;
                 let reply = self
                     .command(&format!(
                         "ELTOR_PAYMENT_ADMISSION_GET 1 {} {} {}",
@@ -368,7 +476,19 @@ impl super::PaymentControl {
                         period
                     ))
                     .await?;
-                let candidate = PendingAdmission::parse(&reply, instance, handle, period)?;
+                let after = observe()?;
+                let candidate = match PendingAdmission::parse(&reply, instance, handle, period) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.invalidate();
+                        return Err(error.into());
+                    }
+                };
+                let clock = RegistrationClockSample {
+                    sent: before,
+                    received: after,
+                    round_trip: sent.elapsed(),
+                };
                 let lifetime = std::time::Duration::from_millis(candidate.remaining_ms);
                 if sent.elapsed() >= lifetime {
                     return Err("Admission candidate expired".into());
@@ -379,6 +499,7 @@ impl super::PaymentControl {
                         break value;
                     }
                 };
+                candidate.persist_handshake(ledger, clock)?;
                 let saved = ledger.reserve_batch(&candidate.registration(), decision)?;
                 if sent.elapsed() >= lifetime {
                     return Err("Admission candidate expired after reservation".into());
@@ -395,6 +516,12 @@ impl super::PaymentControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn test_clock() -> Result<ClockObservation, Box<dyn std::error::Error>> {
+        Ok(ClockObservation {
+            now_ms: 1_000_000,
+            uncertainty_ms: 1,
+        })
+    }
     fn fixture(hop: usize) -> (String, serde_json::Value) {
         let all: serde_json::Value =
             serde_json::from_str(include_str!("../../spec/vectors/payment_renewal_v1.json"))
@@ -419,7 +546,7 @@ mod tests {
             format!("250-POLICY {terms} {a0} {a0} 1"),
             format!("250-BINDING {}", f["C_hex"].as_str().unwrap()),
             "250-STATE ADMISSION_PENDING 0 0 20000 0".into(),
-            "250-CLOCK 1000 -".into(),
+            "250-CLOCK 10000 -".into(),
             format!("250-FEE 0 {} - NONE", hex::encode([0; 32])),
         ];
         for i in 0..10 {
@@ -452,6 +579,96 @@ mod tests {
                 bytes::<32>(f["C_hex"].as_str().unwrap()).unwrap()
             );
         }
+    }
+    #[test]
+    fn renewal_pending_repeats_consumed_fee_but_never_recreates_original_handshake() {
+        let (wire, f) = fixture(0);
+        let renewal = &f["periods"][0];
+        let mut rows: Vec<String> = wire.split('\n').map(str::to_owned).collect();
+        rows[0] = format!(
+            "250-ELTOR_ADMISSION 1 {} {} 4 1 {} 20000",
+            hex::encode([1; 16]),
+            hex::encode([2; 16]),
+            renewal["request_digest_hex"].as_str().unwrap()
+        );
+        rows[1] = format!(
+            "250-ELTOR_REGISTRATION 1 {} {} 4 1",
+            hex::encode([1; 16]),
+            hex::encode([2; 16])
+        );
+        let p: Vec<_> = rows[2].split(' ').collect();
+        rows[2] = format!(
+            "250-POLICY {} {} {} 11",
+            p[1],
+            p[2],
+            renewal["allocation_digest_hex"].as_str().unwrap()
+        );
+        rows[4] = "250-STATE ADMISSION_PENDING 10 540000 0 60000".into();
+        rows[5] = "250-CLOCK 600000 590000".into();
+        rows[6] = format!(
+            "250-FEE 0 {} {} CONSUMED",
+            hex::encode([0; 32]),
+            hex::encode([8; 16])
+        );
+        let ids = renewal["new_ids_hex"].as_str().unwrap();
+        let rate = u64_at(&bytes::<55>(f["terms_hex"].as_str().unwrap()).unwrap(), 3);
+        for i in 0..10 {
+            rows[7 + i] = format!(
+                "250-ROUND {} {} {} - - - - NONE",
+                11 + i,
+                &ids[i * 64..(i + 1) * 64],
+                rate
+            );
+        }
+        let parsed = PendingAdmission::parse(&rows.join("\n"), [1; 16], [2; 16], 1).unwrap();
+        assert_eq!(parsed.registration().rounds[0].round, 11);
+        assert_eq!(
+            parsed.registration().rounds[0].allocation_hash,
+            bytes::<32>(f["periods"][0]["parent_digest_hex"].as_str().unwrap()).unwrap()
+        );
+        rows[6] = rows[6].replace("CONSUMED", "BROKEN");
+        assert!(PendingAdmission::parse(&rows.join("\n"), [1; 16], [2; 16], 1).is_err());
+    }
+    #[test]
+    fn handshake_window_is_conservative_and_retries_keep_original_deadline() {
+        let mut pending = PendingAdmission::parse(&fixture(0).0, [1; 16], [2; 16], 0).unwrap();
+        pending.terms[43..51].copy_from_slice(&1234u64.to_be_bytes());
+        pending.fee_hash = [18; 32];
+        let observation = RegistrationClockSample {
+            sent: ClockObservation {
+                now_ms: 1_000_000,
+                uncertainty_ms: 7,
+            },
+            received: ClockObservation {
+                now_ms: 1_000_019,
+                uncertainty_ms: 7,
+            },
+            round_trip: std::time::Duration::from_millis(19),
+        };
+        let fee = pending.handshake(observation).unwrap();
+        assert_eq!(fee.amount_msat, 1234);
+        assert_eq!(fee.expected_payment_hash, Some([18; 32]));
+        let window = fee.window.unwrap();
+        assert_eq!(window.opens_at_ms, 690_026);
+        assert_eq!(window.closes_at_ms, 1_019_993);
+        let directory = std::env::temp_dir().join(format!(
+            "eltor-admission-window-{:032x}",
+            rand::random::<u128>()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("ledger.sqlite");
+        let mut ledger =
+            PaymentLedger::provision(&path, crate::payment_ledger::AccountId([8; 32])).unwrap();
+        pending.persist_handshake(&mut ledger, observation).unwrap();
+        let mut later = observation;
+        later.sent.now_ms += 100;
+        later.received.now_ms += 100;
+        pending.persist_handshake(&mut ledger, later).unwrap();
+        assert!(ledger.get_handshake_obligation([1; 16], [2; 16]).unwrap() == Some(fee));
+        pending.fee_hash = [19; 32];
+        assert!(pending.persist_handshake(&mut ledger, later).is_err());
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
     }
     #[test]
     fn reject_incomplete_changed_or_payable_candidates() {
@@ -542,6 +759,11 @@ mod tests {
                                 .unwrap()
                                 .unwrap()
                         };
+                        assert!(PaymentLedger::reopen(&server_path, account)
+                            .unwrap()
+                            .get_handshake_obligation([1; 16], [2; 16])
+                            .unwrap()
+                            .is_some());
                         assert_eq!(persisted.decision, [4; 16]);
                         assert_eq!(
                             command,
@@ -566,8 +788,16 @@ mod tests {
                     }
                 }
             });
-            let result =
-                reserve_pending_admission(&config, &mut ledger, [1; 16], [2; 16], 0, [4; 16]).await;
+            let result = reserve_pending_admission(
+                &config,
+                &mut ledger,
+                [1; 16],
+                [2; 16],
+                0,
+                [4; 16],
+                test_clock,
+            )
+            .await;
             assert_eq!(result.is_ok(), !lose_receipt);
             if lose_receipt {
                 assert_eq!(
@@ -676,7 +906,7 @@ mod tests {
             .await
             .unwrap();
         assert!(client
-            .admit_pending(&mut ledger, [1; 16], [2; 16], 0)
+            .admit_pending(&mut ledger, [1; 16], [2; 16], 0, test_clock)
             .await
             .is_err());
         drop(client);
@@ -687,7 +917,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             client
-                .admit_pending(&mut ledger, [1; 16], [2; 16], 0)
+                .admit_pending(&mut ledger, [1; 16], [2; 16], 0, test_clock)
                 .await
                 .unwrap()
                 .1,

@@ -219,7 +219,7 @@ impl PaymentLedger {
         anchor: InitialClockAnchor,
     ) -> Result<()> {
         self.check_file_identity()?;
-        let window = anchor.acceptance_window()?;
+        let window = initial_window_with_handshake(&self.connection, instance, handle, anchor)?;
         let payload = encode(&anchor)?;
         let tx = self
             .connection
@@ -337,6 +337,55 @@ pub(super) fn activation_anchor(
         (None, None) => Ok(None),
     }
 }
+// The UTC observation remains intact. The previously accepted fee deadline is
+// a separate immutable upper bound, not a reconstructed observation endpoint.
+fn initial_window_with_handshake(
+    connection: &Connection,
+    instance: Id16,
+    handle: Id16,
+    anchor: InitialClockAnchor,
+) -> Result<AcceptanceWindow> {
+    let mut window = anchor.acceptance_window()?;
+    let payloads: Vec<Vec<u8>> = connection.prepare("SELECT payload FROM registrations WHERE instance=?1 AND handle=?2 AND kind=0 AND round=0 LIMIT 2")?
+        .query_map(params![&instance[..], &handle[..]], |r| r.get(0))?.collect::<std::result::Result<_,_>>()?;
+    if payloads.len() > 1 {
+        return Err(LedgerError::InvalidLedger);
+    }
+    if let Some(payload) = payloads.first() {
+        let fee: Obligation =
+            serde_json::from_slice(payload).map_err(|_| LedgerError::InvalidLedger)?;
+        fee.validate().map_err(|_| LedgerError::InvalidLedger)?;
+        let rounds: Vec<Vec<u8>> = connection.prepare("SELECT payload FROM registrations WHERE instance=?1 AND handle=?2 AND kind=1 AND round=1 LIMIT 2")?
+            .query_map(params![&instance[..], &handle[..]], |r| r.get(0))?.collect::<std::result::Result<_,_>>()?;
+        if rounds.len() != 1 {
+            return Err(LedgerError::InvalidLedger);
+        }
+        let first: Obligation =
+            serde_json::from_slice(&rounds[0]).map_err(|_| LedgerError::InvalidLedger)?;
+        first.validate().map_err(|_| LedgerError::InvalidLedger)?;
+        if fee.instance != instance
+            || fee.handle != handle
+            || fee.kind != ChargeKind::Handshake
+            || fee.round != 0
+            || first.instance != instance
+            || first.handle != handle
+            || first.kind != ChargeKind::Round
+            || first.round != 1
+            || fee.circuit_binding != first.circuit_binding
+            || fee.policy_hash != first.policy_hash
+            || fee.allocation_hash != first.allocation_hash
+        {
+            return Err(LedgerError::InvalidLedger);
+        }
+        window.closes_at_ms = window
+            .closes_at_ms
+            .min(fee.window.ok_or(LedgerError::InvalidLedger)?.closes_at_ms);
+        if window.closes_at_ms < window.opens_at_ms {
+            return Err(LedgerError::OutsideWindow);
+        }
+    }
+    Ok(window)
+}
 pub(super) fn validate_schema(connection: &Connection) -> Result<()> {
     connection.prepare("SELECT i.payload,a.payload FROM initial_clock_anchors i,activation_interval_anchors a LIMIT 0")?;
     let mut stmt = connection.prepare("SELECT instance,handle FROM initial_clock_anchors")?;
@@ -360,7 +409,7 @@ pub(super) fn validate_schema(connection: &Connection) -> Result<()> {
                 })
             },
         )?;
-        if window != anchor.acceptance_window()? {
+        if window != initial_window_with_handshake(connection, instance, handle, anchor)? {
             return Err(LedgerError::InvalidLedger);
         }
     }

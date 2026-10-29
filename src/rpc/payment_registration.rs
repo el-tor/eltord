@@ -588,7 +588,7 @@ impl RegistrationClockSample {
             latest_ms: hi,
         })
     }
-    fn age(&self, age: u64) -> Result<UtcInterval> {
+    pub(crate) fn age(&self, age: u64) -> Result<UtcInterval> {
         let sample = self.sample_interval()?;
         let age = i64::try_from(age).map_err(|_| RegistrationError::Clock)?;
         let earliest_ms = sample

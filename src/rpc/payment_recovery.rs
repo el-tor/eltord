@@ -118,6 +118,43 @@ impl PaymentRecovery {
                 revision: entry.revision,
             }))
     }
+    /// Role filtering does not mark a row queried; each selected entry still
+    /// requires its role-specific authoritative query before reconciliation.
+    pub fn next_query_for(
+        &self,
+        role: PaymentRole,
+    ) -> Result<Option<PaymentInventoryRow>, &'static str> {
+        if !self.valid {
+            return Err(BAD);
+        }
+        Ok(self
+            .entries
+            .iter()
+            .find(|(_, e)| e.role == role && !e.queried)
+            .map(|(handle, e)| PaymentInventoryRow {
+                handle: *handle,
+                role: e.role,
+                revision: e.revision,
+            }))
+    }
+    pub fn tracked_rows_for(
+        &self,
+        role: PaymentRole,
+    ) -> Result<Vec<PaymentInventoryRow>, &'static str> {
+        if !self.valid {
+            return Err(BAD);
+        }
+        Ok(self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.role == role)
+            .map(|(handle, e)| PaymentInventoryRow {
+                handle: *handle,
+                role: e.role,
+                revision: e.revision,
+            })
+            .collect())
+    }
     /// Call only after validating a full typed query response on this connection.
     /// Drain buffered hints first: a newer hint keeps an older response pending.
     /// A successful return means query bookkeeping only, never paid activation.
@@ -208,6 +245,28 @@ mod tests {
         assert!(r.queried([1; 16], &row(3)).is_err());
         let mut r = PaymentRecovery::new(inventory(), &[]).unwrap();
         assert!(r.queried([3; 16], &row(3)).is_err());
+    }
+    #[test]
+    fn role_selectors_do_not_skip_another_role_or_mark_queries_complete() {
+        let mut i = inventory();
+        i.rows.push(PaymentInventoryRow {
+            handle: [1; 16],
+            role: PaymentRole::Origin,
+            revision: 1,
+        });
+        let mut r = PaymentRecovery::new(i, &[]).unwrap();
+        assert!(r.next_query().unwrap().unwrap().role == PaymentRole::Origin);
+        assert!(
+            r.next_query_for(PaymentRole::Relay)
+                .unwrap()
+                .unwrap()
+                .handle
+                == [2; 16]
+        );
+        assert_eq!(r.tracked_rows_for(PaymentRole::Relay).unwrap().len(), 1);
+        assert!(r.next_query_for(PaymentRole::Relay).unwrap().is_some());
+        r.invalidate();
+        assert!(r.tracked_rows_for(PaymentRole::Relay).is_err());
     }
     #[test]
     fn churn_cannot_grow_recovery_without_bound() {

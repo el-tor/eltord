@@ -114,8 +114,13 @@ impl PaymentLedger {
         handle: Id16,
     ) -> Result<Option<Obligation>> {
         self.check_file_identity()?;
-        let payload:Option<Vec<u8>>=self.connection.query_row("SELECT payload FROM registrations WHERE instance=?1 AND handle=?2 AND round=0 AND kind=0",params![&instance[..],&handle[..]],|r|r.get(0)).optional()?;
-        payload
+        let payloads:Vec<Vec<u8>>=self.connection.prepare("SELECT payload FROM registrations WHERE instance=?1 AND handle=?2 AND round=0 AND kind=0 LIMIT 2")?.query_map(params![&instance[..],&handle[..]],|r|r.get(0))?.collect::<std::result::Result<_,_>>()?;
+        if payloads.len() > 1 {
+            return Err(LedgerError::InvalidLedger);
+        }
+        payloads
+            .into_iter()
+            .next()
             .map(|p| {
                 let o: Obligation =
                     serde_json::from_slice(&p).map_err(|_| LedgerError::InvalidLedger)?;

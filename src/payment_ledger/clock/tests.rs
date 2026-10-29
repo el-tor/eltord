@@ -262,3 +262,84 @@ fn corrupted_interval_metadata_cannot_reopen_or_widen_original_initial_window() 
     drop(ledger);
     assert!(PaymentLedger::reopen(&dir.file(), account()).is_err());
 }
+
+#[test]
+fn original_handshake_deadline_caps_round_one_without_altering_clock_evidence() {
+    let dir = Directory::new();
+    let mut ledger = setup(&dir);
+    let mut fee = batch().rounds[0].clone();
+    fee.kind = ChargeKind::Handshake;
+    fee.round = 0;
+    fee.payment_id = [32; 32];
+    fee.window = Some(AcceptanceWindow {
+        opens_at_ms: 0,
+        closes_at_ms: 140_000,
+    });
+    ledger.register_handshake(&fee).unwrap();
+    ledger
+        .bind_initial_clock_anchor([1; 16], [2; 16], initial())
+        .unwrap();
+    assert!(ledger.get_initial_clock_anchor([1; 16], [2; 16]).unwrap() == Some(initial()));
+    assert_eq!(
+        ledger
+            .get_initial_window([1; 16], [2; 16])
+            .unwrap()
+            .unwrap()
+            .closes_at_ms,
+        140_000
+    );
+    drop(ledger);
+    let mut ledger = PaymentLedger::reopen(&dir.file(), account()).unwrap();
+    let mut later = initial();
+    later.constructed_at.earliest_ms += 1;
+    assert!(matches!(
+        ledger.bind_initial_clock_anchor([1; 16], [2; 16], later),
+        Err(LedgerError::Conflict)
+    ));
+    assert_eq!(
+        ledger
+            .get_initial_window([1; 16], [2; 16])
+            .unwrap()
+            .unwrap()
+            .closes_at_ms,
+        140_000
+    );
+    assert!(matches!(
+        ledger.authorize_zero(
+            &batch().rounds[0],
+            [33; 16],
+            ClockObservation {
+                now_ms: 140_001,
+                uncertainty_ms: 0
+            }
+        ),
+        Err(LedgerError::OutsideWindow)
+    ));
+}
+
+#[test]
+fn original_handshake_before_commit_or_wrong_binding_cannot_create_initial_clock() {
+    for wrong_binding in [false, true] {
+        let dir = Directory::new();
+        let mut ledger = setup(&dir);
+        let mut fee = batch().rounds[0].clone();
+        fee.kind = ChargeKind::Handshake;
+        fee.round = 0;
+        fee.payment_id = [32; 32];
+        if wrong_binding {
+            fee.policy_hash = [99; 32];
+        }
+        fee.window = Some(AcceptanceWindow {
+            opens_at_ms: 0,
+            closes_at_ms: 110_000,
+        });
+        ledger.register_handshake(&fee).unwrap();
+        assert!(ledger
+            .bind_initial_clock_anchor([1; 16], [2; 16], initial())
+            .is_err());
+        assert!(ledger
+            .get_initial_clock_anchor([1; 16], [2; 16])
+            .unwrap()
+            .is_none());
+    }
+}
