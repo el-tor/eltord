@@ -289,7 +289,7 @@ def prepare(args):
             "ControlSocket " + json.dumps(str(node / "control")),
             "CookieAuthFile " + json.dumps(str(node / "cookie")),
             "DataDirectory " + json.dumps(str(data)), "RunAsDaemon 0",
-            "Log notice file " + json.dumps(str(node / "notice.log")), "SafeLogging 1",
+            "Log notice file " + str(node / "notice.log"), "SafeLogging 1",
             "__LeaveStreamsUnattached 1", "__DisablePredictedCircuits 1",
             "ClientRejectInternalAddresses 0", "ClientDNSRejectInternalAddresses 0",
             "MaxClientCircuitsPending 16", "LearnCircuitBuildTimeout 0",
