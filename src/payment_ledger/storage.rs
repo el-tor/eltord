@@ -74,6 +74,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v5(path, expected_account);
         }
+        if version == 6 {
+            drop(ledger);
+            return Self::upgrade_from_v6(path, expected_account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
@@ -122,6 +126,7 @@ impl PaymentLedger {
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
         tx.execute_batch(origin_artifacts::SCHEMA)?;
+        tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
@@ -281,7 +286,7 @@ fn measure(connection: &Connection) -> Result<StorageStatus> {
         [],
         |r| r.get(0),
     )?;
-    let artifacts_reserved:i64=connection.query_row("SELECT coalesce((SELECT sum(reserve_bytes) FROM origin_constructions),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_invoices),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_renewal_operations),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_allocations),0)",[],|r|r.get(0))?;
+    let artifacts_reserved:i64=connection.query_row("SELECT coalesce((SELECT sum(reserve_bytes) FROM origin_constructions),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_invoices),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_renewal_operations),0)+coalesce((SELECT sum(reserve_bytes) FROM origin_allocations),0)+coalesce((SELECT sum(reserve_bytes) FROM handshake_scopes),0)+coalesce((SELECT sum(reserve_bytes) FROM handshake_intents),0)",[],|r|r.get(0))?;
     let reserved = u64::try_from(reserved)
         .map_err(|_| LedgerError::InvalidLedger)?
         .checked_add(u64::try_from(origin_reserved).map_err(|_| LedgerError::InvalidLedger)?)

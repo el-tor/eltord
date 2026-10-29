@@ -224,7 +224,7 @@ fn valid_invoice(artifact: &str) -> bool {
             || artifact.starts_with("lntbs"))
 }
 pub(super) fn control_capacity(connection: &Connection) -> Result<()> {
-    let count:i64=connection.query_row("SELECT (SELECT count(*) FROM origin_constructions)+(SELECT count(*) FROM origin_operations)+(SELECT count(*) FROM origin_renewal_operations)",[],|r|r.get(0))?;
+    let count:i64=connection.query_row("SELECT (SELECT count(*) FROM origin_constructions)+(SELECT count(*) FROM origin_operations)+(SELECT count(*) FROM origin_renewal_operations)+(SELECT count(*) FROM handshake_scopes)",[],|r|r.get(0))?;
     if count >= 4096 {
         Err(LedgerError::BudgetExceeded)
     } else {
@@ -340,7 +340,8 @@ pub(super) fn require_managed_invoice(
     Ok(())
 }
 pub(super) fn validate_schema(connection: &Connection, account: AccountId) -> Result<()> {
-    let control_count:i64=connection.query_row("SELECT (SELECT count(*) FROM origin_constructions)+(SELECT count(*) FROM origin_operations)+(SELECT count(*) FROM origin_renewal_operations)",[],|r|r.get(0))?;
+    let version:i64=connection.pragma_query_value(None,"user_version",|r|r.get(0))?;
+    let control_count:i64=connection.query_row(if version>=7 {"SELECT (SELECT count(*) FROM origin_constructions)+(SELECT count(*) FROM origin_operations)+(SELECT count(*) FROM origin_renewal_operations)+(SELECT count(*) FROM handshake_scopes)"}else{"SELECT (SELECT count(*) FROM origin_constructions)+(SELECT count(*) FROM origin_operations)+(SELECT count(*) FROM origin_renewal_operations)"},[],|r|r.get(0))?;
     if control_count > 4096 {
         return Err(LedgerError::InvalidLedger);
     }

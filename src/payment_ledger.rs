@@ -27,6 +27,7 @@ use thiserror::Error;
 pub mod clock;
 pub use clock::{ActivationIntervalAnchor, InitialClockAnchor, UtcClockInterval};
 pub mod outgoing;
+pub mod handshake;
 pub mod outgoing_renewal;
 pub mod origin;
 pub mod origin_artifacts;
@@ -38,7 +39,7 @@ pub mod wallet;
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];
 pub(crate) const APPLICATION_ID: i64 = 0x454c5452;
-pub(crate) const VERSION: i64 = 6;
+pub(crate) const VERSION: i64 = 7;
 
 #[derive(Debug, Error)]
 pub enum LedgerError {
@@ -303,6 +304,7 @@ impl PaymentLedger {
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
         tx.execute_batch(origin_artifacts::SCHEMA)?;
+        tx.execute_batch(handshake::SCHEMA)?;
         tx.execute_batch(outgoing_renewal::SCHEMA)?;
         tx.execute(
             "INSERT INTO ledger_info(singleton, account) VALUES(1, ?1)",
@@ -367,6 +369,7 @@ impl PaymentLedger {
         origin::validate_schema(&ledger.connection)?;
         origin_artifacts::validate_schema(&ledger.connection, expected_account)?;
         outgoing_renewal::validate_schema(&ledger.connection)?;
+        handshake::validate_schema(&ledger.connection, expected_account)?;
         Ok(ledger)
     }
 
@@ -907,7 +910,7 @@ fn insert_registration(tx: &rusqlite::Transaction<'_>, obligation: &Obligation) 
     Ok(())
 }
 
-fn require_open_instance(tx: &rusqlite::Transaction<'_>, instance: Id16) -> Result<()> {
+fn require_open_instance(tx: &Connection, instance: Id16) -> Result<()> {
     let closed: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM closed_instances WHERE instance=?1)",
         params![&instance[..]],

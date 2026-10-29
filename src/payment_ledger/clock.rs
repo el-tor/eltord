@@ -120,6 +120,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v5(path, account);
         }
+        if version == 6 {
+            drop(ledger);
+            return Self::upgrade_from_v6(path, account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, account);
@@ -160,6 +164,7 @@ impl PaymentLedger {
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
         tx.execute_batch(origin_artifacts::SCHEMA)?;
+        tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;

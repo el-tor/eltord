@@ -162,6 +162,10 @@ impl PaymentLedger {
             drop(ledger);
             return Self::upgrade_from_v5(path, expected_account);
         }
+        if version == 6 {
+            drop(ledger);
+            return Self::upgrade_from_v6(path, expected_account);
+        }
         if version == VERSION {
             drop(ledger);
             return Self::reopen(path, expected_account);
@@ -216,6 +220,7 @@ impl PaymentLedger {
         tx.execute_batch(receiving::SCHEMA)?;
         tx.execute_batch(origin::SCHEMA)?;
         tx.execute_batch(origin_artifacts::SCHEMA)?;
+        tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
@@ -294,6 +299,7 @@ impl PaymentLedger {
                 Err(LedgerError::Conflict)
             };
         }
+        handshake::require_path(&tx, budget, self.account)?;
         require_open_instance(&tx, budget.instance)?;
         account_budget(&tx)?;
         storage::check_admission(&tx)?;
@@ -342,6 +348,7 @@ impl PaymentLedger {
                 Err(LedgerError::Conflict)
             };
         }
+        handshake::require_hop_terms(&tx, terms)?;
         outgoing_renewal::require_new_hop_slot(&tx, terms.local_budget_scope)?;
         let (_, _, closed) = path_budget(&tx, terms.local_budget_scope)?;
         if closed {
@@ -385,6 +392,7 @@ impl PaymentLedger {
         if blocked {
             return Err(LedgerError::BudgetExceeded);
         }
+        handshake::forbid_duplicate(&tx, intent)?;
         match_path(intent, &circuit)?;
         match_hop_terms(&tx, intent)?;
         origin_artifacts::require_managed_invoice(&tx, intent, self.account)?;
@@ -654,6 +662,7 @@ impl PaymentLedger {
             "UPDATE path_budgets SET closed=1 WHERE local_budget_scope=?1",
             params![&binding[..]],
         )?;
+        handshake::close(&tx, "scope=?1", &binding[..])?;
         storage::release_cancelled(&tx)?;
         tx.commit()?;
         Ok(())
@@ -746,7 +755,7 @@ pub(super) fn validate_intent(intent: &OutgoingIntent, account: AccountId) -> Re
     Ok(())
 }
 
-fn account_budget(connection: &Connection) -> Result<(AccountBudget, bool)> {
+pub(super) fn account_budget(connection: &Connection) -> Result<(AccountBudget, bool)> {
     let row: Option<(Vec<u8>, bool)> = connection
         .query_row(
             "SELECT payload,blocked FROM account_budget WHERE singleton=1",
@@ -761,7 +770,7 @@ fn account_budget(connection: &Connection) -> Result<(AccountBudget, bool)> {
     ))
 }
 
-fn path_budget(connection: &Connection, binding: Hash32) -> Result<(PathBudget, u64, bool)> {
+pub(super) fn path_budget(connection: &Connection, binding: Hash32) -> Result<(PathBudget, u64, bool)> {
     let row: Option<(Vec<u8>, i64, bool)> = connection
         .query_row(
             "SELECT payload,current_round,closed FROM path_budgets WHERE local_budget_scope=?1",
@@ -814,7 +823,7 @@ fn committed(exposure: Exposure) -> Result<u64> {
         .checked_add(exposure.spent_msat)
         .ok_or(LedgerError::BudgetExceeded)
 }
-fn enforce_exposure(
+pub(super) fn enforce_exposure(
     exposure: Exposure,
     maximum: u64,
     lifetime: u64,
@@ -836,13 +845,13 @@ fn enforce_exposure(
     }
 }
 
-fn exposure(
+pub(super) fn exposure(
     connection: &Connection,
     binding: Option<Hash32>,
     round: Option<u64>,
 ) -> Result<Exposure> {
     let round = round.map(sql_number).transpose()?;
-    let row:(i64,i64,i64,i64,i64,i64)=connection.query_row("SELECT COALESCE(SUM(reserved_msat),0),COALESCE(SUM(spent_msat),0),COALESCE(SUM(outstanding_msat),0),COALESCE(SUM(state=0),0),COALESCE(SUM(state=1),0),COALESCE(SUM(state IN(0,1,2,3,6)),0) FROM outgoing_intents WHERE (?1 IS NULL OR local_budget_scope=?1) AND (?2 IS NULL OR round=?2)",params![binding.as_ref().map(|b|&b[..]),round],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
+    let row:(i64,i64,i64,i64,i64,i64)=connection.query_row("SELECT COALESCE(SUM(reserved_msat),0),COALESCE(SUM(spent_msat),0),COALESCE(SUM(outstanding_msat),0),COALESCE(SUM(state=0),0),COALESCE(SUM(state=1),0),COALESCE(SUM(state IN(0,1,2,3,6)),0) FROM (SELECT local_budget_scope,round,state,reserved_msat,spent_msat,outstanding_msat FROM outgoing_intents UNION ALL SELECT scope AS local_budget_scope,0 AS round,state,reserved_msat,spent_msat,outstanding_msat FROM handshake_intents) WHERE (?1 IS NULL OR local_budget_scope=?1) AND (?2 IS NULL OR round=?2)",params![binding.as_ref().map(|b|&b[..]),round],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
     let convert = |value| u64::try_from(value).map_err(|_| LedgerError::InvalidLedger);
     Ok(Exposure {
         reserved_msat: convert(row.0)?,
@@ -889,6 +898,7 @@ pub(super) fn close_instance(tx: &rusqlite::Transaction<'_>, instance: Id16) -> 
         "UPDATE path_budgets SET closed=1 WHERE instance=?1",
         params![&instance[..]],
     )?;
+    handshake::close(tx, "instance=?1", &instance[..])?;
     storage::release_cancelled(tx)?;
     Ok(())
 }

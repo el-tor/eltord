@@ -174,6 +174,8 @@ impl PaymentLedger {
             "UPDATE path_budgets SET closed=1 WHERE instance=?1 AND handle=?2",
             params![&instance[..], &handle[..]],
         )?;
+        tx.execute("UPDATE handshake_intents SET closed=1,state=CASE WHEN state=0 THEN 7 WHEN state IN(1,2) THEN 6 ELSE state END,reserved_msat=CASE WHEN state=0 THEN 0 ELSE reserved_msat END,outstanding_msat=CASE WHEN state=0 THEN 0 ELSE outstanding_msat END,reserve_bytes=CASE WHEN state=0 THEN 0 ELSE reserve_bytes END WHERE scope IN(SELECT scope FROM handshake_scopes WHERE instance=?1 AND handle=?2)",params![&instance[..],&handle[..]])?;
+        tx.execute("UPDATE handshake_scopes SET closed=1 WHERE instance=?1 AND handle=?2",params![&instance[..],&handle[..]])?;
         storage::release_cancelled(&tx)?;
         tx.commit()?;
         Ok(())
@@ -186,7 +188,7 @@ impl PaymentLedger {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("INSERT OR IGNORE INTO closed_instances(instance) SELECT instance FROM registrations WHERE instance!=?1 UNION SELECT instance FROM batches WHERE instance!=?1 UNION SELECT instance FROM path_budgets WHERE instance!=?1 UNION SELECT instance FROM origin_operations WHERE instance!=?1 UNION SELECT instance FROM origin_constructions WHERE instance!=?1",params![&current[..]])?;
+        tx.execute("INSERT OR IGNORE INTO closed_instances(instance) SELECT instance FROM registrations WHERE instance!=?1 UNION SELECT instance FROM batches WHERE instance!=?1 UNION SELECT instance FROM path_budgets WHERE instance!=?1 UNION SELECT instance FROM origin_operations WHERE instance!=?1 UNION SELECT instance FROM origin_constructions WHERE instance!=?1 UNION SELECT instance FROM handshake_scopes WHERE instance!=?1",params![&current[..]])?;
         tx.execute("UPDATE authorizations SET state=2 WHERE state=0 AND registration_id IN(SELECT id FROM registrations WHERE instance!=?1)",params![&current[..]])?;
         tx.execute(
             "UPDATE registrations SET closed=1 WHERE instance!=?1",
@@ -197,6 +199,8 @@ impl PaymentLedger {
             "UPDATE path_budgets SET closed=1 WHERE instance!=?1",
             params![&current[..]],
         )?;
+        tx.execute("UPDATE handshake_intents SET closed=1,state=CASE WHEN state=0 THEN 7 WHEN state IN(1,2) THEN 6 ELSE state END,reserved_msat=CASE WHEN state=0 THEN 0 ELSE reserved_msat END,outstanding_msat=CASE WHEN state=0 THEN 0 ELSE outstanding_msat END,reserve_bytes=CASE WHEN state=0 THEN 0 ELSE reserve_bytes END WHERE scope IN(SELECT scope FROM handshake_scopes WHERE instance!=?1)",params![&current[..]])?;
+        tx.execute("UPDATE handshake_scopes SET closed=1 WHERE instance!=?1",params![&current[..]])?;
         storage::release_cancelled(&tx)?;
         tx.commit()?;
         Ok(())
