@@ -67,7 +67,9 @@ pub struct PaymentControl {
     next_command: tokio::time::Instant,
 }
 impl PaymentControl {
-    pub(crate) fn invalidate(&mut self) { self.failed = true; }
+    pub(crate) fn invalidate(&mut self) {
+        self.failed = true;
+    }
     pub async fn connect(config: &RpcConfig) -> io::Result<Self> {
         let stream =
             tokio::time::timeout(Duration::from_secs(15), TcpStream::connect(&config.addr))
@@ -112,6 +114,53 @@ impl PaymentControl {
         {
             return Err(invalid());
         }
+        self.command_checked(command).await
+    }
+    /// Construction stays on the same authenticated connection used to pin the
+    /// process instance. The caller must claim its durable dispatch first.
+    pub(crate) async fn construct_origin(&mut self, command: &str) -> io::Result<u32> {
+        let rows: Vec<_> = command.split("\r\n").collect();
+        if self.failed
+            || command.len() > LIMIT
+            || rows.len() < 4
+            || rows.len() > 19
+            || rows[0] != "+EXTENDPAIDCIRCUIT 0"
+            || rows[rows.len() - 2] != "."
+            || rows.last() != Some(&"")
+        {
+            return Err(invalid());
+        }
+        for row in &rows[1..rows.len() - 2] {
+            let f: Vec<_> = row.split(' ').collect();
+            if f.len() != 2
+                || f[0].len() != 40
+                || f[1].len() != 768
+                || !f.iter().all(|v| {
+                    v.bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+            {
+                return Err(invalid());
+            }
+        }
+        // exchange appends one CRLF; remove exactly the final constructor CRLF.
+        let reply = self
+            .command_checked(command.strip_suffix("\r\n").ok_or_else(invalid)?)
+            .await?;
+        let result = (|| {
+            let value = reply.strip_prefix("250 EXTENDED ").ok_or_else(invalid)?;
+            let id: u32 = value.parse().map_err(|_| invalid())?;
+            if id == 0 || id.to_string() != value {
+                return Err(invalid());
+            }
+            Ok(id)
+        })();
+        if result.is_err() {
+            self.invalidate();
+        }
+        result
+    }
+    async fn command_checked(&mut self, command: &str) -> io::Result<String> {
         self.failed = true;
         let result = tokio::time::timeout(Duration::from_secs(15), async {
             // One persistent authority stays below the shared 64 query/s ceiling.
@@ -121,9 +170,15 @@ impl PaymentControl {
             self.next_command = tokio::time::Instant::now() + Duration::from_millis(16);
             self.exchange(command).await
         })
-            .await
-            .map_err(|_| invalid())?;
-        if result.is_ok() || result.as_ref().err().and_then(PaymentRejection::from_io).is_some() {
+        .await
+        .map_err(|_| invalid())?;
+        if result.is_ok()
+            || result
+                .as_ref()
+                .err()
+                .and_then(PaymentRejection::from_io)
+                .is_some()
+        {
             self.failed = false;
         }
         result
@@ -306,6 +361,63 @@ mod tests {
         s
     }
     #[tokio::test]
+    async fn constructor_uses_same_authenticated_connection_and_rejects_injection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let command = format!(
+            "+EXTENDPAIDCIRCUIT 0\r\n{} {}\r\n.\r\n",
+            "01".repeat(20),
+            "02".repeat(384)
+        );
+        let expected = command.clone();
+        let server = tokio::spawn(async move {
+            let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+            for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                assert_eq!(read(&mut socket).await, expected);
+                socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            let mut body = String::new();
+            loop {
+                let line = read(&mut socket).await;
+                body += &line;
+                if line == ".\r\n" {
+                    break;
+                }
+            }
+            assert_eq!(body, expected);
+            socket
+                .get_mut()
+                .write_all(b"250 EXTENDED 17\r\n")
+                .await
+                .unwrap();
+            assert_eq!(read(&mut socket).await, "GETCONF ElTorFoundation\r\n");
+            socket
+                .get_mut()
+                .write_all(b"250 ElTorFoundation=1\r\n")
+                .await
+                .unwrap();
+        });
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        assert!(control
+            .construct_origin(&(command.clone() + "SIGNAL HALT\r\n"))
+            .await
+            .is_err());
+        assert!(control
+            .construct_origin(&command.replace("EXTENDPAIDCIRCUIT 0", "EXTENDPAIDCIRCUIT 17"))
+            .await
+            .is_err());
+        assert_eq!(control.construct_origin(&command).await.unwrap(), 17);
+        assert_eq!(
+            control.command("GETCONF ElTorFoundation").await.unwrap(),
+            "250 ElTorFoundation=1"
+        );
+        server.await.unwrap();
+    }
+    #[tokio::test]
     async fn payment_control_inventory_retains_interleaved_events() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
@@ -352,8 +464,14 @@ mod tests {
     #[tokio::test]
     async fn payment_control_complete_rejection_is_not_transport_loss() {
         for (response, expected) in [
-            ("551 STATE_TRANSITION_PENDING\r\n", Some(PaymentRejection::StateTransitionPending)),
-            ("552 UNKNOWN_CIRCUIT\r\n", Some(PaymentRejection::UnknownCircuit)),
+            (
+                "551 STATE_TRANSITION_PENDING\r\n",
+                Some(PaymentRejection::StateTransitionPending),
+            ),
+            (
+                "552 UNKNOWN_CIRCUIT\r\n",
+                Some(PaymentRejection::UnknownCircuit),
+            ),
             ("451 CAPACITY\r\n", Some(PaymentRejection::Capacity)),
             ("551 UNKNOWN_ERROR\r\n", None),
             ("551 STATE_TRANSITION_PENDING extra\r\n", None),
@@ -368,18 +486,32 @@ mod tests {
                     socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
                 }
                 assert_eq!(read(&mut socket).await, "ELTOR_PAYMENT_LIST 1 - -\r\n");
-                socket.get_mut().write_all(response.as_bytes()).await.unwrap();
+                socket
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .unwrap();
                 if expected.is_some() {
                     assert_eq!(read(&mut socket).await, "ELTOR_PAYMENT_LIST 1 - -\r\n");
                     socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
                 }
             });
-            let config = RpcConfig { addr, rpc_password: None, command: String::new() };
+            let config = RpcConfig {
+                addr,
+                rpc_password: None,
+                command: String::new(),
+            };
             let mut client = PaymentControl::connect(&config).await.unwrap();
-            let error = client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap_err();
+            let error = client
+                .command("ELTOR_PAYMENT_LIST 1 - -")
+                .await
+                .unwrap_err();
             assert_eq!(PaymentRejection::from_io(&error), expected);
             if expected.is_some() {
-                assert_eq!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(), "250 OK");
+                assert_eq!(
+                    client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(),
+                    "250 OK"
+                );
             } else {
                 assert!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.is_err());
             }
@@ -405,10 +537,17 @@ mod tests {
             // No catch-up burst even when all replies are immediately available.
             assert!(first.unwrap().elapsed() >= Duration::from_millis(100));
         });
-        let config = RpcConfig { addr, rpc_password: None, command: String::new() };
+        let config = RpcConfig {
+            addr,
+            rpc_password: None,
+            command: String::new(),
+        };
         let mut client = PaymentControl::connect(&config).await.unwrap();
         for _ in 0..8 {
-            assert_eq!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(), "250 OK");
+            assert_eq!(
+                client.command("ELTOR_PAYMENT_LIST 1 - -").await.unwrap(),
+                "250 OK"
+            );
         }
         server.await.unwrap();
     }
