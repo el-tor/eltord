@@ -46,3 +46,6 @@ pub use payment_origin::*;
 
 mod payment_origin_registration;
 pub use payment_origin_registration::*;
+
+mod payment_descriptor;
+pub use payment_descriptor::*;

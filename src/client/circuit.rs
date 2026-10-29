@@ -70,6 +70,79 @@ pub async fn build_circuit(
     Ok(circuit_id)
 }
 
+/// Encode the foundation constructor without allowing framing injection or
+/// silently truncating a period. The caller must durably retain this exact path
+/// and its payment material before submission; this function never pays.
+/// Handshake proof verification against the native wallet remains a separate
+/// requirement for a nonzero fee.
+pub(crate) fn foundation_constructor(relays: &[Relay]) -> Result<String, std::io::Error> {
+    use sha2::{Digest, Sha256};
+    use std::collections::HashSet;
+    fn invalid() -> std::io::Error {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Invalid foundation constructor",
+        )
+    }
+    fn decode(s: &str, size: usize) -> Result<Vec<u8>, std::io::Error> {
+        if s.len() != size * 2 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid());
+        }
+        hex::decode(s).map_err(|_| invalid())
+    }
+    if relays.is_empty() || relays.len() > 16 {
+        return Err(invalid());
+    }
+    let mut fingerprints = HashSet::new();
+    let mut ids = HashSet::new();
+    let mut command = String::from("+EXTENDPAIDCIRCUIT 0\r\n");
+    for relay in relays {
+        let fingerprint = decode(&relay.fingerprint, 20)?;
+        if fingerprint.iter().all(|b| *b == 0) || !fingerprints.insert(fingerprint.clone()) {
+            return Err(invalid());
+        }
+        let hash = decode(
+            relay
+                .payment_handshake_fee_payhash
+                .as_deref()
+                .ok_or_else(invalid)?,
+            32,
+        )?;
+        let preimage = decode(
+            relay
+                .payment_handshake_fee_preimage
+                .as_deref()
+                .ok_or_else(invalid)?,
+            32,
+        )?;
+        if Sha256::digest(&preimage).as_slice() != hash.as_slice() {
+            return Err(invalid());
+        }
+        let rounds = relay.payment_id_hashes_10.as_ref().ok_or_else(invalid)?;
+        if rounds.len() != 10 {
+            return Err(invalid());
+        }
+        command.push_str(&hex::encode(fingerprint));
+        command.push(' ');
+        command.push_str(&hex::encode(hash));
+        command.push_str(&hex::encode(preimage));
+        for id in rounds {
+            let id = decode(id, 32)?;
+            // Even across hops, shared IDs would introduce unwanted linkability.
+            if id.iter().all(|b| *b == 0) || !ids.insert(id.clone()) {
+                return Err(invalid());
+            }
+            command.push_str(&hex::encode(id));
+        }
+        command.push_str("\r\n");
+    }
+    command.push_str(".\r\n");
+    if command.len() > 16384 {
+        return Err(invalid());
+    }
+    Ok(command)
+}
+
 pub fn kill_circuit() {
     // TODO
 }
@@ -113,6 +186,70 @@ fn redact_payment_material(relays: &mut serde_json::Value) {
 }
 #[cfg(test)]
 mod tests {
+    fn foundation_relay(n: u8) -> crate::types::Relay {
+        use sha2::{Digest, Sha256};
+        crate::types::Relay {
+            nickname: String::new(),
+            fingerprint: hex::encode([n; 20]),
+            contact: None,
+            bandwidth: None,
+            ip: None,
+            port: None,
+            payment_bolt12_offer: None,
+            payment_bip353: None,
+            payment_bolt11_lnurl: None,
+            payment_bolt11_lightning_address: None,
+            payment_rate_msats: Some(0),
+            payment_interval_seconds: Some(60),
+            payment_interval_rounds: Some(10),
+            payment_handshake_fee: Some(0),
+            payment_handshake_fee_payhash: Some(hex::encode(Sha256::digest([n; 32]))),
+            payment_handshake_fee_preimage: Some(hex::encode([n; 32])),
+            payment_id_hashes_10: Some(
+                (1..=10)
+                    .map(|i| {
+                        let mut id = [n; 32];
+                        id[31] = i;
+                        hex::encode(id)
+                    })
+                    .collect(),
+            ),
+            relay_tag: None,
+            hop: None,
+        }
+    }
+    #[test]
+    fn foundation_constructor_bounds_framing_and_independent_hop_ids() {
+        let mut relays: Vec<_> = (1..=16).map(foundation_relay).collect();
+        let command = super::foundation_constructor(&relays).unwrap();
+        assert!(command.len() <= 16384);
+        let rows: Vec<_> = command.lines().collect();
+        assert_eq!(rows.len(), 18);
+        assert_eq!(rows[0], "+EXTENDPAIDCIRCUIT 0");
+        assert_eq!(rows[17], ".");
+        for row in &rows[1..17] {
+            assert_eq!(row.len(), 40 + 1 + 768);
+        }
+        relays.push(foundation_relay(17));
+        assert!(super::foundation_constructor(&relays).is_err());
+        assert!(super::foundation_constructor(&[]).is_err());
+        let base = vec![foundation_relay(1), foundation_relay(2)];
+        let mut bad = base.clone();
+        bad[1].payment_id_hashes_10 = bad[0].payment_id_hashes_10.clone();
+        assert!(super::foundation_constructor(&bad).is_err());
+        let mut bad = base.clone();
+        bad[0].payment_id_hashes_10.as_mut().unwrap().pop();
+        assert!(super::foundation_constructor(&bad).is_err());
+        let mut bad = base.clone();
+        bad[0].fingerprint.push_str("\r\n.");
+        assert!(super::foundation_constructor(&bad).is_err());
+        let mut bad = base.clone();
+        bad[0].payment_handshake_fee_preimage = Some(hex::encode([99; 32]));
+        assert!(super::foundation_constructor(&bad).is_err());
+        let mut bad = base;
+        bad[1].fingerprint = bad[0].fingerprint.clone();
+        assert!(super::foundation_constructor(&bad).is_err());
+    }
     #[test]
     fn circuit_ui_metadata_excludes_payment_material() {
         let mut value = serde_json::json!([{"fingerprint":"public relay", "payment_rate_msats":1000,
