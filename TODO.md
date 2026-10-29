@@ -233,3 +233,5 @@ record actual native binary hashes, independently running origins, observed cap
 saturation, cross-origin refusal, existing honest traffic and post-teardown
 honest recovery. Sampled peaks are not proof of unsampled maxima or privacy;
 no live overload result is claimed by adding instrumentation or the runner.
+
+ET-08/33 control backpressure acceptance: validate complete no-effect QUERY CAPACITY followed by bounded exact same-connection resubmission (four total attempts, original lifetime, unchanged durable claim), read-only GET deferral, response-based per-hop pacing, and no resubmission permit after ambiguous replies, disconnect or restart. No wallet/COMMIT/START retry authority or deadline reset is added; live acceptance remains required. See [origin control rules](spec/control/lifecycle.md#origin-initial-operations).

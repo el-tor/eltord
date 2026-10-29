@@ -3,6 +3,15 @@
 //! dispatch and collect every hop's authenticated commitment before funding.
 use super::PaymentControl;
 use std::{convert::TryInto, io};
+pub(super) type QueryRetryKey = ([u8; 16], [u8; 16], u16, [u8; 16]);
+pub(super) struct RejectedQuery {
+    operation: InitialOperation,
+    deadline: tokio::time::Instant,
+    attempts: u8,
+}
+fn query_key(op: &InitialOperation) -> QueryRetryKey {
+    (op.binding.instance, op.binding.handle, op.hop, op.operation)
+}
 fn bad() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -351,6 +360,13 @@ impl PaymentControl {
     ) -> Result<DurableInitialResult, Box<dyn std::error::Error>> {
         let saved = ledger.save_origin_operation(operation)?;
         if saved.dispatch_claimed {
+            if let Some(retry) = self.rejected_queries.remove(&query_key(operation)) {
+                if retry.operation != *operation || operation.kind != InitialOperationKind::Query {
+                    self.invalidate();
+                    return Err(bad().into());
+                }
+                return self.submit_rejected_query(retry).await;
+            }
             let op = saved.operation;
             let snapshot = self
                 .initial_snapshot(&op.binding, op.hop, Some(op.operation))
@@ -383,6 +399,85 @@ impl PaymentControl {
         )?;
         let revision = self.initial_operation(&op).await?;
         Ok(DurableInitialResult::Queued { revision })
+    }
+    /// Only an original QUERY claim may acquire this connection-local permit.
+    /// Restart/lost replies still take GET-only recovery through the ordinary
+    /// durable method; no financial operation receives this exception.
+    pub(crate) async fn durable_status_query(
+        &mut self,
+        ledger: &mut crate::payment_ledger::PaymentLedger,
+        operation: &InitialOperation,
+        deadline: tokio::time::Instant,
+    ) -> Result<DurableInitialResult, Box<dyn std::error::Error>> {
+        if operation.kind != InitialOperationKind::Query
+            || operation.terms.is_some()
+            || deadline <= tokio::time::Instant::now()
+            || self.rejected_queries.len() >= 16
+        {
+            return Err(bad().into());
+        }
+        let saved = ledger.save_origin_operation(operation)?;
+        if saved.dispatch_claimed {
+            return self.durable_initial_operation(ledger, operation).await;
+        }
+        let op = ledger.claim_origin_dispatch(
+            operation.binding.instance,
+            operation.binding.handle,
+            operation.hop,
+            operation.operation,
+        )?;
+        self.submit_rejected_query(RejectedQuery {
+            operation: op,
+            deadline,
+            attempts: 0,
+        })
+        .await
+    }
+    async fn submit_rejected_query(
+        &mut self,
+        mut retry: RejectedQuery,
+    ) -> Result<DurableInitialResult, Box<dyn std::error::Error>> {
+        if retry.attempts >= 4 || tokio::time::Instant::now() >= retry.deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Original QUERY submission budget exhausted",
+            )
+            .into());
+        }
+        retry.attempts += 1;
+        let result =
+            tokio::time::timeout_at(retry.deadline, self.initial_operation(&retry.operation)).await;
+        match result {
+            Ok(Ok(revision)) => Ok(DurableInitialResult::Queued { revision }),
+            Ok(Err(error))
+                if super::PaymentRejection::from_io(&error)
+                    == Some(super::PaymentRejection::Capacity) =>
+            {
+                if retry.attempts >= 4 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Original QUERY submission budget exhausted",
+                    )
+                    .into());
+                }
+                self.rejected_queries
+                    .insert(query_key(&retry.operation), retry);
+                Err(error.into())
+            }
+            Ok(Err(error)) => {
+                self.rejected_queries.clear();
+                Err(error.into())
+            }
+            Err(_) => {
+                self.rejected_queries.clear();
+                self.invalidate();
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Original QUERY submission deadline expired",
+                )
+                .into())
+            }
+        }
     }
     /// Bind a newly owned live circuit. Never use this to recover an old numeric
     /// circuit ID after losing its process instance/handle.
@@ -536,6 +631,185 @@ mod tests {
             hex::encode([2; 16])
         ))
         .is_err());
+    }
+    #[tokio::test]
+    async fn query_capacity_retries_exactly_only_on_live_connection_and_paces_complete_replies() {
+        use crate::payment_ledger::{AccountId, PaymentLedger};
+        use tokio::{
+            io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+            net::{TcpListener, TcpStream},
+            time::{Duration, Instant},
+        };
+        async fn line(s: &mut BufReader<TcpStream>) -> String {
+            let mut v = String::new();
+            tokio::time::timeout(Duration::from_secs(8), s.read_line(&mut v))
+                .await
+                .unwrap()
+                .unwrap();
+            v
+        }
+        async fn open(l: &TcpListener) -> BufReader<TcpStream> {
+            let mut s = BufReader::new(l.accept().await.unwrap().0);
+            for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                assert_eq!(line(&mut s).await, expected);
+                s.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            s
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = crate::types::RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let op = InitialOperation {
+            binding: binding(),
+            hop: 2,
+            operation: [5; 16],
+            nonce: [6; 16],
+            kind: InitialOperationKind::Query,
+            terms: None,
+        };
+        let mut second = op.clone();
+        second.operation = [8; 16];
+        second.nonce = [9; 16];
+        let mut third = op.clone();
+        third.operation = [10; 16];
+        third.nonce = [11; 16];
+        let wire = op.command().unwrap() + "\r\n";
+        let wire2 = second.command().unwrap() + "\r\n";
+        let wire3 = third.command().unwrap() + "\r\n";
+        let get = |id| {
+            format!(
+                "ELTOR_INITIAL_GET 1 {} {} 2 {}\r\n",
+                hex::encode([1; 16]),
+                hex::encode([2; 16]),
+                hex::encode([id; 16])
+            )
+        };
+        let (get1, get2, get3) = (get(5), get(8), get(10));
+        let receipt = format!(
+            "250 ELTOR_INITIAL_QUEUED 1 {} {} 2 {} 7\r\n",
+            hex::encode([1; 16]),
+            hex::encode([2; 16]),
+            hex::encode([5; 16])
+        );
+        let status = snapshot(
+            "ACTIVE",
+            "1 1000 59000 74000 0",
+            &format!(
+                "{} QUERY VERIFIED {} 1",
+                hex::encode([5; 16]),
+                hex::encode([7; 32])
+            ),
+        )
+        .replace('\n', "\r\n")
+            + "\r\n";
+        let server = tokio::spawn(async move {
+            let mut s = open(&listener).await;
+            assert_eq!(line(&mut s).await, wire);
+            s.get_mut().write_all(b"451 CAPACITY\r\n").await.unwrap();
+            let at = Instant::now();
+            assert_eq!(line(&mut s).await, wire);
+            assert!(at.elapsed() >= Duration::from_millis(1100));
+            s.get_mut().write_all(receipt.as_bytes()).await.unwrap();
+            assert_eq!(line(&mut s).await, get1);
+            s.get_mut().write_all(b"451 CAPACITY\r\n").await.unwrap();
+            let at = Instant::now();
+            assert_eq!(line(&mut s).await, get1);
+            assert!(at.elapsed() >= Duration::from_millis(1100));
+            s.get_mut().write_all(status.as_bytes()).await.unwrap();
+            assert_eq!(line(&mut s).await, wire2);
+            s.get_mut().write_all(b"451 CAPACITY\r\n").await.unwrap();
+            assert_eq!(line(&mut s).await, "");
+            let mut s = open(&listener).await;
+            assert_eq!(line(&mut s).await, get2);
+            s.get_mut()
+                .write_all(b"552 UNKNOWN_OPERATION\r\n")
+                .await
+                .unwrap();
+            assert_eq!(line(&mut s).await, wire3);
+            drop(s); // Ambiguous acceptance, no retry permit.
+            let mut s = open(&listener).await;
+            assert_eq!(line(&mut s).await, get3);
+            s.get_mut()
+                .write_all(b"552 UNKNOWN_OPERATION\r\n")
+                .await
+                .unwrap();
+        });
+        let path = std::env::temp_dir().join(format!(
+            "eltor-query-capacity-{}.sqlite",
+            rand::random::<u128>()
+        ));
+        let mut ledger = PaymentLedger::provision(&path, AccountId([9; 32])).unwrap();
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        let end = Instant::now() + Duration::from_secs(20);
+        let error = control
+            .durable_status_query(&mut ledger, &op, end)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(
+            error
+                .downcast_ref::<io::Error>()
+                .and_then(super::super::PaymentRejection::from_io),
+            Some(super::super::PaymentRejection::Capacity)
+        );
+        assert_eq!(control.rejected_queries.len(), 1);
+        assert!(matches!(
+            control
+                .durable_initial_operation(&mut ledger, &op)
+                .await
+                .unwrap(),
+            DurableInitialResult::Queued { .. }
+        ));
+        assert!(control.rejected_queries.is_empty());
+        assert!(control
+            .durable_initial_operation(&mut ledger, &op)
+            .await
+            .is_err()); // Read-only CAPACITY.
+        assert!(control.rejected_queries.is_empty());
+        assert!(matches!(
+            control
+                .durable_initial_operation(&mut ledger, &op)
+                .await
+                .unwrap(),
+            DurableInitialResult::Recovered(_)
+        ));
+        assert!(control
+            .durable_status_query(&mut ledger, &second, end)
+            .await
+            .is_err());
+        drop(control);
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        assert!(control
+            .durable_initial_operation(&mut ledger, &second)
+            .await
+            .is_err());
+        assert!(control
+            .durable_status_query(&mut ledger, &third, end)
+            .await
+            .is_err());
+        assert!(control.rejected_queries.is_empty());
+        drop(control);
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        assert!(control
+            .durable_initial_operation(&mut ledger, &third)
+            .await
+            .is_err());
+        for op in [&op, &second, &third] {
+            assert!(
+                ledger
+                    .origin_operation(op.binding.instance, op.binding.handle, op.hop, op.operation)
+                    .unwrap()
+                    .unwrap()
+                    .dispatch_claimed
+            );
+        }
+        server.await.unwrap();
+        drop(control);
+        drop(ledger);
+        std::fs::remove_file(path).unwrap();
     }
     #[tokio::test]
     async fn durable_origin_recovers_lost_reply_without_second_start() {

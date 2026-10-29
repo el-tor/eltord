@@ -221,19 +221,43 @@ impl ClientFoundation {
         Ok(allocation.payment_ids[((round - 1) % 10) as usize])
     }
     pub(super) async fn queue_status_query(&mut self, hop: usize) -> Result<()> {
+        let (clock, at) = self.last_clock.ok_or_else(invalid)?;
+        let now = latest(clock)?
+            .checked_add(i64::try_from(at.elapsed().as_millis())?)
+            .ok_or_else(invalid)?;
+        let policy = FoundationPolicy::decode(&self.plan.hops[hop].descriptor.terms)?;
+        let original_end = earliest(self.plan.construction)?
+            .checked_add(i64::try_from(policy.max_age_ms)?)
+            .ok_or_else(invalid)?;
+        let remaining = original_end
+            .checked_sub(now)
+            .filter(|n| *n > 0)
+            .ok_or("Original QUERY lifetime expired")?;
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(u64::try_from(remaining)?))
+            .ok_or_else(invalid)?;
         let next = self.query_indices[hop].checked_add(1).ok_or_else(invalid)?;
         if next > MAX_STATUS_QUERIES_PER_HOP {
             return Err("Bounded origin observation budget exhausted".into());
         }
         self.query_indices[hop] = next;
         let op = self.operation(hop, InitialOperationKind::Query, next);
-        match self
+        let result = self
             .control
-            .durable_initial_operation(&mut self.ledger, &op)
-            .await?
-        {
-            DurableInitialResult::Queued { .. } => Ok(()),
-            DurableInitialResult::Recovered(_) => Err(invalid()),
+            .durable_status_query(&mut self.ledger, &op, deadline)
+            .await;
+        match result {
+            Ok(DurableInitialResult::Queued { .. }) => Ok(()),
+            Ok(DurableInitialResult::Recovered(_)) => Err(invalid()),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(PaymentRejection::from_io)
+                    == Some(PaymentRejection::Capacity) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
         }
     }
 }

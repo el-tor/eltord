@@ -1,8 +1,14 @@
 //! Dedicated authenticated local connection for foundation state recovery.
-//! Never retries a command automatically or interprets an event as settlement.
+//! Ambiguous commands are never retried. A complete no-effect CAPACITY reply
+//! permits only bounded exact QUERY resubmission on this same live connection;
+//! events and controller receipts never establish settlement.
 use super::{PaymentEvent, PaymentInventory, PaymentInventoryBuilder};
 use crate::types::RpcConfig;
-use std::{collections::VecDeque, io, time::Duration};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    io,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -14,9 +20,42 @@ fn invalid() -> io::Error {
         "Invalid or incomplete payment control exchange",
     )
 }
+fn pacing_key(command: &str) -> Option<(String, String, String, bool)> {
+    let f: Vec<_> = command.split(' ').collect();
+    let wire = f.first().copied()? == "ELTOR_INITIAL_REFRESH";
+    let origin = wire
+        || matches!(
+            f[0],
+            "ELTOR_INITIAL_GET" | "ELTOR_INITIAL_REGISTRATION_GET" | "ELTOR_PAYMENT_GET"
+        );
+    let relay = matches!(
+        f[0],
+        "ELTOR_PAYMENT_REGISTRATION_GET" | "ELTOR_PAYMENT_ADMISSION_GET"
+    );
+    if (!origin && !relay)
+        || f.len() < 5
+        || f[1] != "1"
+        || !f[2..4]
+            .iter()
+            .all(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return None;
+    }
+    let hop = if origin {
+        let hop: u16 = f[4].parse().ok()?;
+        if hop == 0 || hop > 16 {
+            return None;
+        }
+        hop.to_string()
+    } else {
+        "1".into()
+    };
+    Some((f[2].into(), f[3].into(), hop, wire))
+}
 
 /// Complete negative replies are distinct from a lost/partial exchange. They
-/// never prove settlement, consumption, or refund, and never trigger retries.
+/// never prove settlement, consumption, or refund. Only the exact live-connection
+/// QUERY submission path may retain a bounded retry permit after CAPACITY.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("Payment control request rejected: {self:?}")]
 pub enum PaymentRejection {
@@ -65,10 +104,14 @@ pub struct PaymentControl {
     events: VecDeque<PaymentEvent>,
     failed: bool,
     next_command: tokio::time::Instant,
+    pacing: BTreeMap<(String, String, String, bool), tokio::time::Instant>,
+    pub(super) rejected_queries:
+        BTreeMap<super::payment_origin::QueryRetryKey, super::payment_origin::RejectedQuery>,
 }
 impl PaymentControl {
     pub(crate) fn invalidate(&mut self) {
         self.failed = true;
+        self.rejected_queries.clear();
     }
     pub async fn connect(config: &RpcConfig) -> io::Result<Self> {
         let stream =
@@ -83,6 +126,8 @@ impl PaymentControl {
             events: VecDeque::new(),
             failed: false,
             next_command: tokio::time::Instant::now(),
+            pacing: BTreeMap::new(),
+            rejected_queries: BTreeMap::new(),
         };
         let password = config.rpc_password.as_deref().unwrap_or("");
         if password.bytes().any(|b| b < 32 || b == 127) {
@@ -161,17 +206,37 @@ impl PaymentControl {
         result
     }
     async fn command_checked(&mut self, command: &str) -> io::Result<String> {
+        let key = pacing_key(command);
+        if key
+            .as_ref()
+            .map_or(false, |key| !self.pacing.contains_key(key))
+            && self.pacing.len() >= 4096
+        {
+            return Err(invalid());
+        }
+        let not_before = key
+            .as_ref()
+            .and_then(|key| self.pacing.get(key))
+            .copied()
+            .unwrap_or(self.next_command)
+            .max(self.next_command);
         self.failed = true;
         let result = tokio::time::timeout(Duration::from_secs(15), async {
             // One persistent authority stays below the shared 64 query/s ceiling.
             // Server enforcement remains required across connections/processes.
             // Queue delay consumes the command timeout, not a payment extension.
-            tokio::time::sleep_until(self.next_command).await;
+            tokio::time::sleep_until(not_before).await;
             self.next_command = tokio::time::Instant::now() + Duration::from_millis(16);
             self.exchange(command).await
         })
-        .await
-        .map_err(|_| invalid())?;
+        .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(_) => {
+                self.rejected_queries.clear();
+                return Err(invalid());
+            }
+        };
         if result.is_ok()
             || result
                 .as_ref()
@@ -180,6 +245,17 @@ impl PaymentControl {
                 .is_some()
         {
             self.failed = false;
+            if let Some(key) = key {
+                // Independent native read and QUERY-wire floors. Start after
+                // the complete reply, including a known no-effect rejection;
+                // an event, reconnect, or rejected command grants no new credit.
+                self.pacing.insert(
+                    key,
+                    tokio::time::Instant::now() + Duration::from_millis(1100),
+                );
+            }
+        } else {
+            self.rejected_queries.clear();
         }
         result
     }

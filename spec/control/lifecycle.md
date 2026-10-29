@@ -46,6 +46,24 @@ or new spending follows this timeout. A valid late response may refine retained
 state only while the circuit remains live and without increasing previously
 established deadlines. The one-second query rate floor is not a response timeout.
 
+A complete canonical `451 CAPACITY` before local QUERY acceptance has no effect
+on that operation. The daemon may retain a same-connection permit to resubmit
+only its exact already-journaled QUERY arguments, at most four total attempts
+within the original conservative lifetime deadline. Retain the same operation,
+nonce, dispatch claim and aggregate count; do not create a new identity to bypass
+backpressure. Discard that permit after an ambiguous exchange, invalid response,
+disconnect or restart; recovery then queries the original operation only.
+This exception does not apply to wallet dispatch, COMMIT or START. A read-only
+GET receiving CAPACITY is deferred without replacing its operation or reconnecting.
+Pace each hop's read class and its separate QUERY submission class at least one
+second after the complete response, including canonical refusals.
+
+Privacy/timing assessment: bounded local resubmission adds no relay request until
+Tor accepts it and changes no wire format or paid authority. Backpressure still
+affects local timing and load. Keep pacing/retry maps bounded and validate full
+refusal followed by exact acceptance, ambiguous reply/restart without resend,
+attempt/deadline exhaustion and retained financial records.
+
 Privacy/timing assessment: this local response wait adds no wire fields or
 variable-size responses. Fresh explicit queries still use the existing nonce,
 rate and retention rules; observer-visible retry timing requires measurement.

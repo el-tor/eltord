@@ -52,6 +52,7 @@ fn invalid() -> Box<dyn Error> {
 }
 fn initial_observation(
     result: Result<DurableInitialResult>,
+    capacity_is_read_or_query_retry: bool,
 ) -> Result<Option<DurableInitialResult>> {
     match result {
         Ok(value) => Ok(Some(value)),
@@ -59,7 +60,11 @@ fn initial_observation(
             if error
                 .downcast_ref::<std::io::Error>()
                 .and_then(PaymentRejection::from_io)
-                == Some(PaymentRejection::StateTransitionPending) =>
+                .is_some_and(|rejection| {
+                    rejection == PaymentRejection::StateTransitionPending
+                        || (rejection == PaymentRejection::Capacity
+                            && capacity_is_read_or_query_retry)
+                }) =>
         {
             Ok(None)
         }
@@ -569,10 +574,15 @@ impl ClientFoundation {
             }
             observed = false;
             let op = self.operation(hop, InitialOperationKind::Start, 0);
+            let read_only = self
+                .ledger
+                .origin_operation(op.binding.instance, op.binding.handle, op.hop, op.operation)?
+                .is_some_and(|saved| saved.dispatch_claimed);
             let outcome = initial_observation(
                 self.control
                     .durable_initial_operation(&mut self.ledger, &op)
                     .await,
+                read_only,
             )?;
             let Some(outcome) = outcome else {
                 // A pending current-clock transition is not permission to
@@ -745,15 +755,26 @@ impl ClientFoundation {
                 return Err("Foundation setup expired before funding".into());
             }
             let op = self.operation(hop, InitialOperationKind::Commit, 0);
+            let read_only = self
+                .ledger
+                .origin_operation(op.binding.instance, op.binding.handle, op.hop, op.operation)?
+                .is_some_and(|saved| saved.dispatch_claimed);
             let request_at = Instant::now();
-            match self
-                .control
-                .durable_initial_operation(&mut self.ledger, &op)
-                .await
-                .map_err(|error| {
-                    log_status_failure(hop, "commit-get-or-submit", error.as_ref());
-                    error
-                })? {
+            let outcome = initial_observation(
+                self.control
+                    .durable_initial_operation(&mut self.ledger, &op)
+                    .await
+                    .map_err(|error| {
+                        log_status_failure(hop, "commit-get-or-submit", error.as_ref());
+                        error
+                    }),
+                read_only,
+            )?;
+            let Some(outcome) = outcome else {
+                all = false;
+                continue;
+            };
+            match outcome {
                 DurableInitialResult::Queued { .. } => all = false,
                 DurableInitialResult::Recovered(snapshot) => {
                     let after = self.clock(observe)?;
@@ -1055,6 +1076,7 @@ impl ClientFoundation {
                     self.control
                         .durable_initial_operation(&mut self.ledger, &previous)
                         .await,
+                    true,
                 )
                 .map_err(|error| {
                     log_status_failure(hop, "query-get", error.as_ref());
@@ -1069,7 +1091,9 @@ impl ClientFoundation {
                     continue;
                 };
                 match outcome {
-                    DurableInitialResult::Queued { .. } => return Err(invalid()),
+                    DurableInitialResult::Queued { .. } => {
+                        minimum = 0;
+                    }
                     DurableInitialResult::Recovered(snapshot) => {
                         self.check_snapshot(hop, &snapshot).map_err(|error| {
                             log_status_failure(hop, "query-binding", error.as_ref());
