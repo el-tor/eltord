@@ -599,3 +599,77 @@ async fn positive_price_uses_durable_native_pay_once_and_recovers_lost_pay_and_s
     server.abort();
     wallet_task.abort();
 }
+
+#[tokio::test]
+async fn closed_tor_instance_keeps_native_payment_recoverable_without_any_dispatch() {
+    let d = Directory::new();
+    let req = requirements(true);
+    let tor = Arc::new(TorState::default());
+    tor.instance.store(1, Ordering::SeqCst);
+    let (config, server) = tor_server(req.clone(), tor.clone()).await;
+    let (ledger, control, plan) = accepted(&d, &config, &req).await;
+    let native = Arc::new(NativeState::default());
+    native.lose_pay.store(true, Ordering::SeqCst);
+    let (wallet, wallet_task) = wallet_server(&d, tor.clone(), native.clone()).await;
+    let mut runner = ClientFoundation::new(ledger, control, Some(wallet.clone()), plan).unwrap();
+    for _ in 0..3 {
+        tick(&mut runner).await.unwrap();
+    }
+    let operation = runner.round_operation(0, 1);
+    assert!(
+        runner
+            .ledger
+            .get_outgoing(operation)
+            .unwrap()
+            .unwrap()
+            .state
+            == OutgoingState::Unknown
+    );
+    drop(runner);
+    let control_count = tor.commands.lock().unwrap().len();
+    let mut ledger = PaymentLedger::reopen(&d.file(), AccountId(account().fingerprint())).unwrap();
+    ledger.close_instance([1; 16]).unwrap();
+    let page = reconcile_origin_financial(&mut ledger, &wallet, None, 16, clock)
+        .await
+        .unwrap();
+    assert_eq!((page.examined, page.reconciled, page.unresolved), (1, 0, 1));
+    assert_eq!(page.after, Some(operation));
+    assert!(
+        ledger
+            .get_outgoing(operation)
+            .unwrap()
+            .unwrap()
+            .outstanding_msat
+            > 0
+    );
+    native.settled.store(true, Ordering::SeqCst);
+    let page = reconcile_origin_financial(&mut ledger, &wallet, None, 16, || {
+        Ok(ClockObservation {
+            now_ms: NOW + 1000,
+            uncertainty_ms: 0,
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!((page.examined, page.reconciled, page.unresolved), (1, 1, 0));
+    let record = ledger.get_outgoing(operation).unwrap().unwrap();
+    assert!(record.state == OutgoingState::Settled);
+    // Native settlement fixes actual cost but does not invent capacity
+    // consumption after circuit loss; the prepaid obligation remains visible.
+    assert_eq!((record.spent_msat, record.outstanding_msat), (2050, 2050));
+    assert_eq!(native.fetches.load(Ordering::SeqCst), 1);
+    assert_eq!(native.pays.load(Ordering::SeqCst), 1);
+    assert_eq!(tor.commands.lock().unwrap().len(), control_count);
+    assert!(
+        reconcile_origin_financial(&mut ledger, &wallet, None, 17, clock)
+            .await
+            .is_err()
+    );
+    assert!(
+        reconcile_origin_financial(&mut ledger, &wallet, None, 0, clock)
+            .await
+            .is_err()
+    );
+    server.abort();
+    wallet_task.abort();
+}

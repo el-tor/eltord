@@ -18,6 +18,9 @@ use tokio::time::Instant;
 #[path = "foundation_plan.rs"]
 mod plan;
 pub use plan::{FoundationDraft, FoundationHop, FoundationLimits, FoundationPlan};
+#[path = "foundation_recovery.rs"]
+mod financial_recovery;
+pub use financial_recovery::{reconcile_origin_financial, OriginFinancialRecoveryPage};
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn invalid() -> Box<dyn Error> {
     "Invalid or unsafe foundation origin state".into()
