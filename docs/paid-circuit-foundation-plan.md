@@ -185,3 +185,33 @@ cryptographic/privacy review and measurements remain distinct from local tests.
   substituted operation kind, and unknown-operation responses. A recovered
   VERIFIED operation still does not imply ACTIVE or authorize wallet spending;
   full-path commitment and live client orchestration remain outstanding.
+
+### Explicit foundation relay startup configuration
+
+The integration path checks authenticated `GETCONF ElTorFoundation` before
+starting a payment watcher. Only an explicit zero value with no foundation
+configuration selects the legacy path. Enabled mode, an unknown response, or
+incomplete foundation setup cannot silently fall back. Reconnection verifies the
+mode again before recovering the new control connection.
+
+For the isolated foundation test deployment, `ELTOR_FOUNDATION_CONFIG` names a
+private JSON file with exactly these required fields:
+
+- `ledger_path`: an existing authoritative ledger; relative paths resolve beside
+  the configuration file, not against the daemon's working directory.
+- `node_id` and `chain`: the pinned native CLN compressed public key and one of
+  `bitcoin`, `testnet`, `regtest`, or `signet`. The adapter verifies the account.
+- `cln_url` and `cln_rune`: native read-only receiving RPC configuration. The
+  adapter still enforces HTTPS or numeric loopback HTTP and required capabilities.
+- `clock_uncertainty_ms`: an explicitly supplied conservative UTC error bound,
+  at most 5000 ms. Choosing a number does not establish clock accuracy; the
+  deployment must support that bound, and observation brackets independently
+  reject discontinuities.
+
+The file is limited to 8 KiB, rejects unknown fields, and on Unix must be private
+(no group/other permission bits), regular, and opened without following a
+symlink. Its values are not logged. Startup only reopens the ledger: it never
+provisions, migrates, replaces, or resets it. Operator provisioning and final
+acceptance configuration remain to be integrated. The supervisor bounds polling
+and reconnect backoff and retains durable accounting across control loss.
+This remains an integration path, not evidence of completed paid acceptance.

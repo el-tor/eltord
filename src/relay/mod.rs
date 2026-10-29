@@ -9,3 +9,5 @@ pub use relay_payments::*;
 pub use payments_received_ledger::*;
 mod foundation;
 pub use foundation::{RelayFoundation, RelayStep};
+
+mod foundation_startup;
