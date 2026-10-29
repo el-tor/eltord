@@ -5,6 +5,19 @@ approval. The twelve design workstreams have concrete chapters; the [cross-chapt
 records design signoff. Preserve local reliability fixes and
 implement only under a separate authorization. No live payments are implied.
 
+## Later foundation implementation record
+
+The baseline and future-tense statements below describe the specification's
+original handoff. The separately authorized local paid-circuit foundation work
+is tracked in the [implementation plan](../../docs/paid-circuit-foundation-plan.md)
+and [current acceptance record](../../docs/foundation-acceptance-status.md).
+Those records distinguish implemented shared-circuit behavior from deferred
+onion-service work, independent review and production gates. Do not infer that
+all ET tasks or real paid-network validation are complete from free transport.
+This cross-reference changes no wire format, observer disclosure, timing, retry,
+financial authority or resource limit; the existing privacy/timing assessment
+continues to apply.
+
 ## Source baseline and integration order
 
 Use the exact revisions in [source comparison](source-comparison.md), including

@@ -1,22 +1,22 @@
 # Paid circuit foundation acceptance status
 
-Status: incomplete local implementation acceptance. All work remains on
+Status: local paid-circuit foundation implementation and acceptance complete. All work remains on
 `paid-circuit-foundation`; paid onion-service implementation is outside this
 phase. The [implementation plan](paid-circuit-foundation-plan.md) retains the
 source baseline, dependency order and detailed historical evidence. The
 [implementation TODO](../TODO.md) and [handoff](../spec/validation/handoff.md)
 remain the requirement references.
 
-| Requirement | Current evidence | Remaining acceptance |
+| Requirement | Implementation and executed evidence | Scope and limits |
 | --- | --- | --- |
-| Recipient-backed validation and replay protection | Exact native recipient lookup, settlement/preimage/hash/amount/time checks and transactional unique redemption are implemented; focused adapter and ledger tests are recorded in the plan. | Final trace from wallet evidence through native authorization and consumption, including restart and duplicate outcomes on the final deployed sources. |
-| Durable accounting and recovery | Receiving/outgoing ledgers, explicit migrations, storage gates, original operation claims and uncertain-outcome recovery are implemented with focused fault tests. Final-source live restart recovery closed the previous instance's scope without adding construction, operation, invoice, outgoing-intent or budget records; SQLite integrity passed. | Final requirement audit; control backpressure must not strand or duplicate an operation. |
-| Initial construction and activation | Original construction/COMMIT/START identities, fixed clocks, pending-BIND recovery and paced control retries are implemented. The final financial-core build reached authenticated all-hop round 2 and completed the sustained bound transfer. A 200-candidate/two-page socket regression confirms financial progress under ordinary inventory load. | Final requirement evidence review; retain the earlier failed attempts and their fixes in the implementation plan. |
-| Renewal and active streams | Two pinned 22-minute transfers passed. The later build includes the native privacy/bootstrap repairs, ledger integrity checks and 4096-candidate receiver scheduling. It transferred 1,351,680 bytes with matching SHA-256 and 44 unchanged native bindings across rounds 10, 11, 20 and 21; mapping cleanup passed. | Source/provenance audit and separate observer-only deployment checks; see the final financial-core checkpoint below. |
-| Bounded free capacity | Uniform ordinary constructors and directional/aggregate traffic, state, setup, work and queue limits are implemented. The final native setup-pressure scenario passed with four origins, 12 stress requests, 10 refusals/closures, waiting peak 2/2 and both existing and fresh honest echoes. | Final enforcement audit and traffic-pressure experiment; these are distinct from the completed live-state and setup scenarios. |
-| Aggregate live-state overload and recovery | Four independent native clients reached the lowered 64-circuit limit; cross-origin refusal, an existing honest echo and subsequent honest admission/echo passed. Original relay configuration was restored. | This finite experiment does not establish every resource ceiling or production latency. |
-| Native desktop and browser | Phoenixd auto-started and its balance/transaction table populated without refresh. The actual native sidecar bridge showed Closed on recovery and Last verified active on a fresh scope. After exact-owned-sidecar termination, the open desktop cleared the phase and enabled Activate without refresh. Firefox rendered a fresh proxied HTTPS page. | Preserve proof captures and restore ordinary free-testnet settings after the remaining resource experiment. |
-| Local-only delivery and provenance | Repository-specific identities and push protections retained; native/vendored mirrors and executable/input digests recorded locally. | Final clean-tree, source/mirror, deployed-binary and requirement-by-requirement audit. |
+| Recipient-backed validation and replay protection | Exact CLN native recipient lookup, settlement/preimage/hash/amount/time checks, transactional unique redemption and authenticated consumption; positive socket, concurrent claim, corruption and lost-receipt/reopen regressions. | Deterministic native wallet fixtures; real settlement is not claimed. Unsupported adapters cannot enable this profile. |
+| Durable accounting and recovery | Receiving/outgoing ledgers, explicit migrations, storage gates, original operation claims, lookup-only uncertain-outcome recovery and original clock retention. Live restart closed the prior instance without adding construction, operation, invoice, outgoing-intent or budget records; SQLite integrity passed. | No missing circuit or authorization acknowledgment implies a refund or consumption. |
+| Initial construction and activation | Exact construction/COMMIT/START identities, immutable terms/clocks, pending-BIND recovery and paced control retries; positive-price lost-pay/START tests and 200-candidate/two-page receiver scheduling regression. Final financial core reached authenticated all-hop activation. | Failed attempts and original reservations remain retained; no automatic replacement build. |
+| Renewal and active streams | Final financial-core 22-minute transfer: 1,351,680 bytes with matching SHA-256 and 44 unchanged native bindings across rounds 10, 11, 20 and 21; map cleanup passed. Socket/native tests cover partial refusal, lost acknowledgment, late preparation, original price, finite lifetime and no duplicate funding. | Separate financial-core and observer executable provenance is preserved below. |
+| Bounded free capacity | Uniform authenticated ordinary constructors; physical-direction byte/cell accounting, paid/free separation, aggregate state/setup/work/queue limits, exact queue boundary/overflow/teardown regressions. Final native setup and process-byte pressure scenarios passed. | Queue was observed, not saturated live; no whole-host or production CPU guarantee. |
+| Aggregate live-state overload and recovery | Four independent clients reached the lowered 64-circuit cap; cross-origin refusal, existing honest echo and fresh honest admission/echo passed. Process-v4 independently demonstrated both-direction credit exhaustion and honest recovery on the final native ELF. | The first live-state run used an earlier native ELF; final setup/traffic provenance is separate. Finite local workloads do not establish production tuning. |
+| Native desktop and browser | Explicit Phoenixd auto-start populated balance/transactions on first visit. Native observer displayed Closed and Last verified active correctly; exact-owned-sidecar exit cleared status and enabled Activate without refresh. Firefox rendered proxied HTTPS. Ordinary restored configuration subsequently passed activation, bootstrap, transmission and rendered-browser checks. | Process readiness is distinct from authenticated paid-path status. Wallet inspection was read-only. |
+| Local-only delivery and provenance | Seven foundation branches, repository-specific identities, blocked push URLs/rejecting hooks, relevant standalone/vendored alignment and source/running-executable/input digests audited. All ten configs and 68 native keys preserved. | LNI's preexisting Cargo.lock modification remains untouched. No push, PR, publication or real payment. |
 
 The foundation account in the live test uses zero-priced policies and a loopback
 wallet fixture that rejects payment APIs. Positive payment evidence in focused
@@ -78,7 +78,7 @@ its later sidecar-aware UI verification is recorded below. All nine final native
 nodes bootstrapped and Chutney transmission passed before the temporary resource
 experiments. None of these later repairs is retroactively validated by the
 retained transfer. The later financial-core and observer runs below provide
-separate deployment evidence. Traffic-pressure acceptance remains outstanding.
+separate deployment evidence. The later process-byte-pressure checkpoint below supplies the separate traffic evidence.
 
 ## Final native setup-pressure checkpoint
 
@@ -136,6 +136,86 @@ separate from this local acceptance.
 Traffic profiles small-v1, startup-v2 and retry-paced-v3 have retained failures
 before their mandatory baseline build. Original target configurations were
 restored exactly and fixture origins stopped after each. They provide diagnosis,
-not traffic-pressure acceptance. A source-derived workload revision remains in
-progress; resource acceptance and final ordinary-configuration restoration keep
-the goal open.
+not traffic-pressure acceptance. The subsequent process-v4 workload passed as
+recorded below; failed claims and financial histories remain retained.
+
+
+## Process-byte pressure and ordinary configuration restoration
+
+The final-native `process-v4` scenario passed in
+`.runtime/foundation-resource/process-v4-20261029/result.json`. Four independent
+origins exercised six stress streams per direction under a shared 64 KiB/s
+process bucket with a 512 KiB burst. Both upload and download drove observed
+process credit to zero; native pressure circuits closed, and five honest
+checksum echoes succeeded, including fresh admission after each pressure phase.
+All 701 snapshots remained within the configured live/state/queue ceilings.
+The largest observed queue was 6,336 of 65,536 bytes: this is observation, not
+live queue saturation. Separate native queue boundary tests exercise exact-cap,
+one-byte overflow, direction accounting and teardown. The setup experiment's
+crypto-start and waiting limits similarly do not establish whole-host CPU
+saturation. See [resource acceptance](foundation-resource-acceptance.md) for
+exact workload limits, provenance, retained failures and interpretation.
+
+After the fixture controllers and origins stopped, all nine node configurations
+and the app configuration were restored byte-for-byte to their saved ordinary
+free-testnet originals. The retained key-integrity comparison found all 68
+native key files unchanged. A subsequent ordinary startup brought all nine
+nodes to 100%, Chutney transmission passed, and the native app activated with
+100% bootstrap and an established circuit. A fresh HTTPS request through app
+SOCKS5 succeeded and Firefox rendered the page in the dedicated proxy profile.
+The temporary loopback WebDriver was stopped afterward. No ledger, financial
+history or failed claim was reset. The normal test launcher continues to disable
+wallet auto-start; the separate explicit wallet-startup acceptance above remains
+the evidence for that requested UI behavior.
+
+These are local implementation and transport observations, not changes to the
+protocol or evidence of real Lightning settlement. Paid onion-service features,
+production tuning and independent cryptographic/privacy review remain separate.
+
+
+## Requirement audit and implementation handoff
+
+The original dependency order is retained in the implementation plan. The final
+read-only audits checked source paths and actual assertions rather than treating
+test counts or browsing as proof of financial correctness:
+
+- Recipient chain: `lni/crates/lni/cln/foundation.rs`,
+  `src/relay/foundation.rs`, `src/relay/foundation/tests.rs`,
+  `src/rpc/payment_consumption.rs`, and `src/payment_ledger.rs` tie native
+  recipient evidence to a unique durable decision and matching consumption.
+  Semantic corruption is rejected on read/reopen, while zero-price decisions
+  remain explicitly separate from positive settlement claims.
+- Outgoing/recovery: `src/payment_ledger/wallet.rs`,
+  `src/client/foundation_tests.rs`, `src/payment_ledger/clock/tests.rs`, and the
+  operation journal retain the original dispatch identity, invoice, limits and
+  clock. Positive lost-payment/START fixtures recover without another native
+  pay; relay lost-authorization fixtures reuse the saved decision.
+- Renewal: `src/client/foundation_renewal_tests.rs` covers all-hop prerequisites,
+  new period identifiers, partial/lost/refused admission and immutable prices;
+  native payment profile/schedule/origin tests cover finite age and exact state
+  transitions. The correlated same-stream transfer supplies live interoperability
+  evidence that isolated state-machine tests cannot.
+- Resource enforcement: native `free_capacity`, hook, worker, payment-resource
+  and control tests plus the separate live-state/setup/process-v4 workloads
+  cover enforced shared limits and honest recovery. Relevant standalone and
+  vendored files align except the preserved profile-off testing-only extension
+  exception; that exception is outside enabled foundation admission.
+- Application: `eltor-app/docs/foundation-runtime.md` records owned-sidecar
+  observation, original lease expiry, bounded writer coalescing and lifecycle
+  behavior. Actual native UI/exit and browser captures validate those paths.
+
+Private evidence lives under workspace `.runtime/foundation-live/`, including
+`slowstream/run-20261029T071310Z/result.json`, `bridge-restart-result.json`,
+`observer-owned-exit-result.json`, `firefox-final-observer-active.png`,
+`final-restored-firefox-verify.log`, `final-restored-transmission.log`,
+`firefox-final-restored.png`, config/key comparisons and source/running-image
+manifests. Resource records live under `.runtime/foundation-resource/`; no raw
+wallet records, keys or private paths are added to tracked documentation.
+
+The enabled profile remains explicitly opted into on the local testing network.
+The integrated capable wallet path is CLN BOLT12; ordinary wallet UI support and
+generic pay-offer APIs do not establish that every adapter satisfies foundation
+requirements. Broader ET items remain open where they include independent
+cryptographic/privacy review, additional wallet methods, fuzzing, production
+measurements or paid onion-service implementation. This handoff adds no network
+message, identifier exposure, timing rule, payment authority or default enablement.

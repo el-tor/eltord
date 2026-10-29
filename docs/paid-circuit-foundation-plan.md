@@ -1,8 +1,8 @@
 # Paid circuit foundation implementation plan
 
-Status: implementation is under local acceptance. The dependency order and
+Status: local paid-circuit foundation implementation and acceptance complete. The dependency order and
 historical checkpoints below retain their original scope; current results and
-remaining gates are maintained in the
+scope limits and separate production gates are maintained in the
 [acceptance status](foundation-acceptance-status.md). Work stays local on
 `paid-circuit-foundation` in each affected repository. Paid onion-service
 implementation follows this work.

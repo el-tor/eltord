@@ -1,10 +1,26 @@
 # El Tor implementation TODO
 
-This is the local implementation backlog for the protocol planning session of 2026-10-22. **Every item below is deferred** unless explicitly marked otherwise. A documented proposal, local commit, codec vector, or passing free-mode Chutney test is not proof that a paid feature exists or is production-ready. Reuse and verify existing Tor/LNI functionality before adding replacements; this is a requirements inventory, not a claim that every listed component is absent.
+This is the local implementation backlog for the protocol planning session of 2026-10-22. **Items below retain their original deferred status unless a later scoped status explicitly records implementation evidence.** A documented proposal, local commit, codec vector, or passing free-mode Chutney test is not proof that a paid feature exists or is production-ready. Reuse and verify existing Tor/LNI functionality before adding replacements; this is a requirements inventory, not a claim that every listed component is absent.
 
 Existing general implementation notes remain in the [README TODO](readme.md#todo).
 
 Specifications: [paid circuits](spec/01_paid_circuits.md), [renewal wire draft](spec/01a_circuit_renewal_wire.md), [paid hidden services](spec/02_paid_hidden_service.md), and [technical chapter index](spec/02_paid_hidden_service_implementation_details.md). Repository names below are workspace-relative. Keep all work local with the agreed development identity and push protections. Preserve the reliability fixes on `intermitted-fix`; this spec branch is based on master and does not itself contain those fixes.
+
+## Paid circuit foundation implementation status
+
+The local `paid-circuit-foundation` work implements the shared circuit slice of
+ET-01–10 and ET-33, including durable recipient-backed claims, bounded activation
+and recovery, same-stream renewal, and aggregate free-resource enforcement.
+See [current acceptance and evidence](docs/foundation-acceptance-status.md) and
+[the implementation plan](docs/paid-circuit-foundation-plan.md) for executed tests,
+source provenance, retained failures and the precise remaining gates. Historical
+“pending” and “not implemented” notes below describe their drafting checkpoints;
+they are superseded only where the acceptance record identifies implementation.
+Do not treat all ET items as complete: several also cover onion-service behavior,
+independent crypto/privacy review, fuzzing, additional wallet integrations and
+production measurements outside this foundation delivery. Live transport uses
+zero-priced fixtures; positive payment checks use deterministic native wallet
+fixtures, not real settlement. No publication or spending authority is added.
 
 ## Next design discussions
 
