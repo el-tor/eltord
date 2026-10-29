@@ -170,6 +170,24 @@ pub struct InitialOriginSnapshot {
     pub operation: Option<InitialOperationStatus>,
 }
 impl InitialOriginSnapshot {
+    /// An exact COMMIT can still be in flight before any authenticated
+    /// commitment exists. This is absence of authority, never a substituted Q.
+    pub(crate) fn pending_unconfirmed_commit(&self) -> bool {
+        self.state == InitialOriginState::Unconfirmed
+            && self.terms_digest.is_none()
+            && self.initial_allocation.is_none()
+            && self.relay_revision.is_none()
+            && self.clocks.iter().all(Option::is_none)
+            && self.operation.as_ref().map_or(false, |op| {
+                op.kind == InitialOperationKind::Commit
+                    && matches!(
+                        op.phase,
+                        InitialOperationPhase::Queued
+                            | InitialOperationPhase::Sent
+                            | InitialOperationPhase::Uncertain
+                    )
+            })
+    }
     pub fn parse(
         reply: &str,
         binding: &OriginBinding,
@@ -349,7 +367,8 @@ impl PaymentControl {
                 hash.update(domain);
                 hash.update(terms);
                 let expected: [u8; 32] = hash.finalize().into();
-                if snapshot.terms_digest != Some(expected) {
+                if snapshot.terms_digest != Some(expected) && !snapshot.pending_unconfirmed_commit()
+                {
                     self.invalidate();
                     return Err(bad().into());
                 }

@@ -132,6 +132,8 @@ struct TorState {
     uncertain_operation: Mutex<Option<String>>,
     forced_round: AtomicUsize,
     pending_get_hop: AtomicUsize,
+    unconfirmed_commits: AtomicBool,
+    connections: AtomicUsize,
 }
 fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> String {
     let b = binding();
@@ -149,6 +151,9 @@ fn snapshot(state: &TorState, hop: usize, op: &str, req: &FoundationHop) -> Stri
         .cloned()
         .unwrap();
     let verified = !(kind == "COMMIT" && hop == 1 && state.withhold_second.load(Ordering::SeqCst));
+    if kind == "COMMIT" && state.unconfirmed_commits.load(Ordering::SeqCst) {
+        return format!("250-ELTOR_INITIAL 1 {} {} {} 2\n250-PROFILE - - UNCONFIRMED -\n250-CLOCK - - - - -\n250-OP {} COMMIT SENT {} 1\n250 OK",hex::encode(b.instance),hex::encode(b.handle),hop+1,op,hex::encode([9;32]));
+    }
     if kind == "COMMIT" && verified {
         let mut committed = state.committed.lock().unwrap();
         if committed.len() <= hop {
@@ -216,6 +221,7 @@ async fn tor_server(
     let task = tokio::spawn(async move {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
+            state.connections.fetch_add(1, Ordering::SeqCst);
             let req = req.clone();
             let state = state.clone();
             tokio::spawn(async move {
@@ -343,6 +349,108 @@ async fn accepted(
 async fn tick(r: &mut ClientFoundation) -> Result<FoundationProgress> {
     r.next_poll = Instant::now();
     r.step(clock).await
+}
+#[tokio::test]
+async fn all_hop_unconfirmed_commit_waits_on_exact_operations_without_reconnect_or_start() {
+    let d = Directory::new();
+    let mut req = requirements(false);
+    let mut third = req[1].clone();
+    third.descriptor.fingerprint = [3; 20];
+    third.payment_ids = std::array::from_fn(|i| [70 + i as u8; 32]);
+    req.push(third);
+    let tor = Arc::new(TorState::default());
+    tor.instance.store(1, Ordering::SeqCst);
+    tor.unconfirmed_commits.store(true, Ordering::SeqCst);
+    let (config, server) = tor_server(req.clone(), tor.clone()).await;
+    let mut ledger = ledger(&d);
+    let mut control = PaymentControl::connect(&config).await.unwrap();
+    let mut b = binding();
+    b.hops = 3;
+    let draft = FoundationDraft::inspect(&mut control, b, &req, clock().unwrap())
+        .await
+        .unwrap();
+    let plan = draft
+        .accept(
+            &mut ledger,
+            [8; 32],
+            FoundationLimits {
+                lifetime_msat: 100000,
+                outstanding_msat: 10000,
+                per_round_msat: 10000,
+            },
+        )
+        .unwrap();
+    let original_deadlines: Vec<_> = (0..3)
+        .map(|hop| plan.setup_deadline_ms(hop).unwrap())
+        .collect();
+    let mut runner = ClientFoundation::new(ledger, control, None, plan).unwrap();
+    assert_eq!(
+        tick(&mut runner).await.unwrap(),
+        FoundationProgress::Recovered
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            tick(&mut runner).await.unwrap(),
+            FoundationProgress::AwaitingCommitment
+        );
+    }
+    assert_eq!(tor.connections.load(Ordering::SeqCst), 1);
+    assert!(runner.commit_open_ms.is_none());
+    assert!(runner.observations.iter().all(Option::is_none));
+    assert!(runner.query_indices.iter().all(|index| *index == 0));
+    {
+        let commands = tor.commands.lock().unwrap();
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|c| c.starts_with("ELTOR_INITIAL_PREPARE"))
+                .count(),
+            3
+        );
+        assert!(!commands
+            .iter()
+            .any(|c| c.starts_with("ELTOR_INITIAL_START")));
+    }
+    for hop in 0..3 {
+        let op = runner.operation(hop, InitialOperationKind::Commit, 0);
+        assert!(
+            runner
+                .ledger
+                .origin_operation(op.binding.instance, op.binding.handle, op.hop, op.operation)
+                .unwrap()
+                .unwrap()
+                .dispatch_claimed
+        );
+    }
+    tor.unconfirmed_commits.store(false, Ordering::SeqCst);
+    for _ in 0..3 {
+        tick(&mut runner).await.unwrap();
+    }
+    assert!(runner.commit_open_ms.is_some());
+    assert_eq!(tor.connections.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        (0..3)
+            .map(|hop| runner.plan.setup_deadline_ms(hop).unwrap())
+            .collect::<Vec<_>>(),
+        original_deadlines
+    );
+    let commands = tor.commands.lock().unwrap();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| c.starts_with("ELTOR_INITIAL_PREPARE"))
+            .count(),
+        3
+    );
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|c| c.starts_with("ELTOR_INITIAL_START"))
+            .count(),
+        3
+    );
+    assert_eq!(runner.ledger.account_exposure().unwrap().spent_msat, 0);
+    server.abort();
 }
 #[tokio::test]
 async fn zero_price_still_requires_every_commit_and_authenticated_active() {

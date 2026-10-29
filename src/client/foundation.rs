@@ -749,16 +749,32 @@ impl ClientFoundation {
             match self
                 .control
                 .durable_initial_operation(&mut self.ledger, &op)
-                .await?
-            {
+                .await
+                .map_err(|error| {
+                    log_status_failure(hop, "commit-get-or-submit", error.as_ref());
+                    error
+                })? {
                 DurableInitialResult::Queued { .. } => all = false,
                 DurableInitialResult::Recovered(snapshot) => {
-                    self.check_snapshot(hop, &snapshot)?;
                     let after = self.clock(observe)?;
                     observed_latest = observed_latest.max(latest(after)?);
-                    if latest(after)? >= self.plan.setup_deadline_ms(hop)?
-                        || snapshot.clocks[4].unwrap_or(0) <= 1000
-                    {
+                    if latest(after)? >= self.plan.setup_deadline_ms(hop)? {
+                        return Err("Insufficient original setup budget".into());
+                    }
+                    if snapshot.pending_unconfirmed_commit() {
+                        if self.observations[hop].is_some() {
+                            return Err(
+                                "Authenticated commitment cannot revert to unconfirmed".into()
+                            );
+                        }
+                        // No reply has authenticated Q/A0 yet. Keep the exact
+                        // journaled operation and visit the other hops without
+                        // reconnecting, funding, START or replacing its clock.
+                        all = false;
+                        continue;
+                    }
+                    self.check_snapshot(hop, &snapshot)?;
+                    if snapshot.clocks[4].unwrap_or(0) <= 1000 {
                         return Err("Insufficient original setup budget".into());
                     }
                     match snapshot.operation.as_ref().map(|o| o.phase) {
