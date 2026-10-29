@@ -24,6 +24,26 @@ pub use financial_recovery::{reconcile_origin_financial, OriginFinancialRecovery
 #[path = "foundation_renewal.rs"]
 mod renewal;
 const MAX_STATUS_QUERIES_PER_HOP: u64 = 256;
+const ACTIVE_STATUS_POLL_MS: u64 = 15_000;
+const ROUND_STATUS_GUARD_MS: u64 = 3_000;
+fn status_poll_delay(state: InitialOriginState, remaining_ms: Option<u64>) -> Duration {
+    if state != InitialOriginState::Active {
+        return Duration::from_secs(1);
+    }
+    // DATA stops when the authenticated round observation expires, even when
+    // the receiving relay has already funded its next round. Query before that
+    // boundary and use one-second observations around rollover. The three-second
+    // lead fits within the unchanged five-second held-cell queue budget; it is
+    // not permission to project ACTIVE or a guarantee against delayed replies.
+    Duration::from_millis(
+        remaining_ms
+            .unwrap_or(0)
+            .saturating_sub(ROUND_STATUS_GUARD_MS)
+            .max(1000)
+            .min(ACTIVE_STATUS_POLL_MS),
+    )
+}
+
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn invalid() -> Box<dyn Error> {
     "Invalid or unsafe foundation origin state".into()
@@ -416,12 +436,36 @@ impl ClientFoundation {
                 }
             }
         }
-        self.next_poll =
-            Instant::now() + Duration::from_secs(if renewal_required { 1 } else { 15 });
+        let now = Instant::now();
+        self.next_poll = now
+            + if renewal_required {
+                Duration::from_secs(1)
+            } else {
+                self.status_poll_delay(now)
+            };
         Ok(FoundationProgress::Active {
             current_round: round,
             renewal_required,
         })
+    }
+    fn status_poll_delay(&self, now: Instant) -> Duration {
+        self.observations
+            .iter()
+            .map(|observed| {
+                let Some(observed) = observed else {
+                    return Duration::from_secs(1);
+                };
+                let elapsed = now
+                    .checked_duration_since(observed.at)
+                    .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+                    .unwrap_or(0);
+                let remaining = observed.snapshot.clocks[2]
+                    .zip(observed.snapshot.clocks[3])
+                    .map(|(round, enforcement)| round.min(enforcement).saturating_sub(elapsed));
+                status_poll_delay(observed.snapshot.state, remaining)
+            })
+            .min()
+            .unwrap_or(Duration::from_secs(1))
     }
     async fn ensure_start(&mut self) -> Result<bool> {
         let mut observed = true;
@@ -964,3 +1008,40 @@ impl ClientFoundation {
 #[cfg(test)]
 #[path = "foundation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod status_scheduling_tests {
+    use super::*;
+    #[test]
+    fn authenticated_round_deadline_prevents_fifteen_second_oversleep_and_resumes_after_rollover() {
+        // Eight seconds remain on the earliest hop. A fixed fifteen-second
+        // sleep passes both that deadline and the five-second held-DATA limit.
+        let remaining = 8_000;
+        assert!(ACTIVE_STATUS_POLL_MS > remaining + 5_000);
+        assert_eq!(
+            status_poll_delay(InitialOriginState::Active, Some(remaining)),
+            Duration::from_secs(5)
+        );
+        for remaining in [3_000, 2_000, 1_000, 0] {
+            assert_eq!(
+                status_poll_delay(InitialOriginState::Active, Some(remaining)),
+                Duration::from_secs(1)
+            );
+        }
+        // Polling cannot manufacture the next round. Pending/GRACE or missing
+        // clocks stay at one second; only a new authenticated ACTIVE observation
+        // with a fresh budget restores normal cadence.
+        assert_eq!(
+            status_poll_delay(InitialOriginState::Grace, Some(59_000)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            status_poll_delay(InitialOriginState::Active, None),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            status_poll_delay(InitialOriginState::Active, Some(59_000)),
+            Duration::from_secs(15)
+        );
+    }
+}
