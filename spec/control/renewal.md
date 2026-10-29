@@ -137,6 +137,26 @@ report projected activation as completed. A subsequent bounded query may observe
 the result after the normal lifecycle timer runs; retries retain the same
 operation and never extend its deadlines.
 
+An authenticated RENEWED `ACTIVE` result can arrive before a complete authenticated
+START_STATUS observation for that allocation. Retain the exact operation result,
+but do not combine its new active period/allocation with the previous period's
+round or clock fields. Both INITIAL_GET and PAYMENT_GET return
+`551 STATE_TRANSITION_PENDING` until a matching authenticated status provides the
+current period and conservative clocks, or a terminal status closes the profile.
+A local timer cannot manufacture the missing remote observation. The daemon may
+request an explicit bounded INITIAL_REFRESH QUERY under the existing identity,
+nonce, query-rate and original lifetime rules; GET itself never sends that query.
+Old exact ACTIVE replies cannot move the current profile backward. Recovered
+status cannot reset T0, reopen an admission window or extend a learned deadline.
+
+**Privacy/timing assessment:** this coherence rule adds no wire field, identifier,
+response size or payment authority. Its pending error is confined to privileged
+local control. Recovery uses the existing fixed-size authenticated QUERY profile
+and query budgets; its observer-visible timing still requires measurement. Test
+ACTIVE-before-status ordering, read-only errors without transmissions/revisions,
+explicit refresh, old replies, and preserved remaining budgets. These tests do
+not establish live deployment readiness or independent privacy review.
+
 `state` is exactly QUEUED, SENT, ADMITTED, ACTIVE, REFUSED, UNCERTAIN or CLOSED.
 `request_digest` becomes available when the immutable authenticated request is
 formed; `allocation_digest` is present only after validated success. `relay_status`

@@ -42,7 +42,14 @@ in `tor`, `eltord`, and bindings: pause the independent lifecycle timer across a
 round boundary, require `551 STATE_TRANSITION_PENDING` without revision changes,
 activation, payment consumption, or timer scheduling by GET, then verify a coherent
 snapshot after normal timer progress. Retry only within existing local query
-budgets; this error grants no spending authority.
+budgets; this error grants no spending authority. Also cover the origin-specific
+[ACTIVE-before-status ordering](spec/control/renewal.md#query-a-hop-and-operation)
+in Tor, the embedded mirror and daemon RPCs: retain the exact renewal result,
+return pending instead of mixing a new period with old clocks, and require an
+explicit bounded REFRESH for missing remote status. GET must not transmit or
+change revisions; status catch-up and historical replies cannot reset T0,
+reopen admission or extend retained deadlines. Native/RPC regression coverage is
+partial implementation evidence; live daemon interoperability remains required.
 ET-08/09/33 must also test the [bounded REFRESH response wait](spec/control/lifecycle.md#origin-initial-operations)
 in Tor and daemon integration: the configurable 7000 ms candidate is clipped by
 original deadlines, expiry preserves UNCERTAIN operation/nonce state, fresh
