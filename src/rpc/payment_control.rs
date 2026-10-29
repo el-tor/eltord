@@ -148,6 +148,24 @@ impl PaymentControl {
         self.failed = true;
         Err(invalid())
     }
+    /// Wait for one state hint when no command is outstanding. Idle waiting has
+    /// no payment deadline semantics. If the caller cancels this future after
+    /// reading begins, discard this connection and recover inventory again;
+    /// partial frame bytes must never be interpreted as a fresh event.
+    pub async fn next_event(&mut self) -> io::Result<PaymentEvent> {
+        if self.failed {
+            return Err(invalid());
+        }
+        if let Some(event) = self.events.pop_front() {
+            return Ok(event);
+        }
+        self.failed = true;
+        let line = self.line().await?;
+        let event = PaymentEvent::parse(&line).map_err(|_| invalid())?;
+        self.failed = false;
+        Ok(event)
+    }
+
     pub fn take_events(&mut self) -> io::Result<Vec<PaymentEvent>> {
         if self.failed {
             return Err(invalid());
@@ -231,6 +249,55 @@ mod tests {
         assert!(client.inventory().await.is_err());
         assert!(client.take_events().is_err());
         assert!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.is_err());
+        server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn payment_control_idle_events_and_partial_cancellation() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+            for _ in 0..2 {
+                read(&mut socket).await;
+                socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+            }
+            socket
+                .get_mut()
+                .write_all(
+                    format!(
+                        "650 ELTOR_PAYMENT_STATE 1 {:032x} 1 {:032x} RELAY 1 REGISTERED\r\n",
+                        1, 2
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            socket
+                .get_mut()
+                .write_all(b"650 ELTOR_PAYMENT_STATE 1 ")
+                .await
+                .unwrap();
+            ready_tx.send(()).unwrap();
+            let _ = finish_rx.await;
+        });
+        let config = RpcConfig {
+            addr,
+            rpc_password: None,
+            command: String::new(),
+        };
+        let mut client = PaymentControl::connect(&config).await.unwrap();
+        ready_rx.await.unwrap();
+        assert_eq!(client.next_event().await.unwrap().sequence, 1);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), client.next_event())
+                .await
+                .is_err()
+        );
+        assert!(client.take_events().is_err());
+        assert!(client.command("ELTOR_PAYMENT_LIST 1 - -").await.is_err());
+        finish_tx.send(()).unwrap();
         server.await.unwrap();
     }
 }
