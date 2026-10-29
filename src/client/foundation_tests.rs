@@ -673,3 +673,6 @@ async fn closed_tor_instance_keeps_native_payment_recoverable_without_any_dispat
     server.abort();
     wallet_task.abort();
 }
+
+#[path = "foundation_renewal_tests.rs"]
+mod renewal;

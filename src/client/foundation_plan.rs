@@ -177,7 +177,29 @@ impl FoundationDraft {
         scope: [u8; 32],
         limits: FoundationLimits,
     ) -> Result<FoundationPlan> {
+        let mut seed = [0; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed);
+        self.accept_inner(ledger, scope, limits, seed)
+    }
+    #[cfg(test)]
+    pub(super) fn accept_seeded(
+        self,
+        ledger: &mut PaymentLedger,
+        scope: [u8; 32],
+        limits: FoundationLimits,
+        seed: [u8; 32],
+    ) -> Result<FoundationPlan> {
+        self.accept_inner(ledger, scope, limits, seed)
+    }
+    fn accept_inner(
+        self,
+        ledger: &mut PaymentLedger,
+        scope: [u8; 32],
+        limits: FoundationLimits,
+        seed: [u8; 32],
+    ) -> Result<FoundationPlan> {
         if scope == [0; 32]
+            || seed == [0; 32]
             || limits.outstanding_msat > limits.lifetime_msat
             || limits.per_round_msat > limits.lifetime_msat
         {
@@ -197,8 +219,6 @@ impl FoundationDraft {
         if required > limits.per_round_msat || required > limits.outstanding_msat {
             return Err(invalid());
         }
-        let mut seed = [0; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed);
         let mut plan = FoundationPlan {
             account: ledger.account_id(),
             binding: self.binding,
@@ -417,6 +437,22 @@ impl FoundationPlan {
             || ledger.binding_is_closed(self.binding.instance, self.binding.handle)?
         {
             return Err(invalid());
+        }
+        if ledger.get_handshake_scope(self.local_scope())?.is_some() {
+            let hops: Vec<_> = self
+                .hops
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, hop)| crate::payment_ledger::handshake::HandshakePathHop {
+                        registration: hop.registration.clone(),
+                        charge_reference: self.charge_reference(index),
+                        payee_reference: self.payee_reference(index),
+                        fee_limit_msat: hop.fee_limit_msat,
+                    },
+                )
+                .collect();
+            ledger.bind_handshake_path(&self.budget, &hops)?;
         }
         ledger.configure_path_budget(&self.budget)?;
         for (index, hop) in self.hops.iter().enumerate() {

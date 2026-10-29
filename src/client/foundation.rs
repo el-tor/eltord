@@ -21,9 +21,28 @@ pub use plan::{FoundationDraft, FoundationHop, FoundationLimits, FoundationPlan}
 #[path = "foundation_recovery.rs"]
 mod financial_recovery;
 pub use financial_recovery::{reconcile_origin_financial, OriginFinancialRecoveryPage};
+#[path = "foundation_renewal.rs"]
+mod renewal;
+const MAX_STATUS_QUERIES_PER_HOP: u64 = 256;
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn invalid() -> Box<dyn Error> {
     "Invalid or unsafe foundation origin state".into()
+}
+fn initial_observation(
+    result: Result<DurableInitialResult>,
+) -> Result<Option<DurableInitialResult>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .and_then(PaymentRejection::from_io)
+                == Some(PaymentRejection::StateTransitionPending) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 fn digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     let mut h = Sha256::new();
@@ -71,6 +90,9 @@ pub enum FoundationProgress {
         round: u64,
     },
     AwaitingActivation,
+    AwaitingRenewal {
+        period: u64,
+    },
     Active {
         current_round: u64,
         renewal_required: bool,
@@ -96,10 +118,12 @@ pub struct ClientFoundation {
     last_clock: Option<(ClockObservation, Instant)>,
     start_observed: Vec<bool>,
     commit_open_ms: Option<i64>,
+    pending_renewal_period: Option<u64>,
+    renewal_observations: Vec<Option<RenewalOriginSnapshot>>,
 }
 impl ClientFoundation {
     pub fn new(
-        ledger: PaymentLedger,
+        mut ledger: PaymentLedger,
         control: PaymentControl,
         wallet: Option<Arc<ClnFoundation>>,
         plan: FoundationPlan,
@@ -112,30 +136,54 @@ impl ClientFoundation {
             return Err(invalid());
         }
         if plan.hops.iter().any(|h| {
-            FoundationPolicy::decode(&h.descriptor.terms).map_or(true, |p| p.rate_msat > 0)
+            FoundationPolicy::decode(&h.descriptor.terms)
+                .map_or(true, |p| p.rate_msat > 0 || p.handshake_fee_msat > 0)
         }) && wallet.is_none()
         {
             return Err(
                 "Positive-price foundation path requires the verified native wallet".into(),
             );
         }
-        // Upfront setup fees are a separate accepted exposure, paid before the
-        // immutable constructor proof. This runner never fabricates that proof.
+        // Upfront fees were independently accepted and paid before the
+        // immutable constructor. Only the authoritative bound prefunding rows
+        // can satisfy that requirement; no local receipt is a fee proof.
         if plan.hops.iter().any(|h| {
-            FoundationPolicy::decode(&h.descriptor.terms)
-                .map_or(true, |p| p.handshake_fee_msat != 0)
+            FoundationPolicy::decode(&h.descriptor.terms).map_or(true, |p| p.handshake_fee_msat > 0)
         }) {
-            return Err(
-                "Nonzero handshake fee requires the separately journaled prefunding/proof path"
-                    .into(),
-            );
+            let scope = ledger
+                .get_handshake_scope(plan.local_scope())?
+                .ok_or("Missing durable handshake prefunding")?;
+            if scope.account != plan.account
+                || scope.instance != plan.binding.instance
+                || ledger.outgoing_admission_blocked()?
+            {
+                return Err(invalid());
+            }
+            plan.configure(&mut ledger)?; // Exact native registration/caps/receiver binding.
+            for (index, hop) in plan.hops.iter().enumerate() {
+                if FoundationPolicy::decode(&hop.descriptor.terms)?.handshake_fee_msat == 0 {
+                    continue;
+                }
+                let record = ledger
+                    .get_handshake(plan.local_scope(), index as u16 + 1)?
+                    .ok_or("Missing settled handshake prefunding")?;
+                if record.closed
+                    || record.fee_limit_breached
+                    || !matches!(
+                        record.state,
+                        OutgoingState::Settled | OutgoingState::Consumed
+                    )
+                {
+                    return Err(invalid());
+                }
+            }
         }
         let count = plan.hops.len();
         let mut query_indices = vec![0; count];
         for (hop, index) in query_indices.iter_mut().enumerate() {
-            // A finite initial slice retains at most64queries/hop. Exact prior
+            // A bounded supervisor retains at most 256 queries/hop. Exact prior
             // identities survive restart; no counter reset grants new slots.
-            for sequence in 1..=64 {
+            for sequence in 1..=MAX_STATUS_QUERIES_PER_HOP {
                 let id = plan.identity(hop, b"eltor/origin/v1/query-operation", sequence);
                 if ledger
                     .origin_operation(
@@ -161,6 +209,8 @@ impl ClientFoundation {
             observations: (0..count).map(|_| None).collect(),
             start_observed: vec![false; count],
             commit_open_ms: None,
+            pending_renewal_period: None,
+            renewal_observations: (0..count).map(|_| None).collect(),
             funded: BTreeSet::new(),
             last_clock: None,
         })
@@ -283,10 +333,32 @@ impl ClientFoundation {
         if !self.ensure_start().await? {
             return Ok(FoundationProgress::AwaitingActivation);
         }
+        if let Some(period) = self.pending_renewal_period.take() {
+            self.reconcile_renewal(period).await?;
+            return Ok(FoundationProgress::AwaitingRenewal { period });
+        }
         let active = self.observe_active(&mut observe).await?;
         let Some(round) = active else {
             return Ok(FoundationProgress::AwaitingActivation);
         };
+        let retained_round = self.ledger.spending_round(self.plan.local_scope())?;
+        if round < retained_round || round.saturating_sub(retained_round) > 10 {
+            return Err("Origin progress exceeds bounded reconciliation interval".into());
+        }
+        // A crash after native settlement but before observing activation loses
+        // only this process's funded cache. Recheck exact retained artifacts by
+        // lookup; a Settled row alone cannot attest its original funding window.
+        for obligation in retained_round..=round {
+            if let Some(hop) = self
+                .reconcile_existing_round(obligation, &mut observe)
+                .await?
+            {
+                return Ok(FoundationProgress::AwaitingPayment {
+                    hop,
+                    round: obligation,
+                });
+            }
+        }
         self.consume_through(round)?;
         let mut ledger_round = self.ledger.spending_round(self.plan.local_scope())?;
         if round < ledger_round {
@@ -297,7 +369,23 @@ impl ClientFoundation {
             self.ledger
                 .advance_spending_round(self.plan.local_scope(), ledger_round)?;
         }
-        if round < 10 {
+        let next_period = self.next_renewal_period(round)?;
+        let renewal_required = if let Some(period) = next_period {
+            let required = !self
+                .ledger
+                .origin_period_admitted(self.plan.local_scope(), period)?;
+            if required {
+                self.pending_renewal_period = Some(period);
+            }
+            required
+        } else {
+            false
+        };
+        let next_round = round.checked_add(1).ok_or_else(invalid)?;
+        if self
+            .ledger
+            .origin_period_admitted(self.plan.local_scope(), (next_round - 1) / 10)?
+        {
             let now = self.clock(&mut observe)?;
             let window = self.window(0, round + 1, now)?;
             if earliest(now)? >= window.opens_at_ms {
@@ -309,12 +397,11 @@ impl ClientFoundation {
                 }
             }
         }
-        // Renewal integration supplies an admitted next allocation before11;
-        // neither this signal nor an existing stream grants permission to pay11.
-        self.next_poll = Instant::now() + Duration::from_secs(15);
+        self.next_poll =
+            Instant::now() + Duration::from_secs(if renewal_required { 1 } else { 15 });
         Ok(FoundationProgress::Active {
             current_round: round,
-            renewal_required: round >= 7,
+            renewal_required,
         })
     }
     async fn ensure_start(&mut self) -> Result<bool> {
@@ -328,11 +415,16 @@ impl ClientFoundation {
             }
             observed = false;
             let op = self.operation(hop, InitialOperationKind::Start, 0);
-            match self
-                .control
-                .durable_initial_operation(&mut self.ledger, &op)
-                .await?
-            {
+            let outcome = initial_observation(
+                self.control
+                    .durable_initial_operation(&mut self.ledger, &op)
+                    .await,
+            )?;
+            let Some(outcome) = outcome else {
+                self.queue_status_query(hop).await?;
+                continue;
+            };
+            match outcome {
                 DurableInitialResult::Queued { .. } => (),
                 DurableInitialResult::Recovered(snapshot) => {
                     self.check_snapshot(hop, &snapshot)?;
@@ -368,11 +460,11 @@ impl ClientFoundation {
             let saved = self
                 .ledger
                 .get_origin_invoice(operation)?
-                .ok_or("Dispatched START has no durable payment artifact")?;
+                .ok_or("Observed activation has no durable payment artifact")?;
             self.validate_intent(hop, round, &saved.intent)?;
             let record = self.ledger.get_outgoing(operation)?.ok_or_else(invalid)?;
             if record.state == OutgoingState::Prepared {
-                return Err("START preceded payment dispatch".into());
+                return Err("Observed activation preceded payment dispatch".into());
             }
             let clock = self.clock(observe)?;
             let wallet = self.wallet.as_ref().ok_or_else(invalid)?.clone();
@@ -450,6 +542,40 @@ impl ClientFoundation {
         }
         Ok(())
     }
+    fn retain_snapshot(
+        &mut self,
+        hop: usize,
+        mut snapshot: InitialOriginSnapshot,
+        request_at: Instant,
+    ) -> Result<()> {
+        self.check_snapshot(hop, &snapshot)?;
+        let elapsed = u64::try_from(request_at.elapsed().as_millis())?.saturating_add(1);
+        for index in [2, 3, 4] {
+            snapshot.clocks[index] = snapshot.clocks[index].map(|ms| ms.saturating_sub(elapsed));
+        }
+        if let Some(previous) = &self.observations[hop] {
+            if snapshot.clocks[0]
+                .zip(previous.snapshot.clocks[0])
+                .map_or(false, |(new, old)| new < old)
+            {
+                return Err(invalid());
+            }
+            let elapsed = u64::try_from(previous.at.elapsed().as_millis())?.saturating_add(1);
+            for index in [2, 3, 4] {
+                if index == 4 || snapshot.clocks[0] == previous.snapshot.clocks[0] {
+                    if let Some(old) = previous.snapshot.clocks[index] {
+                        snapshot.clocks[index] =
+                            snapshot.clocks[index].map(|ms| ms.min(old.saturating_sub(elapsed)));
+                    }
+                }
+            }
+        }
+        self.observations[hop] = Some(ObservedHop {
+            snapshot,
+            at: Instant::now(),
+        });
+        Ok(())
+    }
     async fn commit_all<F>(&mut self, observe: &mut F) -> Result<bool>
     where
         F: FnMut() -> Result<ClockObservation>,
@@ -462,6 +588,7 @@ impl ClientFoundation {
                 return Err("Foundation setup expired before funding".into());
             }
             let op = self.operation(hop, InitialOperationKind::Commit, 0);
+            let request_at = Instant::now();
             match self
                 .control
                 .durable_initial_operation(&mut self.ledger, &op)
@@ -490,10 +617,7 @@ impl ClientFoundation {
                         ) => all = false,
                         _ => return Err("Initial commitment refused or contradictory".into()),
                     }
-                    self.observations[hop] = Some(ObservedHop {
-                        snapshot,
-                        at: Instant::now(),
-                    });
+                    self.retain_snapshot(hop, snapshot, request_at)?;
                 }
             }
         }
@@ -537,7 +661,7 @@ impl ClientFoundation {
         &self,
         hop: usize,
         round: u64,
-        clock: ClockObservation,
+        _clock: ClockObservation,
     ) -> Result<AcceptanceWindow> {
         if round == 1 {
             let closes_at_ms = (0..self.plan.hops.len())
@@ -576,8 +700,12 @@ impl ClientFoundation {
     where
         F: FnMut() -> Result<ClockObservation>,
     {
-        if !(1..=10).contains(&round) {
-            return Err("Renewal admission required before funding this round".into());
+        if round == 0
+            || !self
+                .ledger
+                .origin_period_admitted(self.plan.local_scope(), (round - 1) / 10)?
+        {
+            return Err("All-hop admission required before funding this round".into());
         }
         // All-hop COMMIT precedes the first invoice fetch, reservation and pay.
         // Subsequent rounds additionally require all-hop authenticated ACTIVE.
@@ -638,10 +766,11 @@ impl ClientFoundation {
                     .bolt12_offer
                     .clone()
                     .ok_or_else(invalid)?;
+                let payment_id = self.payment_id(hop, round)?;
                 let invoice = wallet
                     .fetch_bolt12(
                         &offer,
-                        self.plan.hops[hop].registration.payment_ids()[round as usize - 1],
+                        payment_id,
                         InvoiceExpectation {
                             amount_msat: policy.rate_msat,
                             expected_payee: None,
@@ -661,7 +790,7 @@ impl ClientFoundation {
                     local_budget_scope: self.plan.local_scope(),
                     round,
                     kind: ChargeKind::Round,
-                    payment_id: self.plan.hops[hop].registration.payment_ids()[round as usize - 1],
+                    payment_id: self.payment_id(hop, round)?,
                     charge_reference: self.plan.charge_reference(hop),
                     payee_reference: self.plan.payee_reference(hop),
                     accepted_terms_digest: self.plan.budget.accepted_terms_digest,
@@ -704,7 +833,7 @@ impl ClientFoundation {
             || intent.local_budget_scope != self.plan.local_scope()
             || intent.round != round
             || intent.kind != ChargeKind::Round
-            || intent.payment_id != reg.payment_ids()[round as usize - 1]
+            || intent.payment_id != self.payment_id(hop, round)?
             || intent.charge_reference != self.plan.charge_reference(hop)
             || intent.payee_reference != self.plan.payee_reference(hop)
             || intent.accepted_terms_digest != self.plan.budget.accepted_terms_digest
@@ -728,11 +857,18 @@ impl ClientFoundation {
             let mut next = sequence == 0;
             if sequence > 0 {
                 let previous = self.operation(hop, InitialOperationKind::Query, sequence);
-                match self
-                    .control
-                    .durable_initial_operation(&mut self.ledger, &previous)
-                    .await?
-                {
+                let request_at = Instant::now();
+                let outcome = initial_observation(
+                    self.control
+                        .durable_initial_operation(&mut self.ledger, &previous)
+                        .await,
+                )?;
+                let Some(outcome) = outcome else {
+                    self.queue_status_query(hop).await?;
+                    minimum = 0;
+                    continue;
+                };
+                match outcome {
                     DurableInitialResult::Queued { .. } => return Err(invalid()),
                     DurableInitialResult::Recovered(snapshot) => {
                         self.check_snapshot(hop, &snapshot)?;
@@ -741,6 +877,11 @@ impl ClientFoundation {
                             .as_ref()
                             .map_or(false, |o| o.phase == InitialOperationPhase::Verified)
                         {
+                            self.retain_snapshot(hop, snapshot, request_at)?;
+                            let snapshot = &self.observations[hop]
+                                .as_ref()
+                                .ok_or_else(invalid)?
+                                .snapshot;
                             let remaining = snapshot.clocks[2]
                                 .unwrap_or(0)
                                 .min(snapshot.clocks[3].unwrap_or(0));
@@ -749,10 +890,6 @@ impl ClientFoundation {
                             } else {
                                 minimum = 0;
                             }
-                            self.observations[hop] = Some(ObservedHop {
-                                snapshot,
-                                at: Instant::now(),
-                            });
                             next = true;
                         } else {
                             minimum = 0;
@@ -763,15 +900,7 @@ impl ClientFoundation {
                 minimum = 0;
             }
             if next {
-                let next = sequence + 1;
-                if next > 64 {
-                    return Err("Bounded origin observation budget exhausted".into());
-                }
-                self.query_indices[hop] = next;
-                let op = self.operation(hop, InitialOperationKind::Query, next);
-                self.control
-                    .durable_initial_operation(&mut self.ledger, &op)
-                    .await?;
+                self.queue_status_query(hop).await?;
             }
             self.clock(observe)?;
         }
@@ -782,7 +911,21 @@ impl ClientFoundation {
         })
     }
     fn consume_through(&mut self, round: u64) -> Result<()> {
-        for consumed in 1..=round.min(10) {
+        let current = self.ledger.spending_round(self.plan.local_scope())?;
+        // A client can only prepay its current or next round. Reject an
+        // impossible progress jump before looping over retained obligations.
+        if round < current || round.saturating_sub(current) > 10 {
+            return Err("Origin progress exceeds bounded reconciliation interval".into());
+        }
+        // All-hop authenticated ACTIVE proves the relay accepted the original
+        // fee proof. Local native settlement alone never retires this exposure.
+        for (index, hop) in self.plan.hops.iter().enumerate() {
+            if FoundationPolicy::decode(&hop.descriptor.terms)?.handshake_fee_msat > 0 {
+                self.ledger
+                    .mark_handshake_consumed(self.plan.local_scope(), index as u16 + 1)?;
+            }
+        }
+        for consumed in current..=round {
             for hop in 0..self.plan.hops.len() {
                 if FoundationPolicy::decode(&self.plan.hops[hop].descriptor.terms)?.rate_msat == 0 {
                     continue;
