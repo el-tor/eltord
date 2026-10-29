@@ -134,6 +134,33 @@ Keep temporary Chutney configuration backups and restore them after the live
 fixture run. This attachment command does not provision missing ledgers, launch
 another wallet, or prove settlement using a real funded account.
 
+## Attach to an existing standalone client
+
+`eltor-foundation-client` attaches the same origin coordinator used by the app
+to an existing local Tor client, such as Chutney node `005c`. Supply its own
+explicit account JSON, previously provisioned ledger and private client plan.
+The plan carries the original stable scope, ordered relay fingerprints and
+finite monetary caps described in the foundation plan. Do not reuse the app's
+ownership scope or change an accepted scope to recover a lost construction.
+
+```sh
+target/debug/eltor-foundation-client \
+  --control 127.0.0.1:8060 \
+  --password-file .runtime/foundation/client-control-password \
+  --foundation-config .runtime/foundation/client.json \
+  --client-plan .runtime/foundation/client-plan.json
+```
+
+The password-file and numeric-loopback restrictions are identical to the relay
+controller. Authenticated foundation mode is required before wallet access and
+is independently checked before live construction. Existing origin plans,
+dispatch claims and uncertain native payments use the same recovery path as
+the app. This foreground command never starts Tor, changes environment globals,
+creates ledgers, enables legacy payment handling or allocates a replacement
+scope after a failed attempt. The app continues using its existing explicit
+environment paths. Start one origin controller for this standalone client and
+stop it before restoring the temporary testnet configuration.
+
 ## Executed validation
 
 Local HTTP fixtures verified native account/capability checks with only `getinfo`,

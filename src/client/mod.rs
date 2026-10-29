@@ -24,5 +24,6 @@ mod activation;
 mod runtime_config;
 
 mod runtime;
+pub use runtime::run_foundation_client_controller;
 
 pub mod handshake;

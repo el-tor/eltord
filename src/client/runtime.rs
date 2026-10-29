@@ -12,15 +12,44 @@ use crate::{
     rpc::PaymentControl,
     types::{Relay, RpcConfig},
 };
-use std::{error::Error, path::Path, sync::Arc, time::Duration};
+use std::{error::Error, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 pub(crate) async fn run(rpc: &RpcConfig) -> Result<()> {
     let path =
         std::env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").ok_or("Missing private client plan")?;
-    let request = ClientPlanConfig::load(Path::new(&path))?;
     let account_path = std::env::var_os("ELTOR_FOUNDATION_CONFIG")
         .ok_or("Missing foundation account configuration")?;
-    let config = FoundationConfig::load(Path::new(&account_path))?;
+    run_with_paths(rpc, Path::new(&path), Path::new(&account_path)).await
+}
+/// Explicit attachment to existing standalone Tor. No environment mutation,
+/// embedded Tor startup, ledger provisioning or replacement ownership scope.
+pub async fn run_foundation_client_controller(
+    control_address: SocketAddr,
+    password_file: &Path,
+    client_plan: &Path,
+    account_config: &Path,
+) -> Result<()> {
+    if client_plan.as_os_str().is_empty() || account_config.as_os_str().is_empty() {
+        return Err("Explicit private client plan and account configuration required".into());
+    }
+    let rpc = crate::relay::local_controller_rpc(control_address, password_file)?;
+    // Establish explicit authenticated mode before opening wallet resources.
+    // The runtime independently authenticates again before live construction;
+    // a process restart cannot substitute a numeric circuit for owned state.
+    let mut control = PaymentControl::connect(&rpc).await?;
+    if control.command("GETCONF ElTorFoundation").await? != "250 ElTorFoundation=1" {
+        return Err("Standalone client requires authenticated foundation mode".into());
+    }
+    drop(control);
+    run_with_paths(&rpc, client_plan, account_config).await
+}
+pub(crate) async fn run_with_paths(
+    rpc: &RpcConfig,
+    client_plan: &Path,
+    account_config: &Path,
+) -> Result<()> {
+    let request = ClientPlanConfig::load(client_plan)?;
+    let config = FoundationConfig::load(account_config)?;
     let (mut ledger, wallet, uncertainty) = config.open_outgoing().await?;
     ledger.configure_account_budget(request.account_budget())?;
     // Financial uncertainty survives Tor process loss. Reconcile existing native

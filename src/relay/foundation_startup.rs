@@ -222,6 +222,20 @@ fn read_control_password(path: &Path) -> io::Result<String> {
     }
     String::from_utf8(bytes).map_err(|_| invalid())
 }
+pub(crate) fn local_controller_rpc(
+    control_address: SocketAddr,
+    password_file: &Path,
+) -> io::Result<crate::types::RpcConfig> {
+    if !control_address.ip().is_loopback() || control_address.port() == 0 {
+        return Err(invalid());
+    }
+    let password = read_control_password(password_file)?;
+    Ok(crate::types::RpcConfig {
+        addr: control_address.to_string(),
+        rpc_password: Some(password),
+        command: String::new(),
+    })
+}
 /// Attach one controller to an already-running Tor relay. This entry point
 /// never initializes embedded Tor, provisions storage, or chooses legacy mode.
 /// The caller supplies both private files explicitly; no environment fallback
@@ -231,18 +245,10 @@ pub async fn run_foundation_relay_controller(
     password_file: &Path,
     foundation_config: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !control_address.ip().is_loopback()
-        || control_address.port() == 0
-        || foundation_config.as_os_str().is_empty()
-    {
+    if foundation_config.as_os_str().is_empty() {
         return Err(invalid().into());
     }
-    let password = read_control_password(password_file)?;
-    let rpc = crate::types::RpcConfig {
-        addr: control_address.to_string(),
-        rpc_password: Some(password),
-        command: String::new(),
-    };
+    let rpc = local_controller_rpc(control_address, password_file)?;
     match run_with_path(&rpc, Some(foundation_config.to_path_buf())).await? {
         true => Ok(()),
         false => Err(invalid().into()),
