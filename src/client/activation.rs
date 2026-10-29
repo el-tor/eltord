@@ -13,7 +13,9 @@ use crate::{
         outgoing::OutgoingState,
         AcceptanceWindow, ClockObservation, PaymentLedger,
     },
-    rpc::{FoundationDescriptor, FoundationPolicy, PaymentControl, PaymentRejection},
+    rpc::{
+        FoundationDescriptor, FoundationPolicy, OriginBinding, PaymentControl, PaymentRejection,
+    },
     types::{Relay, RpcConfig},
 };
 use lni::cln::foundation::ClnFoundation;
@@ -27,6 +29,74 @@ use std::{
 };
 use tokio::time::Instant;
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+const MAX_BIND_OBSERVATIONS: usize = 128;
+const BIND_OBSERVATION_INTERVAL: Duration = Duration::from_millis(250);
+
+/// The constructor receipt precedes the first cold OR connection. Only that
+/// still-owned live connection may wait for its payment-control registration;
+/// this is never numeric-ID recovery after a restart or a lost receipt.
+async fn await_constructed_binding(
+    control: &mut PaymentControl,
+    numeric: u32,
+    instance: [u8; 16],
+    hops: usize,
+    deadline: Instant,
+) -> io::Result<OriginBinding> {
+    for attempt in 0..MAX_BIND_OBSERVATIONS {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let reply = tokio::time::timeout_at(deadline, control.bind_origin(numeric))
+            .await
+            .map_err(|_| {
+                log::warn!("Foundation construction BIND timed out at original setup deadline; receipt observed, accepted plan absent, durable claim retained");
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Original construction deadline expired",
+                )
+            })?;
+        match reply {
+            Ok(binding) => {
+                if Instant::now() >= deadline {
+                    break;
+                }
+                if binding.instance != instance || usize::from(binding.hops) != hops {
+                    log::warn!("Foundation construction BIND validation failed; receipt observed, accepted plan absent, durable claim retained");
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Constructed path binding mismatch",
+                    ));
+                }
+                log::info!("Foundation construction BIND ready; original receipt verified, accepted plan pending");
+                return Ok(binding);
+            }
+            Err(error)
+                if PaymentRejection::from_io(&error) == Some(PaymentRejection::UnknownCircuit) =>
+            {
+                if attempt == 0 {
+                    log::info!("Foundation construction BIND pending: UnknownCircuit; receipt observed, original setup deadline and durable claim retained");
+                }
+                if attempt + 1 == MAX_BIND_OBSERVATIONS {
+                    break;
+                }
+            }
+            Err(error) => {
+                if let Some(rejection) = PaymentRejection::from_io(&error) {
+                    log::warn!("Foundation construction BIND stopped: {:?}; receipt observed, accepted plan absent, durable claim retained", rejection);
+                } else {
+                    log::warn!("Foundation construction BIND stopped: I/O {:?}; receipt observed, accepted plan absent, durable claim retained", error.kind());
+                }
+                return Err(error);
+            }
+        }
+        tokio::time::sleep_until((Instant::now() + BIND_OBSERVATION_INTERVAL).min(deadline)).await;
+    }
+    log::warn!("Foundation construction BIND original deadline or observation cap reached; receipt observed, accepted plan absent, durable claim retained");
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Original construction binding unavailable",
+    ))
+}
 /// Begin one explicitly selected path under finite, caller-approved limits.
 /// An existing scope must be recovered, never passed here to regenerate IDs.
 pub(crate) async fn begin_path<F>(
@@ -339,10 +409,17 @@ where
     let prepared =
         PreparedConstruction::new(scope, inventory.instance, &relays, &context, construction)?;
     let numeric = prepared.dispatch(&mut ledger, &mut control).await?;
-    let binding = control.bind_origin(numeric).await?;
-    if binding.instance != inventory.instance || usize::from(binding.hops) != expected.len() {
-        return Err("Constructed path binding mismatch".into());
-    }
+    log::info!(
+        "Foundation constructor receipt observed; durable claim retained, accepted plan pending"
+    );
+    let binding = await_constructed_binding(
+        &mut control,
+        numeric,
+        inventory.instance,
+        expected.len(),
+        deadline,
+    )
+    .await?;
     loop {
         if Instant::now() >= deadline {
             return Err("Construction readiness deadline expired".into());
@@ -367,7 +444,9 @@ where
             }
         }
         // The boxed diagnostic must leave scope before yielding this Send task.
-        tokio::time::sleep_until((Instant::now() + Duration::from_millis(50)).min(deadline)).await;
+        // Re-inspection begins at hop one and therefore shares its one-GET/s
+        // token. Respect that floor while the remaining cold hops complete.
+        tokio::time::sleep_until((Instant::now() + Duration::from_secs(1)).min(deadline)).await;
     }
 }
 
@@ -379,6 +458,81 @@ mod tests {
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         net::TcpListener,
     };
+    #[tokio::test]
+    async fn cold_constructor_binding_waits_on_same_receipt_and_stops_on_terminal_rejection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = RpcConfig {
+            addr: listener.local_addr().unwrap().to_string(),
+            rpc_password: None,
+            command: String::new(),
+        };
+        let server = tokio::spawn(async move {
+            for terminal in [false, true] {
+                let mut socket = BufReader::new(listener.accept().await.unwrap().0);
+                for expected in ["AUTHENTICATE\r\n", "SETEVENTS ELTOR_PAYMENT_STATE\r\n"] {
+                    let mut line = String::new();
+                    socket.read_line(&mut line).await.unwrap();
+                    assert_eq!(line, expected);
+                    socket.get_mut().write_all(b"250 OK\r\n").await.unwrap();
+                }
+                for attempt in 0..if terminal { 1 } else { 3 } {
+                    let mut line = String::new();
+                    socket.read_line(&mut line).await.unwrap();
+                    assert_eq!(line, "ELTOR_CIRCUIT_BIND 1 17\r\n");
+                    let reply = if terminal {
+                        "551 DEADLINE_EXPIRED\r\n".into()
+                    } else if attempt < 2 {
+                        "552 UNKNOWN_CIRCUIT\r\n".into()
+                    } else {
+                        format!(
+                            "250 ELTOR_CIRCUIT 1 {} {} 3 1\r\n",
+                            hex::encode([1; 16]),
+                            hex::encode([2; 16])
+                        )
+                    };
+                    socket.get_mut().write_all(reply.as_bytes()).await.unwrap();
+                }
+                let mut line = String::new();
+                assert_eq!(socket.read_line(&mut line).await.unwrap(), 0);
+            }
+        });
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        let at = Instant::now();
+        let binding =
+            await_constructed_binding(&mut control, 17, [1; 16], 3, at + Duration::from_secs(2))
+                .await
+                .unwrap();
+        assert!(at.elapsed() >= BIND_OBSERVATION_INTERVAL * 2);
+        assert_eq!(binding.instance, [1; 16]);
+        assert_eq!(binding.handle, [2; 16]);
+        // An expired original budget cannot grant another observation.
+        assert_eq!(
+            await_constructed_binding(&mut control, 17, [1; 16], 3, Instant::now())
+                .await
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        drop(control);
+        let mut control = PaymentControl::connect(&config).await.unwrap();
+        let error = await_constructed_binding(
+            &mut control,
+            17,
+            [1; 16],
+            3,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(
+            PaymentRejection::from_io(&error),
+            Some(PaymentRejection::DeadlineExpired)
+        );
+        drop(control);
+        server.await.unwrap();
+    }
     #[tokio::test]
     async fn existing_construction_scope_never_requotes_or_builds_again() {
         let directory = std::env::temp_dir().join(format!(
