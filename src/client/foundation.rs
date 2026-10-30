@@ -2,6 +2,9 @@
 //! permit. Accepted all-hop metadata, original operation identities and native
 //! invoice artifacts live in the same authoritative account ledger as spending.
 //! This path never invokes the legacy wallet/payment loop or provisions storage.
+use crate::payment_ledger::payer::FoundationPayer;
+#[cfg(test)]
+use lni::cln::foundation::ClnFoundation;
 use crate::{
     payment_ledger::{
         outgoing::*,
@@ -10,7 +13,7 @@ use crate::{
     },
     rpc::*,
 };
-use lni::cln::foundation::{ClnFoundation, InvoiceExpectation, Observation};
+use lni::cln::foundation::{InvoiceExpectation, Observation};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, convert::TryFrom, error::Error, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -160,7 +163,7 @@ struct ObservedHop {
 pub struct ClientFoundation {
     ledger: PaymentLedger,
     control: PaymentControl,
-    wallet: Option<Arc<ClnFoundation>>,
+    wallet: Option<Arc<FoundationPayer>>,
     plan: FoundationPlan,
     recovery: Option<PaymentRecovery>,
     next_poll: Instant,
@@ -179,7 +182,7 @@ impl ClientFoundation {
     pub fn new(
         mut ledger: PaymentLedger,
         control: PaymentControl,
-        wallet: Option<Arc<ClnFoundation>>,
+        wallet: Option<Arc<FoundationPayer>>,
         plan: FoundationPlan,
     ) -> Result<Self> {
         if ledger.account_id() != plan.account

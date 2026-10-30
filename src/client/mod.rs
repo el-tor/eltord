@@ -29,3 +29,6 @@ mod foundation_status;
 pub use foundation_status::{foundation_client_status, FoundationClientStatus};
 
 pub mod handshake;
+
+mod payer_config;
+pub use payer_config::provision_foundation_payer;

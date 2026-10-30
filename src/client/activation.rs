@@ -1,6 +1,7 @@
 //! One accepted construction: pin descriptors/IDs, durably prefund required
 //! handshake fees, then inject transient proofs into one sanitized constructor.
 //! Existing claimed construction never causes a replacement path or payment.
+use crate::payment_ledger::payer::FoundationPayer;
 use super::{
     construction::PreparedConstruction,
     foundation::{ClientFoundation, FoundationDraft, FoundationHop, FoundationLimits},
@@ -18,7 +19,7 @@ use crate::{
     },
     types::{Relay, RpcConfig},
 };
-use lni::cln::foundation::ClnFoundation;
+
 use rand::RngCore;
 use std::{
     convert::{TryFrom, TryInto},
@@ -103,7 +104,7 @@ pub(crate) async fn begin_path<F>(
     config: &RpcConfig,
     mut ledger: PaymentLedger,
     mut control: PaymentControl,
-    wallet: Option<Arc<ClnFoundation>>,
+    wallet: Option<Arc<FoundationPayer>>,
     mut relays: Vec<Relay>,
     scope: [u8; 32],
     limits: FoundationLimits,

@@ -68,7 +68,7 @@ impl FoundationConfig {
         }
         Self::parse(&bytes, path.parent().unwrap_or(Path::new(".")))
     }
-    fn parse(bytes: &[u8], base: &Path) -> io::Result<Self> {
+    pub(crate) fn parse(bytes: &[u8], base: &Path) -> io::Result<Self> {
         let value: FileConfig = serde_json::from_slice(bytes).map_err(|_| invalid())?;
         if value.ledger_path.as_os_str().is_empty()
             || value.node_id.len() != 66
@@ -114,11 +114,14 @@ impl FoundationConfig {
     }
     // Operator-only access preserves a single bounded private config parser.
     // Runtime startup still calls open(), which never creates or migrates.
-    pub(super) fn ledger_path(&self) -> &Path {
+    pub(crate) fn ledger_path(&self) -> &Path {
         &self.ledger_path
     }
-    pub(super) fn account(&self) -> NativeAccount {
+    pub(crate) fn account(&self) -> NativeAccount {
         self.account
+    }
+    pub(crate) async fn connect_outgoing_native(&self) -> Result<ClnFoundation, Box<dyn std::error::Error>> {
+        Ok(ClnFoundation::connect(self.wallet.clone(), self.account).await?)
     }
     pub(super) async fn verify_recipient(&self) -> Result<(), Box<dyn std::error::Error>> {
         let wallet = ClnFoundation::connect_receiving(self.wallet.clone(), self.account).await?;

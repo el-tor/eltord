@@ -35,6 +35,7 @@ pub mod receiving;
 mod migration;
 pub mod storage;
 pub mod wallet;
+pub mod payer;
 
 pub type Hash32 = [u8; 32];
 pub type Id16 = [u8; 16];

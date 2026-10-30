@@ -112,7 +112,7 @@ struct State {
 async fn wallet(
     directory: &Directory,
     state: Arc<State>,
-) -> (ClnFoundation, tokio::task::JoinHandle<()>) {
+) -> (FoundationPayer, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = ClnConfig {
         url: format!("http://{}/", listener.local_addr().unwrap()),
@@ -217,7 +217,7 @@ async fn wallet(
             });
         }
     });
-    let wallet = ClnFoundation::connect(config, account()).await.unwrap();
+    let wallet = FoundationPayer::from(ClnFoundation::connect(config, account()).await.unwrap());
     (wallet, worker)
 }
 #[tokio::test]

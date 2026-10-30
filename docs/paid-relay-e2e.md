@@ -114,3 +114,38 @@ The fetch path retains Phoenixd's existing default offer payer key, so it does
 not claim unlinkability between receivers. No new Tor circuit identifier or
 payment preimage is exported into routine logs; sensitive native records remain
 inside authenticated local wallet/controller communication and private evidence.
+
+
+## Native wallet and payer adapter checkpoint
+
+The native wallet distribution built successfully and its executable reports
+`0.9.0-8f9d5d7`. Its digest and archive digest are retained in the private runtime
+record; the installed wallet binary is unchanged. The local source/dependency
+checkouts retain their push blocks. This build is not a real settlement result.
+
+LNI now shares pure signed-invoice validation across wallet adapters; the 26
+existing CLN foundation regressions passed after extraction. The Phoenixd native
+adapter uses only numeric loopback HTTP/verified HTTPS, refuses proxies/redirects
+and certificate bypass, checks the pinned account and explicit capability
+profile, validates the exact signed offer/note/invoice and retains native msat,
+operation and timestamp evidence. Four socket tests passed, including a lost pay
+reply followed by read-only native recovery, mismatched evidence rejection and
+preflight latency consuming the original dispatch window. No pay-offer fallback
+or automatic transport retry is added.
+
+Eltord has explicit native payer selection through the same durable intent,
+reservation and dispatch machinery. Legacy CLN account files still select CLN;
+Phoenixd requires `wallet: "phoenixd"`, pinned node/chain, loopback endpoint and a
+separate private password file. Runtime opens an existing matching ledger before
+wallet access, and explicit `eltor-foundation-payer-ledger --config ...` creation
+verifies native identity/capabilities without paying. Two private-config/startup
+regressions passed, and all daemon binaries pass compilation.
+
+The broader coordinator socket run currently has seven passes and eight clock
+failures with its frozen zero-uncertainty fixture clocks. A serial representative
+positive-payment test fails with the identical clock-discontinuity error on the
+unchanged pre-payer daemon baseline. Do not weaken production clock checks or
+claim that this run passed. The remaining composed Phoenixd/ledger crash checks,
+fixture clock correction, native read-only wallet startup/provenance, deployment
+and actual paid circuit/Firefox/renewal/stop checks remain open. No real payment
+has been dispatched and ordinary Chutney configuration remains unchanged.

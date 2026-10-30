@@ -8,7 +8,7 @@ use super::{
     runtime_config::ClientPlanConfig,
 };
 use crate::{
-    relay::{observe_clock, FoundationConfig},
+    relay::observe_clock,
     rpc::PaymentControl,
     types::{Relay, RpcConfig},
 };
@@ -50,8 +50,8 @@ pub(crate) async fn run_with_paths(
 ) -> Result<()> {
     let status = super::foundation_status::StatusOwner::start();
     let request = ClientPlanConfig::load(client_plan)?;
-    let config = FoundationConfig::load(account_config)?;
-    let (mut ledger, wallet, uncertainty) = config.open_outgoing().await?;
+    let config = super::payer_config::PayerConfig::load(account_config)?;
+    let (mut ledger, wallet, uncertainty) = config.open().await?;
     ledger.configure_account_budget(request.account_budget())?;
     // Financial uncertainty survives Tor process loss. Reconcile existing native
     // records before attempting any live-path restoration, without fetch/pay.
@@ -124,7 +124,7 @@ pub(crate) async fn run_with_paths(
             return Err("Client plan differs from accepted path".into());
         }
         let plan = FoundationPlan::restore(&mut ledger, instance, handle)?;
-        ClientFoundation::new(ledger, control, Some(Arc::new(wallet)), plan)?
+        ClientFoundation::new(ledger, control, Some(Arc::new(wallet.into())), plan)?
     } else {
         if ledger.get_origin_construction(request.scope)?.is_some() {
             return Err("Construction outcome requires recovery; no replacement authorized".into());
@@ -158,7 +158,7 @@ pub(crate) async fn run_with_paths(
             rpc,
             ledger,
             control,
-            Some(Arc::new(wallet)),
+            Some(Arc::new(wallet.into())),
             relays,
             request.scope,
             request.limits,

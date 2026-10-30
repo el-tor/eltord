@@ -1,6 +1,9 @@
 //! Durable one-shot positive handshake prefunding. The caller supplies exact
 //! descriptor-authenticated terms before native construction. This module never
 //! constructs/rebuilds a circuit, changes a path or infers a refund on closure.
+use crate::payment_ledger::payer::FoundationPayer;
+#[cfg(test)]
+use lni::cln::foundation::ClnFoundation;
 use crate::{
     payment_ledger::{
         handshake::*,
@@ -10,7 +13,7 @@ use crate::{
     rpc::FoundationPolicy,
 };
 use lni::cln::foundation::{
-    ClnFoundation, ConstructionPaymentProof, DispatchRequest, InvoiceExpectation, Observation,
+    ConstructionPaymentProof, DispatchRequest, InvoiceExpectation, Observation,
     PaymentStatus, ValidatedInvoice,
 };
 use std::{
@@ -57,7 +60,7 @@ fn accepted_amount(scope: &HandshakeScope, index: u16) -> Result<u64> {
 }
 fn check_account(
     ledger: &PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     scope: &HandshakeScope,
 ) -> Result<()> {
     if ledger.account_id() != scope.account
@@ -68,7 +71,7 @@ fn check_account(
     Ok(())
 }
 fn restore(
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     scope: &HandshakeScope,
     saved: &HandshakeRecord,
 ) -> Result<ValidatedInvoice> {
@@ -162,7 +165,7 @@ fn save_status(
 /// Zero fees require explicit constructor dummy material and never call a wallet.
 pub async fn fund_handshake_hop(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     scope_id: [u8; 32],
     index: u16,
     observe_clock: &mut (impl FnMut() -> io::Result<ClockObservation> + Send),
@@ -242,7 +245,7 @@ pub async fn fund_handshake_hop(
 /// it cannot acquire a dispatch permit, fetch a new invoice or change deadlines.
 pub async fn recover_handshake_hop(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     scope_id: [u8; 32],
     index: u16,
     observe_clock: &mut (impl FnMut() -> io::Result<ClockObservation> + Send),
@@ -269,7 +272,7 @@ pub async fn recover_handshake_hop(
 /// This does not claim the recipient has consumed the fee or admitted the path.
 pub async fn handshake_construction_proof(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     scope_id: [u8; 32],
     index: u16,
     construction: ClockObservation,
@@ -348,7 +351,7 @@ pub struct HandshakeFinancialRecoveryPage {
 /// remain pending for their owner and never acquire a new payment permit here.
 pub async fn reconcile_handshake_financial<F>(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     after: Option<[u8; 16]>,
     limit: u64,
     mut observe_clock: F,

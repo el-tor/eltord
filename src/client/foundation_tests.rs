@@ -545,7 +545,7 @@ async fn wallet_server(
     directory: &Directory,
     tor: Arc<TorState>,
     state: Arc<NativeState>,
-) -> (Arc<ClnFoundation>, tokio::task::JoinHandle<()>) {
+) -> (Arc<FoundationPayer>, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = ClnConfig {
         url: format!("http://{}/", listener.local_addr().unwrap()),
@@ -664,7 +664,7 @@ async fn wallet_server(
             });
         }
     });
-    let wallet = Arc::new(ClnFoundation::connect(config, account()).await.unwrap());
+    let wallet = Arc::new(FoundationPayer::from(ClnFoundation::connect(config, account()).await.unwrap()));
     (wallet, task)
 }
 

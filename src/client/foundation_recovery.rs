@@ -13,7 +13,7 @@ pub struct OriginFinancialRecoveryPage {
 /// It never fetches an invoice, claims dispatch, sends pay, or touches Tor.
 pub async fn reconcile_origin_financial<F>(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &FoundationPayer,
     after: Option<Id16>,
     limit: u64,
     mut observe: F,

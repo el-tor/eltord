@@ -284,3 +284,13 @@ preflight, exclusive ledger provisioning and active-offer ownership passed.
 Payer access and explicit relay/routing/total-spend approval remain pending;
 no real settlement or positive-price live activation is claimed yet. Preserve
 all accounting and distinguish receiver credentials from payer authorization.
+
+
+ET-01/05/09/33 Phoenixd payer integration: see the real paid-relay plan for the
+native fetch-only/capped-fee wallet build, shared invoice validator and explicit
+payer configuration. Native identity/capabilities, exact invoice/operation/hash,
+original clocks and durable dispatch must remain mandatory. Socket/config checks
+are recorded separately from the still-open composed crash checks and real paid
+Chutney run. Do not mark real settlement or runtime acceptance complete from a
+compilation, prototype endpoint or fixture-only result. This adds local wallet
+capabilities, not a new Tor wire identifier, timing policy or payment fallback.

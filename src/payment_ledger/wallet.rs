@@ -4,6 +4,7 @@
 //! A durable dispatch claim precedes every native dispatch. Recovery is lookup
 //! only, including missing native records and transport failures.
 use super::{outgoing::*, *};
+use super::payer::PayerDriver;
 use async_trait::async_trait;
 use lni::cln::foundation::{
     AdapterError, ClnFoundation, DispatchRequest, IncomingSettlement, IncomingStatus, Observation,
@@ -41,9 +42,9 @@ pub struct BridgeResult {
 
 /// Reserve principal and maximum fee only after immutable native invoice and
 /// account checks. The accepted issuer/quote/round binding is caller-owned.
-pub fn prepare_cln(
+pub fn prepare_cln<W: PayerDriver + ?Sized>(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &W,
     intent: &OutgoingIntent,
     invoice: &ValidatedInvoice,
     clock: ClockObservation,
@@ -56,9 +57,9 @@ pub fn prepare_cln(
     Ok(ledger.prepare_outgoing(intent, clock)?)
 }
 
-pub async fn dispatch_cln(
+pub async fn dispatch_cln<W: PayerDriver + ?Sized>(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &W,
     operation: Id16,
     invoice: &ValidatedInvoice,
     clock: ClockObservation,
@@ -80,9 +81,9 @@ pub async fn dispatch_cln(
 /// Restore the exact historical invoice using ClnFoundation::restore_for_lookup
 /// and the durable intent digest/hash/amount when the original artifact expired.
 /// This path never invokes native pay, even if the native lookup finds nothing.
-pub async fn reconcile_cln(
+pub async fn reconcile_cln<W: PayerDriver + ?Sized>(
     ledger: &mut PaymentLedger,
-    wallet: &ClnFoundation,
+    wallet: &W,
     operation: Id16,
     invoice: &ValidatedInvoice,
     clock: ClockObservation,
@@ -175,12 +176,12 @@ trait Wallet: Sync {
         clock: ClockObservation,
     ) -> std::result::Result<PaymentStatus, AdapterError>;
 }
-struct NativeWallet<'a> {
-    wallet: &'a ClnFoundation,
+struct NativeWallet<'a, W: PayerDriver + ?Sized> {
+    wallet: &'a W,
     retry_for_seconds: u16,
 }
 #[async_trait]
-impl Wallet for NativeWallet<'_> {
+impl<W: PayerDriver + ?Sized> Wallet for NativeWallet<'_, W> {
     type Invoice = ValidatedInvoice;
     fn account(&self) -> AccountId {
         AccountId(self.wallet.account().fingerprint())

@@ -427,7 +427,7 @@ async fn round_wallet(
     d: &Directory,
     tor: Arc<RenewalTor>,
     state: Arc<RoundNative>,
-) -> (Arc<ClnFoundation>, tokio::task::JoinHandle<()>) {
+) -> (Arc<FoundationPayer>, tokio::task::JoinHandle<()>) {
     use serde_json::json;
     use tokio::io::AsyncReadExt;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -542,7 +542,7 @@ async fn round_wallet(
         }
     });
     (
-        Arc::new(ClnFoundation::connect(config, account()).await.unwrap()),
+        Arc::new(FoundationPayer::from(ClnFoundation::connect(config, account()).await.unwrap())),
         task,
     )
 }
