@@ -1,8 +1,8 @@
 # One-paid-relay end-to-end test plan
 
-Status: real native payment, receiving authorization, app paid activation and
-Firefox rendering passed. Same-stream period renewal and stop-payment closure
-are in progress.
+Status: local real-settlement acceptance completed. Native paid activation,
+recipient authorization, Firefox rendering, same-stream period renewal, and
+latest Conflux no-fallback denial passed; ordinary testnet restored.
 This is a distinct real-settlement goal following the zero-price foundation
 acceptance. Keep all work local on `paid-circuit-foundation` and preserve the
 repository-specific identities and push protections.
@@ -244,3 +244,50 @@ The operator's 100-sat ceiling is unchanged: 90 sats were spent and the original
 2-sat uncertainty remains reserved. Only one further capped 6-sat round fits for
 the final live routing check; any second additional payment must be refused by
 the same authoritative ledger. No financial histories or budgets are reset.
+
+
+The final capped round brought confirmed spend to 96 sats. The earlier 2-sat
+uncertain reservation remains; a further 6-sat payment does not fit the same
+100-sat account budget. A live post-closure attempt isolated an additional
+Conflux-specific bypass: linked Conflux circuits have a distinct native purpose
+from general circuits. Paid-only eligibility now covers linked and unlinked
+Conflux legs as well. Authenticated paid-profile handling returns through the
+unchanged native activation branch; ordinary base allowance remains available
+when the explicit local paid-only option is absent.
+
+The last routing check will reuse the existing closed construction scope and
+ledger, rather than authorize another paid build or increase the spending cap.
+The same earlier full-stream/renewal and real receiving evidence is retained
+separately from the latest Conflux denial check.
+
+
+## Final bounded acceptance and restoration
+
+- Sixteen native payments settled: 16000 msat principal and 80000 msat routing,
+  matching 16 receiver-ledger claims and 96000 msat authoritative payer spend.
+  One native payment failed with zero cost; the original absent operation still
+  retains its 2000-msat reservation. No payment remained in flight. Total spend
+  plus uncertainty stayed below the approved 100000-msat ceiling.
+- The original live data run transferred and SHA-256-verified 614400 bytes on one
+  unchanged TCP stream and circuit across rounds 10 and 11. Firefox public HTTPS
+  streams matched the approved paid path; native app activation and actual wallet
+  transactions were observed. These positive/renewal results precede the final
+  narrow Conflux-purpose eligibility correction and are recorded separately.
+- The latest rebuilt runtime, with its native paid-only option confirmed, reused
+  the closed scope without a replacement build/payment. A fresh clearnet request
+  timed out after 12 seconds with HTTP 000 and zero response bytes. In the same
+  state, the separate ordinary Arti onion route returned HTTP 200 and Firefox
+  rendered the Tor specifications onion site. Spend and intent count stayed fixed.
+- All ten original node/app configurations were restored byte-for-byte. Original
+  wallet executables were restored; no financial database was restored or reset.
+  The experimental native wallet build and all source commits remain private.
+- With the latest standalone and embedded builds, all nine ordinary Chutney nodes
+  bootstrapped, transmission succeeded, the native app activated without foundation
+  environment paths, app-proxy HTTPS passed, and Firefox rendered the Tor Project
+  site. Temporary receivers, zero-wallet service and WebDriver were stopped.
+
+No new unit suites were run after the operator requested UI/E2E prioritization.
+Private video and detailed native evidence are under workspace
+`.runtime/paid-relay-e2e/`; they are not tracked or published. This is local
+experimental acceptance, with wallet API packaging/independent review still a
+separate follow-up rather than a claim of production enablement.

@@ -294,3 +294,15 @@ are recorded separately from the still-open composed crash checks and real paid
 Chutney run. Do not mark real settlement or runtime acceptance complete from a
 compilation, prototype endpoint or fixture-only result. This adds local wallet
 capabilities, not a new Tor wire identifier, timing policy or payment fallback.
+
+
+### Paid relay native wallet follow-up
+
+- [ ] Review and package the explicit Phoenixd/KMP foundation capabilities before
+  production enablement: fetch-before-pay, recoverable per-request payer keys,
+  exact native operation lookup, and bounded routing fees. The real-settlement
+  run used retained local experimental source checkouts and a custom native build.
+- [ ] Add focused permanent regressions for paid-only Conflux stream eligibility
+  and the live wallet interoperability failures when broad code-test work resumes.
+  The current acceptance intentionally prioritized builds and actual app/Firefox
+  E2E. See [the bounded results](docs/paid-relay-e2e.md#final-bounded-acceptance-and-restoration).
