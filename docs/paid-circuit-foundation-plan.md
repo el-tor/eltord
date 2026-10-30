@@ -211,6 +211,19 @@ private JSON file with exactly these required fields:
   deployment must support that bound, and observation brackets independently
   reject discontinuities.
 
+For an explicitly approved receiving-only private-network experiment, the
+optional boolean `cln_accept_invalid_certs` defaults to `false`. Setting it to
+`true` disables HTTPS certificate-chain and hostname verification for that
+adapter instance only. The exception accepts only numeric IPv4 loopback or
+100.64.0.0/10 destinations, rejects SOCKS proxies and redirects, and is never
+accepted by the outgoing wallet profile. An address in that range alone does
+not establish a Tailscale route; the operator must ensure the actual private
+peer/routing/ACL configuration. This deliberately relies on that network layer
+for server authentication. Leave the option absent for ordinary validated TLS.
+It grants no wallet command, provisioning, circuit or payment authority and
+adds no wire behavior. The separately installed CA file is not automatically
+loaded by this option; scoped CA trust remains a separate integration task.
+
 The file is limited to 8 KiB, rejects unknown fields, and on Unix must be private
 (no group/other permission bits), regular, and opened without following a
 symlink. Its values are not logged. Startup only reopens the ledger: it never

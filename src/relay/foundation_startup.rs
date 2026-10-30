@@ -24,6 +24,8 @@ struct FileConfig {
     chain: String,
     cln_url: String,
     cln_rune: String,
+    #[serde(default)]
+    cln_accept_invalid_certs: bool,
     clock_uncertainty_ms: u64,
 }
 pub(crate) struct FoundationConfig {
@@ -104,6 +106,7 @@ impl FoundationConfig {
             wallet: ClnConfig {
                 url: value.cln_url,
                 rune: value.cln_rune,
+                accept_invalid_certs: Some(value.cln_accept_invalid_certs),
                 ..Default::default()
             },
             clock_uncertainty_ms: value.clock_uncertainty_ms,
@@ -370,7 +373,10 @@ mod tests {
             "registration-clock"
         );
         assert_eq!(
-            recovery_category(&io::Error::new(io::ErrorKind::Other, "private-fixture-value")),
+            recovery_category(&io::Error::new(
+                io::ErrorKind::Other,
+                "private-fixture-value"
+            )),
             "unclassified"
         );
     }
@@ -465,6 +471,11 @@ mod tests {
         let cfg = FoundationConfig::parse(&serde_json::to_vec(&value).unwrap(), base).unwrap();
         assert_eq!(cfg.ledger_path, base.join("account.sqlite"));
         assert!(cfg.account.chain == Chain::Regtest);
+        assert_eq!(cfg.wallet.accept_invalid_certs, Some(false));
+        let mut opted_in = input();
+        opted_in["cln_accept_invalid_certs"] = serde_json::json!(true);
+        let cfg = FoundationConfig::parse(&serde_json::to_vec(&opted_in).unwrap(), base).unwrap();
+        assert_eq!(cfg.wallet.accept_invalid_certs, Some(true));
         for (key, value) in [
             ("clock_uncertainty_ms", serde_json::json!(5001)),
             ("chain", serde_json::json!("unknown")),

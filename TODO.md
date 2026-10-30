@@ -264,3 +264,15 @@ unknown, exited and externally adopted PID-only processes fail-closed, retain
 financial history, and verify the rebuilt native UI without additional Tor or
 wallet queries. See `../eltor-app/docs/foundation-runtime.md` for the local
 privacy/timing assessment; this adds no wire, payment or retry authority.
+
+
+ET-01/33 private-network receiving integration: an operator-approved optional
+`cln_accept_invalid_certs` configuration now selects an instance-local TLS bypass
+only for receiving over HTTPS to numeric IPv4 loopback or 100.64.0.0/10 addresses.
+Default verification and outgoing verification remain enforced; proxy use and
+redirects remain refused. Policy boundary and config default/opt-in tests cover
+this exception. It does not prove Tailscale routing or real receiving settlement.
+See [the startup configuration](docs/paid-circuit-foundation-plan.md#explicit-foundation-relay-startup-configuration).
+Future scoped CA trust must preserve hostname/chain checks and avoid global
+trust-store changes. Privacy/timing: no new wire identifier or timing policy;
+when enabled, server authentication relies on the operator's private network.
