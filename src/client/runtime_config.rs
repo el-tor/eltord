@@ -113,11 +113,10 @@ impl ClientPlanConfig {
         if unique.len() != fingerprints.len() {
             return Err(invalid());
         }
-        let routing = value
-            .routing_fee_per_hop_msat
-            .checked_mul(fingerprints.len() as u64)
-            .ok_or_else(invalid)?;
-        if routing > value.per_round_msat {
+        // The number of paid hops is known only after authenticated quoting.
+        // Zero-priced hops dispatch no payment and incur no routing fee. The
+        // exact positive-hop sum is checked before constructing the circuit.
+        if value.routing_fee_per_hop_msat > value.per_round_msat {
             return Err(invalid());
         }
         Ok(Self {

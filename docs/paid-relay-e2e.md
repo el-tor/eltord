@@ -1,6 +1,8 @@
 # One-paid-relay end-to-end test plan
 
-Status: receiving preflight passed; Phoenixd payer integration is required before spending.
+Status: real native payment, receiving authorization, app paid activation and
+Firefox rendering passed. Same-stream period renewal and stop-payment closure
+are in progress.
 This is a distinct real-settlement goal following the zero-price foundation
 acceptance. Keep all work local on `paid-circuit-foundation` and preserve the
 repository-specific identities and push protections.
@@ -149,3 +151,69 @@ claim that this run passed. The remaining composed Phoenixd/ledger crash checks,
 fixture clock correction, native read-only wallet startup/provenance, deployment
 and actual paid circuit/Firefox/renewal/stop checks remain open. No real payment
 has been dispatched and ordinary Chutney configuration remains unchanged.
+
+
+## Actual UI attempt and response fix
+
+The operator approved real circuit payments and requested real app/Firefox UI
+verification and a video, prioritizing fixes/builds/live retries over further
+unit suites. Native wallet startup against the existing mainnet account passed
+read-only capability/account checks. The original wallet database and executables
+were backed up before the explicitly scoped test runtime was deployed.
+
+The first app activation was recorded, but the paid path closed. The actual
+Phoenixd StatusPages handler converts empty payment lookups (204) to an exact
+404 `Not found` body. The adapter had treated that as a transport uncertainty,
+so it stopped during native preflight before calling pay. The retained intent
+keeps its two-sat reservation; neither absence nor this diagnosis is used to
+release/replay the historical operation. The response fix recognizes only that
+exact bounded body on the authenticated operation-lookup route; unknown endpoint
+404s and other responses remain uncertain. This fix is being deployed for a new
+circuit scope on the same authoritative payer ledger and unchanged account-wide
+100-sat cap. No tests were rerun after the user's UI-only instruction.
+
+
+## Live integration fixes after first dispatch
+
+The actual UI run exposed two further wallet interoperability problems. CLN can
+return a cached invoice when the payer identity is reused across different
+requests. The experimental fetch flow now derives a distinct, recoverable payer
+key for each retained logical payment note using the wallet library's existing
+deterministic blinded-offer key derivation. A subsequent real run obtained a
+fresh valid invoice and sent a capped HTLC. The native wallet reports a final
+`NotEnoughFees`/`RetryExhausted` failure with zero fee spent.
+
+Native UUID deserialization normalizes version and variant bits. The experimental
+API now reports the exact operation primary key used by its native lookup,
+rather than the altered decoded display ID. Exact invoice/hash/amount/account
+checks remain required, and historical uncertainty is reconciled without a
+replacement pay request. The native financial database is never edited.
+
+The operator explicitly increased the routing cap to five sats per payment,
+keeping the one-sat relay round, zero setup fee and 100-sat account-wide ceiling.
+New path quotes count routing exposure only for positive-price round payments;
+zero-price hops never dispatch a wallet payment. Existing immutable account
+budgets and all historical intents remain unchanged. Builds and actual native
+app attempts are the current validation path; no further unit suites were run.
+
+
+## Successful native paid-path activation
+
+The rebuilt native app obtained a new validated invoice, sent the approved
+1-sat principal with a 5-sat routing cap, and recorded the native 6-sat total.
+The receiver's authoritative ledger independently claimed the 1-sat settlement,
+and the payer recorded consumption only after authenticated activation. The
+Connect screen displayed `Paid path: Last verified active`. Subsequent real
+round payments progressed on the same owned circuit.
+
+Firefox rendered HTTPS content through the app SOCKS router. Native successful
+stream bindings matched the exact accepted private path, not merely any circuit.
+A recorded native app-window clip and actual Firefox rendered-frame clip are
+retained privately. Firefox used its ordinary Wayland backend; an X11 attempt
+failed to open the display under Snap confinement, independently of transport.
+The stale dedicated test-profile lock was retained before retrying.
+
+A server-paced, checksum-targeted single TCP stream is now running across the
+first ten-round payment-period boundary. This is actual live data-plane work,
+not a mocked wallet or unit test. Renewal continuity, intentional payment-stop
+closure, final accounting and restoration are not yet accepted.

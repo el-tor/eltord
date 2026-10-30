@@ -1,13 +1,13 @@
 //! One accepted construction: pin descriptors/IDs, durably prefund required
 //! handshake fees, then inject transient proofs into one sanitized constructor.
 //! Existing claimed construction never causes a replacement path or payment.
-use crate::payment_ledger::payer::FoundationPayer;
 use super::{
     construction::PreparedConstruction,
     foundation::{ClientFoundation, FoundationDraft, FoundationHop, FoundationLimits},
     handshake::{fund_handshake_hop, handshake_construction_proof},
     path_terms::{acquire_path_terms, AcceptedPathTerms, PathPriceLimits},
 };
+use crate::payment_ledger::payer::FoundationPayer;
 use crate::{
     payment_ledger::{
         handshake::{HandshakeHop, HandshakeScope},
@@ -184,8 +184,15 @@ where
         )
         .await?
     };
+    let paid_hops =
+        quoted
+            .descriptors
+            .iter()
+            .try_fold(0u64, |count, descriptor| -> Result<u64> {
+                Ok(count + u64::from(FoundationPolicy::decode(&descriptor.terms)?.rate_msat > 0))
+            })?;
     let routing = per_hop_routing_fee_msat
-        .checked_mul(relays.len() as u64)
+        .checked_mul(paid_hops)
         .ok_or("Routing cap overflow")?;
     if quoted
         .round_msat
@@ -243,10 +250,15 @@ where
                 .collect::<Result<Vec<_>>>()?
                 .try_into()
                 .map_err(|_| "Invalid round count")?;
+            let fee_limit_msat = if FoundationPolicy::decode(&descriptor.terms)?.rate_msat > 0 {
+                per_hop_routing_fee_msat
+            } else {
+                0
+            };
             Ok(FoundationHop {
                 descriptor,
                 payment_ids: ids,
-                fee_limit_msat: per_hop_routing_fee_msat,
+                fee_limit_msat,
             })
         })
         .collect::<Result<Vec<_>>>()?;

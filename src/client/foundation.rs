@@ -3,8 +3,6 @@
 //! invoice artifacts live in the same authoritative account ledger as spending.
 //! This path never invokes the legacy wallet/payment loop or provisions storage.
 use crate::payment_ledger::payer::FoundationPayer;
-#[cfg(test)]
-use lni::cln::foundation::ClnFoundation;
 use crate::{
     payment_ledger::{
         outgoing::*,
@@ -13,6 +11,8 @@ use crate::{
     },
     rpc::*,
 };
+#[cfg(test)]
+use lni::cln::foundation::ClnFoundation;
 use lni::cln::foundation::{InvoiceExpectation, Observation};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, convert::TryFrom, error::Error, sync::Arc, time::Duration};
@@ -75,6 +75,28 @@ fn initial_observation(
     }
 }
 fn log_status_failure(hop: usize, stage: &'static str, error: &(dyn Error + 'static)) {
+    if let Some(error) = error.downcast_ref::<lni::cln::foundation::AdapterError>() {
+        log::warn!(
+            "Foundation origin wallet stage {} category {:?}",
+            stage,
+            error
+        );
+        return;
+    }
+    let text = error.to_string();
+    let known = [
+        "Foundation setup expired before funding",
+        "Insufficient original setup budget",
+        "Initial commitment refused or contradictory",
+        "Foundation clock discontinuity",
+        "No conservative all-hop payment window",
+        "Round funding deadline expired",
+        "Round payment failed or cannot fund the accepted window",
+    ];
+    if let Some(message) = known.iter().find(|message| **message == text) {
+        log::warn!("Foundation origin stage {}: {}", stage, message);
+        return;
+    }
     if let Some(error) = error.downcast_ref::<std::io::Error>() {
         if let Some(rejection) = PaymentRejection::from_io(error) {
             log::warn!(
@@ -521,10 +543,16 @@ impl ClientFoundation {
                 .is_some();
         }
         if !started {
-            if !self.commit_all(&mut observe).await? {
+            if !self.commit_all(&mut observe).await.map_err(|error| {
+                log_status_failure(0, "all-hop-commit", error.as_ref());
+                error
+            })? {
                 return Ok(FoundationProgress::AwaitingCommitment);
             }
-            if let Some(hop) = self.fund_round(1, &mut observe).await? {
+            if let Some(hop) = self.fund_round(1, &mut observe).await.map_err(|error| {
+                log_status_failure(0, "first-round-funding", error.as_ref());
+                error
+            })? {
                 return Ok(FoundationProgress::AwaitingPayment { hop, round: 1 });
             }
         }

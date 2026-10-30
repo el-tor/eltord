@@ -598,3 +598,61 @@ fn recipient_bridge_cannot_clip_native_amount_or_precision_to_authorize() {
         }
     }
 }
+
+#[tokio::test]
+async fn phoenixd_socket_loss_retains_durable_claim_and_reopen_only_recovers() {
+    use lni::{phoenixd::{foundation::PhoenixdFoundation,PhoenixdConfig},cln::foundation::{InvoiceExpectation,InvoiceVerifier}};
+    use sha2::{Digest,Sha256};
+    use tokio::io::{AsyncReadExt,AsyncWriteExt};
+    let dir=Directory::new();
+    let artifact=include_str!("../../client/foundation/fixtures/round-one-invoice.txt").trim().to_owned();
+    let offer=include_str!("../../client/foundation/fixtures/round-one-offer.txt").trim();
+    let at=ClockObservation{now_ms:1_700_000_100_000,uncertainty_ms:0};
+    let mut i=intent();i.payment_id=[7;32];i.invoice_digest=Sha256::digest(artifact.as_bytes()).into();
+    i.payment_hash=Sha256::digest([42u8;32]).into();i.fee_limit_msat=1000;
+    i.window=AcceptanceWindow{opens_at_ms:at.now_ms-1000,closes_at_ms:at.now_ms+60000};
+    let mut ledger=ledger_for(&dir,&i,at);
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let addr=listener.local_addr().unwrap();
+    let pays=std::sync::Arc::new(AtomicUsize::new(0));let observed=pays.clone();let path=dir.file();
+    let op=hex::encode(i.operation);let operation=format!("{}-{}-{}-{}-{}",&op[..8],&op[8..12],&op[12..16],&op[16..20],&op[20..]);
+    let invoice=artifact.clone();let opid=i.operation;
+    let server=tokio::spawn(async move {
+        loop {
+            let (mut socket,_)=listener.accept().await.unwrap();let mut bytes=Vec::new();
+            let end=loop {let mut part=[0u8;2048];let n=socket.read(&mut part).await.unwrap();if n==0{return;}bytes.extend_from_slice(&part[..n]);assert!(bytes.len()<16384);if let Some(n)=bytes.windows(4).position(|b|b==b"\r\n\r\n"){break n+4;}};
+            let headers=std::str::from_utf8(&bytes[..end]).unwrap();let uri=headers.lines().next().unwrap().split_whitespace().nth(1).unwrap().to_owned();
+            let len=headers.lines().find_map(|s|s.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+            while bytes.len()<end+len {let mut part=[0u8;2048];let n=socket.read(&mut part).await.unwrap();assert!(n>0);bytes.extend_from_slice(&part[..n]);}
+            let reply=match uri.as_str() {
+                "/getinfo"=>Some(serde_json::json!({"nodeId":hex::encode(native_account().node_id),"chain":"regtest"})),
+                "/eltor/capabilities"=>Some(serde_json::json!({"version":1,"fetchBeforePay":1,"boundedFeeMsat":1})),
+                "/eltor/payinvoice"=>{
+                    let text=std::str::from_utf8(&bytes[end..end+len]).unwrap();
+                    assert!(!text.contains('%') && !text.contains('+')); // These fixture fields are URL-safe ASCII.
+                    let form:std::collections::BTreeMap<String,String>=text.split('&').map(|p|{let(k,v)=p.split_once('=').unwrap();(k.to_owned(),v.to_owned())}).collect();
+                    assert_eq!(form["operation"],operation);assert_eq!(form["invoice"],invoice);assert_eq!(form["maxFeeMsat"],"1000");
+                    let stored=PaymentLedger::reopen(&path,account()).unwrap().get_outgoing(opid).unwrap().unwrap();
+                    assert!(stored.state==OutgoingState::InFlight);assert_eq!(stored.reserved_msat,3000);
+                    assert_eq!(observed.fetch_add(1,Ordering::SeqCst),0);
+                    continue; // Simulate loss after native dispatch; never resend.
+                }
+                v if v==format!("/eltor/outgoing/{operation}")=>{
+                    if observed.load(Ordering::SeqCst)==0 {None} else {Some(serde_json::json!({"operation":operation,"invoice":invoice,"paymentHash":hex::encode(Sha256::digest([42u8;32])),"state":"paid","amountMsat":2000,"feeMsat":1000,"createdAt":at.now_ms-10,"completedAt":at.now_ms-1,"preimage":hex::encode([42u8;32])}))}
+                }
+                _=>panic!("unexpected synthetic native method"),
+            };
+            let (status,body)=match reply {Some(v)=>("200 OK",serde_json::to_vec(&v).unwrap()),None=>("204 No Content",vec![])};
+            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).await.unwrap();socket.write_all(&body).await.unwrap();
+        }
+    });
+    let wallet=PhoenixdFoundation::connect(PhoenixdConfig{url:format!("http://{addr}/"),password:"public-fixture-only".into(),..Default::default()},native_account()).await.unwrap();
+    let checked=InvoiceVerifier::new(native_account()).unwrap().restore_bolt12_for_offer_lookup(&artifact,i.invoice_digest,offer,i.payment_id,InvoiceExpectation{amount_msat:i.amount_msat,expected_payee:None,expected_payment_hash:Some(i.payment_hash)}).unwrap();
+    let first=dispatch_cln(&mut ledger,&wallet,i.operation,&checked,at,1).await.unwrap();
+    assert!(first.record.state==OutgoingState::Unknown);assert_eq!(first.record.reserved_msat,3000);drop(ledger);
+    let mut reopened=PaymentLedger::reopen(&dir.file(),account()).unwrap();
+    let result=reconcile_cln(&mut reopened,&wallet,i.operation,&checked,at).await.unwrap();
+    assert!(result.evidence==EvidenceStatus::PaidWithinWindow);assert_eq!(result.record.spent_msat,3000);
+    assert_eq!(result.record.reserved_msat,0);assert_eq!(pays.load(Ordering::SeqCst),1);
+    assert!(dispatch_cln(&mut reopened,&wallet,i.operation,&checked,at,1).await.is_err());
+    assert_eq!(pays.load(Ordering::SeqCst),1);server.abort();
+}
