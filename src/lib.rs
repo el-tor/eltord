@@ -214,6 +214,17 @@ fn setup_signal_handlers() {
 /// This protects the main application from SIGSEGV and other C-level crashes
 /// NOTE: Currently disabled in favor of single-process mode for simpler logging
 #[allow(dead_code)]
+fn configured_native_tor(torrc_path: &str) -> Tor {
+    let mut tor = Tor::new();
+    tor.flag(TorFlag::ConfigFile(torrc_path.to_owned()));
+    if std::env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some() {
+        // Immutable at native startup: ordinary SOCKS streams cannot select
+        // bounded base circuits before activation or after the paid path dies.
+        tor.flag(TorFlag::Custom("__ElTorRequirePaidStreams 1".to_owned()));
+    }
+    tor
+}
+
 fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     
@@ -241,7 +252,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
             } else if pid == 0 {
                 // Child process - attempt to start Tor
                 // If this crashes, only the child process dies
-                match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+                match configured_native_tor(&torrc_path).start() {
                     Ok(_tor) => {
                         info!("Tor started successfully in child process ({})", process_name);
                         // Keep the child process alive to maintain Tor
@@ -339,7 +350,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
         info!("Starting {} with panic protection (fallback mode)", process_name);
         
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+            match configured_native_tor(&torrc_path).start() {
                 Ok(_tor) => {
                     info!("Tor started successfully ({})", process_name);
                     // Keep Tor running
@@ -488,7 +499,7 @@ where
     
     // Start Tor in the same process (simpler, single-process mode)
     let mut tor = tokio::task::spawn_blocking(move || {
-        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+        match configured_native_tor(&torrc_path_clone).start() {
             Ok(0) => {
                 // start() runs Tor's event loop and returns after shutdown.
                 // Keeping this task alive would leave the controller retrying
@@ -822,7 +833,7 @@ pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) ->
     info!("Starting new Tor instance...");
     let torrc_path_clone = torrc_path.clone();
     let tor_handle = tokio::task::spawn_blocking(move || {
-        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+        match configured_native_tor(&torrc_path_clone).start() {
             Ok(_tor_instance) => {
                 info!("Tor started successfully in process");
                 // Keep the task alive indefinitely to maintain Tor

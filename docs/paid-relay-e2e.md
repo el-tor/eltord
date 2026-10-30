@@ -217,3 +217,30 @@ A server-paced, checksum-targeted single TCP stream is now running across the
 first ten-round payment-period boundary. This is actual live data-plane work,
 not a mocked wallet or unit test. Renewal continuity, intentional payment-stop
 closure, final accounting and restoration are not yet accepted.
+
+
+## Renewal, payment-stop and paid-only stream selection
+
+The same 614400-byte live TCP transfer passed its full SHA-256 check, with
+unchanged stream/circuit ownership through authenticated rounds 10 and 11.
+All-hop next-period admission was observed from round 7. Native principal
+settlement, per-round routing costs and UI wallet transactions remained real.
+
+Stopping Phoenixd with its UI Stop control left Tor running. The original paid
+circuit disappeared, but a fresh clearnet request unexpectedly succeeded on
+another eligible base circuit. This was a real acceptance failure, retained
+privately rather than treated as a successful no-fallback test.
+
+The native client now has an immutable local `__ElTorRequirePaidStreams` option,
+requiring foundation mode. An explicit foundation client plan enables it before
+Tor starts. General user streams must then use authenticated paid capacity;
+resource-only circuits remain available for internal protocol work, and other
+clients retain the bounded free allowance. Both ordinary selection/explicit
+attachment and the Conflux shortcut honor native stream eligibility. The UI
+status bridge remains observational and grants no authority. The app's separate
+ordinary onion route through Arti is retained.
+
+The operator's 100-sat ceiling is unchanged: 90 sats were spent and the original
+2-sat uncertainty remains reserved. Only one further capped 6-sat round fits for
+the final live routing check; any second additional payment must be refused by
+the same authoritative ledger. No financial histories or budgets are reset.
