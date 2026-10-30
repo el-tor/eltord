@@ -1,6 +1,6 @@
 # One-paid-relay end-to-end test plan
 
-Status: receiving preflight passed; payer access and spending approval pending.
+Status: receiving preflight passed; Phoenixd payer integration is required before spending.
 This is a distinct real-settlement goal following the zero-price foundation
 acceptance. Keep all work local on `paid-circuit-foundation` and preserve the
 repository-specific identities and push protections.
@@ -38,6 +38,22 @@ repository-specific identities and push protections.
 10. Restore exact ordinary free-testnet configs, stop only owned fixture processes,
     and repeat Chutney transmission/app/Firefox checks. Retain the bounded local
     evidence, all settlement/unknown records and exact total-spend report.
+
+## Approved payer and limits
+
+The user selected the app's existing embedded Phoenixd wallet, and approved
+1 sat per minute for the paid relay, zero handshake fee, at most 1 sat routing
+fee per payment, and 100 sats total including routing. The current foundation
+client's CLN-only outgoing integration must therefore be extended; selecting
+another payer or bypassing invoice-before-pay validation would not meet this test.
+
+The actual embedded binary reports version `0.9.0-b072567`. Inspection of that
+pinned official source shows `/payoffer` fetches and pays together, `/payinvoice`
+accepts BOLT11, and neither endpoint accepts a per-payment routing fee cap.
+Read-only outgoing lookup by payment hash exists. A safe adapter cannot infer
+an unknown BOLT12 invoice/hash before dispatch or enforce the approved routing
+cap merely by checking fees afterward. These missing wallet capabilities must
+be resolved before real dispatch. No payment endpoint has been called.
 
 ## Executed receiving preflight
 
