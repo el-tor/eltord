@@ -276,3 +276,11 @@ See [the startup configuration](docs/paid-circuit-foundation-plan.md#explicit-fo
 Future scoped CA trust must preserve hostname/chain checks and avoid global
 trust-store changes. Privacy/timing: no new wire identifier or timing policy;
 when enabled, server authentication relies on the operator's private network.
+
+
+ET-01/02/05/09/33 real-payment acceptance is tracked separately in
+[the one-paid-relay end-to-end plan](docs/paid-relay-e2e.md). Receiving native
+preflight, exclusive ledger provisioning and active-offer ownership passed.
+Payer access and explicit relay/routing/total-spend approval remain pending;
+no real settlement or positive-price live activation is claimed yet. Preserve
+all accounting and distinguish receiver credentials from payer authorization.
