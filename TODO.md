@@ -306,3 +306,24 @@ capabilities, not a new Tor wire identifier, timing policy or payment fallback.
   and the live wallet interoperability failures when broad code-test work resumes.
   The current acceptance intentionally prioritized builds and actual app/Firefox
   E2E. See [the bounded results](docs/paid-relay-e2e.md#final-bounded-acceptance-and-restoration).
+
+
+### ET-09/33 manual browser reliability follow-up
+
+See [the 2026-11-01 log review](docs/browser-log-review-2026-11-01.md).
+
+- [x] Validate DNS failure containment on an accepted paid path in actual Firefox:
+  three NXDOMAIN failures were followed by successful public pages on the same
+  original circuit; 20 uploads and downloads completed through rounds 1–3.
+  No replacement build was triggered. The 32-cell holding bound and deadlines
+  remain unchanged. See the review for retained failures and runtime provenance.
+- [ ] Add live fault cases for other destination connection errors and explicit
+  privacy retirement. Those source guards compile, but DNS acceptance alone
+  does not establish every failure class or retained-stream billing policy.
+- [ ] Distinguish payment ACTIVE from new-stream usability in native/controller
+  status and the app. Define retained-stream billing and explicit replacement
+  authorization when a circuit really is retired; never silently buy another.
+- [ ] Investigate repeated background first-hop construction failures and
+  circID-zero DESTROY warnings with bounded resource/work accounting.
+- [ ] Surface exhausted test budgets explicitly instead of generic path closure,
+  preserving uncertain reservations and the operator-approved cumulative cap.

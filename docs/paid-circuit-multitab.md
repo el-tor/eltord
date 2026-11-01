@@ -88,3 +88,11 @@ account ceiling. The explicit offline operator increased that ceiling to
 32 sats (closed exposure plus room for current/next rounds), preserving every
 non-budget row and the unchanged 200-sat cumulative ceiling. No historical
 settlement or uncertain reservation was released.
+
+## DNS recovery and fair buffered scheduling
+
+The later manual browser investigation found destination DNS errors retiring
+an otherwise active paid path. It also corrected buffered stream allocation to
+use the small paid watermark and rotate service across streams. See the
+[complete log review and live fault acceptance](browser-log-review-2026-11-01.md)
+for coverage, limitations, retained failures and the final 20-tab completion.
