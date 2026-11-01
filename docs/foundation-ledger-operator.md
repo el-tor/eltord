@@ -178,3 +178,31 @@ Tor relay messages, creates no cross-hop identifier, and performs no wallet
 payment or retry. Native response bodies, credentials, ledger paths and payment
 associations are excluded from command diagnostics. Real deployment timing and
 full paid-path/regtest acceptance remain separate checks.
+
+
+## Explicit payer account ceiling extension
+
+Normal runtime configuration still requires an exact replay of the accepted
+account budget. An operator may separately raise only its lifetime ceiling
+after explicit spending approval, without replacing the authoritative ledger:
+
+```sh
+eltor-foundation-payer-ledger --config "$PAYER_CONFIG" \
+  --expected-lifetime-msat 100000 --lifetime-limit-msat 200000
+```
+
+The command verifies the configured native account and capabilities with read-only
+requests. A compare-and-swap transaction rejects a stale old ceiling, reductions,
+or a blocked account. Repeating the exact successful extension is idempotent.
+It changes neither outstanding/concurrency limits nor accepted path budgets,
+spent amounts, reservations, operations, or payment evidence. Startup cannot
+perform this extension implicitly. A new explicitly accepted path may use the
+new account ceiling; existing paths keep their original limits.
+
+For the manual paid-relay session, the user approved a 200-sat cumulative ceiling,
+keeping the 1-sat relay round, zero handshake and at most 5 sats routing per payment.
+A consistent private ledger snapshot and approval record were retained first.
+The operator was exercised on a private copy: all non-budget rows and other budget
+fields stayed identical, an exact retry succeeded, and a stale extension failed.
+The approved transaction was then applied to the existing ledger: 96 sats spent
+and 2 sats reserved were unchanged. This operation sent no payment.

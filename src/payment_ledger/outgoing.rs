@@ -266,6 +266,37 @@ impl PaymentLedger {
         Ok(())
     }
 
+    /// Explicit operator action only. Runtime configuration remains immutable.
+    /// Raises only the account lifetime ceiling, retaining spent/reserved funds,
+    /// all accepted path budgets and every other account constraint.
+    pub fn extend_account_lifetime_limit(&mut self, expected: u64, new_limit: u64) -> Result<()> {
+        self.check_file_identity()?;
+        if expected == 0 || new_limit <= expected {
+            return Err(LedgerError::InvalidInput);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (mut old, blocked) = account_budget(&tx)?;
+        if blocked {
+            return Err(LedgerError::BudgetExceeded);
+        }
+        if old.lifetime_limit_msat == new_limit {
+            return Ok(()); // Exact retry; no further increase.
+        }
+        if old.lifetime_limit_msat != expected {
+            return Err(LedgerError::Conflict);
+        }
+        validate_limits(new_limit, old.outstanding_limit_msat)?;
+        old.lifetime_limit_msat = new_limit;
+        tx.execute(
+            "UPDATE account_budget SET payload=?1 WHERE singleton=1 AND blocked=0",
+            params![encode(&old)?],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn configure_path_budget(&mut self, budget: &PathBudget) -> Result<()> {
         self.check_file_identity()?;
         if budget.funding != FundingSource::OwnWallet {
@@ -770,7 +801,10 @@ pub(super) fn account_budget(connection: &Connection) -> Result<(AccountBudget, 
     ))
 }
 
-pub(super) fn path_budget(connection: &Connection, binding: Hash32) -> Result<(PathBudget, u64, bool)> {
+pub(super) fn path_budget(
+    connection: &Connection,
+    binding: Hash32,
+) -> Result<(PathBudget, u64, bool)> {
     let row: Option<(Vec<u8>, i64, bool)> = connection
         .query_row(
             "SELECT payload,current_round,closed FROM path_budgets WHERE local_budget_scope=?1",

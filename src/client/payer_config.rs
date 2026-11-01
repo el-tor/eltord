@@ -163,6 +163,19 @@ impl PayerConfig {
         Ok((ledger, payer, uncertainty))
     }
 }
+/// Explicit account-ceiling extension after read-only native capability checks.
+/// Never dispatches a payment, clears a reservation, or alters an accepted path.
+pub async fn extend_foundation_payer_budget(
+    path: &Path,
+    expected: u64,
+    new_limit: u64,
+) -> Result<()> {
+    let config = PayerConfig::load(path)?;
+    let (mut ledger, _wallet, _) = config.open().await?;
+    ledger.extend_account_lifetime_limit(expected, new_limit)?;
+    Ok(())
+}
+
 /// Explicit exclusive creation after read-only native account/capability checks.
 /// Never called by runtime startup and never replaces or migrates existing state.
 pub async fn provision_foundation_payer(path: &Path) -> Result<()> {
