@@ -32,4 +32,4 @@ pub mod handshake;
 
 mod payer_config;
 pub use payer_config::provision_foundation_payer;
-pub use payer_config::extend_foundation_payer_budget;
+pub use payer_config::{extend_foundation_payer_budget, extend_foundation_payer_outstanding};

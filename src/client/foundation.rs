@@ -83,6 +83,24 @@ fn log_status_failure(hop: usize, stage: &'static str, error: &(dyn Error + 'sta
         );
         return;
     }
+    if let Some(error) = error.downcast_ref::<wallet::BridgeError>() {
+        match error {
+            wallet::BridgeError::Ledger(error) => log_status_failure(hop, stage, error),
+            wallet::BridgeError::BindingMismatch => log::warn!(
+                "Foundation origin stage {}: wallet binding mismatch", stage),
+            wallet::BridgeError::EvidenceUnavailable => log::warn!(
+                "Foundation origin stage {}: receiving evidence unavailable", stage),
+            wallet::BridgeError::ReceivingLookup => log::warn!(
+                "Foundation origin stage {}: receiving lookup failed", stage),
+        }
+        return;
+    }
+    if let Some(error) = error.downcast_ref::<LedgerError>() {
+        // Display is a fixed category. Never format Debug: storage errors can
+        // contain private SQL values or local filenames.
+        log::warn!("Foundation origin stage {} ledger: {}", stage, error);
+        return;
+    }
     let text = error.to_string();
     let known = [
         "Foundation setup expired before funding",

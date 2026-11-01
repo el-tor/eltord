@@ -176,6 +176,19 @@ pub async fn extend_foundation_payer_budget(
     Ok(())
 }
 
+/// Explicit concurrent-exposure extension within the existing total ceiling.
+/// Preserves historical costs, uncertain reservations and accepted path limits.
+pub async fn extend_foundation_payer_outstanding(
+    path: &Path,
+    expected: u64,
+    new_limit: u64,
+) -> Result<()> {
+    let config = PayerConfig::load(path)?;
+    let (mut ledger, _wallet, _) = config.open().await?;
+    ledger.extend_account_outstanding_limit(expected, new_limit)?;
+    Ok(())
+}
+
 /// Explicit exclusive creation after read-only native account/capability checks.
 /// Never called by runtime startup and never replaces or migrates existing state.
 pub async fn provision_foundation_payer(path: &Path) -> Result<()> {

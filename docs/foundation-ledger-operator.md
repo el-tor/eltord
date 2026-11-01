@@ -206,3 +206,28 @@ The operator was exercised on a private copy: all non-budget rows and other budg
 fields stayed identical, an exact retry succeeded, and a stale extension failed.
 The approved transaction was then applied to the existing ledger: 96 sats spent
 and 2 sats reserved were unchanged. This operation sent no payment.
+
+### Extend concurrent payer exposure without changing the total cap
+
+Closed circuits retain unused settled credit and uncertain reservations. These
+records can exhaust the account's concurrent-exposure ceiling even when the
+operator has approved enough remaining lifetime spend. Do not erase them or
+mark them consumed to enable another circuit.
+
+With the foundation client stopped, an operator may explicitly increase this
+separate ceiling, still bounded by the existing lifetime ceiling:
+
+```sh
+target/debug/eltor-foundation-payer-ledger \
+  --config .runtime/paid-relay/payer.json \
+  --expected-outstanding-msat 10000 --outstanding-limit-msat 20000
+```
+
+This command requires the original private configuration and read-only native
+wallet verification. The expected value is compared transactionally; an exact
+retry is idempotent. Increases beyond the lifetime ceiling, decreases, stale
+expected values and blocked accounts are refused. It changes only the account's
+concurrent ceiling; historical spending, uncertain funds, accepted path limits,
+wallet concurrency and the lifetime ceiling remain intact. The lifetime and
+concurrent extension modes cannot be combined in one invocation. Runtime
+startup cannot increase either limit.

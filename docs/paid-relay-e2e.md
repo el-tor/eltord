@@ -291,3 +291,9 @@ Private video and detailed native evidence are under workspace
 `.runtime/paid-relay-e2e/`; they are not tracked or published. This is local
 experimental acceptance, with wallet API packaging/independent review still a
 separate follow-up rather than a claim of production enablement.
+
+## Concurrent browser follow-up
+
+See [paid circuit rollover under concurrent browser traffic](paid-circuit-multitab.md)
+for the busy-round fix, the actual 20-tab Firefox acceptance, and preserved
+account history under the subsequent 200-sat cumulative test approval.

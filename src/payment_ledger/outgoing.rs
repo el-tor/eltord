@@ -297,6 +297,37 @@ impl PaymentLedger {
         Ok(())
     }
 
+    /// Explicit operator action only. Runtime configuration remains immutable.
+    /// Raises only the account concurrent-exposure ceiling, retaining spent/reserved funds,
+    /// all accepted path budgets and every other account constraint.
+    pub fn extend_account_outstanding_limit(&mut self, expected: u64, new_limit: u64) -> Result<()> {
+        self.check_file_identity()?;
+        if expected == 0 || new_limit <= expected {
+            return Err(LedgerError::InvalidInput);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (mut old, blocked) = account_budget(&tx)?;
+        if blocked {
+            return Err(LedgerError::BudgetExceeded);
+        }
+        if old.outstanding_limit_msat == new_limit {
+            return Ok(()); // Exact retry; no further increase.
+        }
+        if old.outstanding_limit_msat != expected {
+            return Err(LedgerError::Conflict);
+        }
+        validate_limits(old.lifetime_limit_msat, new_limit)?;
+        old.outstanding_limit_msat = new_limit;
+        tx.execute(
+            "UPDATE account_budget SET payload=?1 WHERE singleton=1 AND blocked=0",
+            params![encode(&old)?],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn configure_path_budget(&mut self, budget: &PathBudget) -> Result<()> {
         self.check_file_identity()?;
         if budget.funding != FundingSource::OwnWallet {
