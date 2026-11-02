@@ -198,7 +198,11 @@ traffic.
 For clock safety, retain a conservative local lower bound L on the original
 relay T0, established by an ordinary authenticated status observation: local
 request first-send time minus authenticated elapsed time, saturated at zero.
-Later ordinary observations may lower L; they MUST NOT move it later. A pushed
+Retain that original L unchanged. A later, slower QUERY MUST NOT weaken this
+already-established bound by subtracting its larger round-trip uncertainty.
+For ordinary replies, retain at least the original schedule-derived round,
+enforcement and lifetime bounds, still capped by shorter authenticated bounds
+measured from reply arrival and the original hard lifetime. A pushed
 status bound to that old START does not have a fresh round-trip interval and
 MUST NOT use its arrival as a new time origin, nor subtract the complete circuit
 age again from each remaining round. Instead, bound round r by the original
@@ -311,3 +315,8 @@ price substitution, A0 mismatch, reused fee/round proofs, lost replies, delayed
 settlement, zero-price activation, duplicate START, read-only QUERY, expired
 setup, independent hop clocks, replay/restart and contradictory authenticated
 states. Independent review and paid-runtime tests remain deployment gates.
+
+Privacy/timing assessment: this correction changes local clock accounting only;
+wire sizes, hop identities, authentication, retries, payment requirements and
+queue limits remain unchanged. Delayed-QUERY regression checks must verify
+that prior authenticated time evidence is retained without granting extra rounds.

@@ -206,7 +206,10 @@ async fn server(steps: Vec<Step>) -> (ClnConfig, tokio::task::JoinHandle<()>) {
             if let Some(expected) = expected.body {
                 assert!(body == expected);
             }
-            if let Some(reply) = expected.reply {
+            if let Some(mut reply) = expected.reply {
+                if let Some(delay) = reply.as_object_mut().and_then(|o| o.remove("fixture_delay_ms")).and_then(|v| v.as_u64()) {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
                 let body = reply.to_string();
                 stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
             }
@@ -1067,5 +1070,36 @@ async fn restored_construction_invoice_still_requires_exact_offer_and_payer_note
     let (other,_) = bolt12([8;32]);
     // Same offer may issue several notes; changed note still cannot restore.
     assert!(adapter.restore_bolt12_for_offer_lookup(&invoice,digest,&other,[8;32],expected).is_err());
+    finish(worker).await;
+}
+
+#[tokio::test]
+async fn preflight_delay_cannot_spend_the_accepted_retry_window() {
+    let mut steps = handshake();
+    let mut delayed = info();
+    delayed["fixture_delay_ms"] = json!(30);
+    steps.extend([step("getinfo", delayed), step("listpays", json!({"pays":[]}))]);
+    let (config, worker) = server(steps).await;
+    let adapter = ClnFoundation::connect(config, account()).await.unwrap();
+    let invoice = adapter.inspect_bolt11(&bolt11(), expectation(), observation()).unwrap();
+    let mut req = request();
+    req.pay_before_ms = observation().now_ms + 5000;
+    assert!(matches!(adapter.dispatch(&invoice, req, observation()).await, Err(AdapterError::InvalidInput)));
+    finish(worker).await;
+}
+
+#[tokio::test]
+async fn settlement_after_dispatch_observation_is_valid() {
+    let invoice = bolt11();
+    let mut settled = row(&invoice, "complete");
+    settled["completed_at"] = json!(1_700_000_101u64);
+    let mut steps = handshake();
+    steps.extend([step("getinfo", info()), step("listpays", json!({"pays":[]})),
+        step("pay", json!({"fixture_delay_ms":1100,"status":"complete"})),
+        step("getinfo", info()), step("listpays", json!({"pays":[settled]}))]);
+    let (config, worker) = server(steps).await;
+    let adapter = ClnFoundation::connect(config, account()).await.unwrap();
+    let prepared = adapter.inspect_bolt11(&invoice, expectation(), observation()).unwrap();
+    assert!(matches!(adapter.dispatch(&prepared, request(), observation()).await.unwrap(), PaymentStatus::Settled(_)));
     finish(worker).await;
 }

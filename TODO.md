@@ -334,7 +334,11 @@ See [the 2026-11-01 log review](docs/browser-log-review-2026-11-01.md).
   their tests into `src/wallet_adapters/`. Keep generic Phoenixd incoming lookup,
   fee units, and their focused regressions in LNI. This relocation does not change
   dispatch policy or repair outstanding adapter behavior.
-- [ ] Validate and address the CLN dispatch timing findings originally reported
+- [x] Address the CLN dispatch timing findings originally reported
   on LNI PR #72: recheck the dispatch deadline after awaited preflight RPCs, and
   advance the trusted observation before interpreting a completed payment. These
   review items now belong to `src/wallet_adapters/cln.rs` and its tests.
+
+- [x] Correct initial-profile clock accounting in Tor and embedded Tor: retain
+  the original authenticated schedule across delayed queries. Source:
+  `spec/circuits/initial-profile.md`; validate delayed queries and original expiry.

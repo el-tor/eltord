@@ -107,6 +107,15 @@ pub struct Observation {
     pub uncertainty_ms: u64,
 }
 impl Observation {
+    fn advance(self, elapsed: Duration) -> Result<Self> {
+        let elapsed_ms = i64::try_from(elapsed.as_millis())
+            .map_err(|_| AdapterError::InvalidInput)?;
+        Ok(Self {
+            now_ms: self.now_ms.checked_add(elapsed_ms)
+                .ok_or(AdapterError::InvalidInput)?,
+            uncertainty_ms: self.uncertainty_ms,
+        })
+    }
     fn latest(self) -> Result<i64> {
         if self.now_ms < 0 {
             return Err(AdapterError::InvalidInput);
@@ -517,6 +526,7 @@ impl ClnFoundation {
         request: DispatchRequest,
         observation: Observation,
     ) -> Result<PaymentStatus> {
+        let started = std::time::Instant::now();
         if !self.outgoing_ready {
             return Err(AdapterError::Unsupported);
         }
@@ -538,7 +548,13 @@ impl ClnFoundation {
         self.check_account().await?;
         let records = self.records(invoice.payment_hash).await?;
         if !records.is_empty() {
-            return self.interpret(invoice, request.operation, &records, observation);
+            return self.interpret(invoice, request.operation, &records, observation.advance(started.elapsed())?);
+        }
+        // Preflight RPC latency consumes the accepted window, never renews it.
+        if request.pay_before_ms.saturating_sub(observation.advance(started.elapsed())?.latest()?)
+            < i64::from(request.retry_for_seconds) * 1000
+        {
+            return Err(AdapterError::InvalidInput);
         }
         let mut args = json!({"bolt11":invoice.text,"maxfee":format!("{}msat",request.fee_limit_msat),"label":hex::encode(request.operation),"retry_for":request.retry_for_seconds});
         if invoice.amountless {
@@ -547,7 +563,7 @@ impl ClnFoundation {
         // Any error after the durable claim remains uncertain. Never inspect an
         // error string to infer failure or issue another payment automatically.
         self.rpc("pay", args).await?;
-        self.lookup(invoice, request.operation, observation).await
+        self.lookup(invoice, request.operation, observation.advance(started.elapsed())?).await
     }
 
     pub async fn lookup(
@@ -556,6 +572,7 @@ impl ClnFoundation {
         operation: [u8; 16],
         observation: Observation,
     ) -> Result<PaymentStatus> {
+        let started = std::time::Instant::now();
         if invoice.account != self.account || operation == [0; 16] {
             return Err(AdapterError::InvalidInput);
         }
@@ -564,7 +581,7 @@ impl ClnFoundation {
             invoice,
             operation,
             &self.records(invoice.payment_hash).await?,
-            observation,
+            observation.advance(started.elapsed())?,
         )
     }
 
@@ -577,6 +594,7 @@ impl ClnFoundation {
         operation: [u8; 16],
         observation: Observation,
     ) -> Result<Option<ConstructionPaymentProof>> {
+        let started = std::time::Instant::now();
         if !self.outgoing_ready {
             return Err(AdapterError::Unsupported);
         }
@@ -586,7 +604,7 @@ impl ClnFoundation {
         self.check_account().await?;
         let rows = self.records(invoice.payment_hash).await?;
         let PaymentStatus::Settled(settlement) =
-            self.interpret(invoice, operation, &rows, observation)?
+            self.interpret(invoice, operation, &rows, observation.advance(started.elapsed())?)?
         else {
             return Ok(None);
         };
