@@ -224,7 +224,9 @@ fn store_candidate(
         |r| r.get(0),
     )?;
     if count >= 2 {
-        return Err(LedgerError::BudgetExceeded);
+        // Two retained hashes already permanently mark this ID ambiguous.
+        // Additional hashes must not prevent the account cursor advancing.
+        return Ok(());
     }
     tx.execute("INSERT INTO native_invoice_candidates(payment_id,payment_hash,invoice_digest,updated_index) VALUES(?1,?2,?3,?4)",params![&candidate.payment_id[..],&candidate.payment_hash[..],&candidate.invoice_digest[..],sql_number(candidate.updated_index)?])?;
     Ok(())

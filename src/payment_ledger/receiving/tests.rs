@@ -121,8 +121,9 @@ fn changed_account_unregistered_ids_and_ambiguous_invoices_never_authorize_or_re
     ));
     page = f.page(4);
     page.candidates[0].payment_hash = [23; 32];
-    assert!(f.ledger.apply_native_invoice_page(&page).is_err());
-    assert!(f.ledger.native_invoice_cursor().unwrap() == 4);
+    f.ledger.apply_native_invoice_page(&page).unwrap();
+    assert!(f.ledger.native_invoice_cursor().unwrap() == 5);
+    assert!(matches!(f.ledger.incoming_candidate(f.batch.rounds[0].payment_id), Err(LedgerError::Conflict)));
 }
 #[test]
 fn closure_is_handle_scoped_and_tor_restart_preserves_financial_candidates() {

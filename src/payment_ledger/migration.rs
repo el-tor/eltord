@@ -202,8 +202,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn v4_v5_v6_over_cap_history_refusal_rolls_back_schema_and_preserves_all_records() {
-        for version in [4, 5, 6] {
+    fn v2_through_v6_over_cap_history_refusal_rolls_back_schema_and_preserves_all_records() {
+        for version in [2, 3, 4, 5, 6] {
             over_cap_history_refusal(version);
         }
     }
@@ -281,8 +281,14 @@ mod tests {
         if version < 6 {
             tx.execute_batch("DROP TABLE origin_outgoing_ids;DROP TABLE origin_allocations;DROP TABLE origin_renewal_operations;DROP TABLE origin_invoices;DROP TABLE origin_plans;DROP TABLE origin_constructions;").unwrap();
         }
-        if version == 4 {
+        if version <= 4 {
             tx.execute_batch("DROP TABLE origin_operations;DROP TABLE native_invoice_candidates;DROP TABLE native_invoice_cursor;DROP TABLE closed_bindings;").unwrap();
+        }
+        if version <= 3 {
+            tx.execute_batch("DROP TABLE initial_clock_anchors;DROP TABLE activation_interval_anchors;").unwrap();
+        }
+        if version == 2 {
+            tx.execute_batch("DROP TABLE storage_reservations;DROP TABLE storage_policy;").unwrap();
         }
         tx.pragma_update(None, "user_version", version).unwrap();
         tx.commit().unwrap();
@@ -307,6 +313,8 @@ mod tests {
         let original = snapshot(&ledger.connection);
         drop(ledger);
         let result = match version {
+            2 => PaymentLedger::upgrade_from_v2(&path, account),
+            3 => PaymentLedger::upgrade_from_v3(&path, account),
             4 => PaymentLedger::upgrade_from_v4(&path, account),
             5 => PaymentLedger::upgrade_from_v5(&path, account),
             6 => PaymentLedger::upgrade_from_v6(&path, account),

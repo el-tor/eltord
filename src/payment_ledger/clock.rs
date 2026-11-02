@@ -166,6 +166,9 @@ impl PaymentLedger {
         tx.execute_batch(origin_artifacts::SCHEMA)?;
         tx.execute_batch(handshake::SCHEMA)?;
         outgoing_renewal::initialize(&tx)?;
+        origin_artifacts::validate_schema(&tx, account)?;
+        outgoing_renewal::validate_schema(&tx)?;
+        handshake::validate_schema(&tx, account)?;
         tx.pragma_update(None, "user_version", VERSION)?;
         tx.commit()?;
         drop(ledger);
