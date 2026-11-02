@@ -327,3 +327,14 @@ See [the 2026-11-01 log review](docs/browser-log-review-2026-11-01.md).
   circID-zero DESTROY warnings with bounded resource/work accounting.
 - [ ] Surface exhausted test budgets explicitly instead of generic path closure,
   preserving uncertain reservations and the operator-approved cumulative cap.
+
+### Wallet adapter ownership and review follow-up
+
+- [x] Move El Tor-specific CLN and Phoenixd verification/dispatch adapters and
+  their tests into `src/wallet_adapters/`. Keep generic Phoenixd incoming lookup,
+  fee units, and their focused regressions in LNI. This relocation does not change
+  dispatch policy or repair outstanding adapter behavior.
+- [ ] Validate and address the CLN dispatch timing findings originally reported
+  on LNI PR #72: recheck the dispatch deadline after awaited preflight RPCs, and
+  advance the trusted observation before interpreting a completed payment. These
+  review items now belong to `src/wallet_adapters/cln.rs` and its tests.

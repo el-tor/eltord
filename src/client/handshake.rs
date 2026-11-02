@@ -3,7 +3,7 @@
 //! constructs/rebuilds a circuit, changes a path or infers a refund on closure.
 use crate::payment_ledger::payer::FoundationPayer;
 #[cfg(test)]
-use lni::cln::foundation::ClnFoundation;
+use crate::wallet_adapters::cln::ClnFoundation;
 use crate::{
     payment_ledger::{
         handshake::*,
@@ -12,7 +12,7 @@ use crate::{
     },
     rpc::FoundationPolicy,
 };
-use lni::cln::foundation::{
+use crate::wallet_adapters::cln::{
     ConstructionPaymentProof, DispatchRequest, InvoiceExpectation, Observation,
     PaymentStatus, ValidatedInvoice,
 };

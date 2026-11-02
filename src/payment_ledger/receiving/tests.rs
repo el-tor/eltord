@@ -1,5 +1,5 @@
 use super::*;
-use lni::cln::foundation::{Chain, NativeAccount};
+use crate::wallet_adapters::cln::{Chain, NativeAccount};
 fn account() -> NativeAccount {
     NativeAccount {
         node_id: [2; 33],

@@ -12,8 +12,8 @@ use crate::{
     rpc::*,
 };
 #[cfg(test)]
-use lni::cln::foundation::ClnFoundation;
-use lni::cln::foundation::{InvoiceExpectation, Observation};
+use crate::wallet_adapters::cln::ClnFoundation;
+use crate::wallet_adapters::cln::{InvoiceExpectation, Observation};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, convert::TryFrom, error::Error, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -75,7 +75,7 @@ fn initial_observation(
     }
 }
 fn log_status_failure(hop: usize, stage: &'static str, error: &(dyn Error + 'static)) {
-    if let Some(error) = error.downcast_ref::<lni::cln::foundation::AdapterError>() {
+    if let Some(error) = error.downcast_ref::<crate::wallet_adapters::cln::AdapterError>() {
         log::warn!(
             "Foundation origin wallet stage {} category {:?}",
             stage,

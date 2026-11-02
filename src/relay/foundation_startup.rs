@@ -2,10 +2,8 @@
 //! a replacement ledger when state is missing. Configuration contains credentials
 //! and intentionally has no Debug implementation.
 use crate::payment_ledger::{AccountId, ClockObservation, PaymentLedger};
-use lni::cln::{
-    foundation::{Chain, ClnFoundation, NativeAccount},
-    ClnConfig,
-};
+use crate::wallet_adapters::cln::{Chain, ClnFoundation, NativeAccount};
+use lni::cln::ClnConfig;
 use serde::Deserialize;
 use std::{
     convert::TryInto,

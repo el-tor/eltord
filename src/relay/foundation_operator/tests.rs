@@ -3,7 +3,7 @@ use crate::payment_ledger::{
     AcceptanceWindow, AuthorizationState, BatchRegistration, ChargeKind, ClockObservation,
     Obligation, RecipientEvidence,
 };
-use lni::cln::foundation::{Chain, NativeAccount};
+use crate::wallet_adapters::cln::{Chain, NativeAccount};
 use serde_json::{json, Value};
 use std::{
     convert::TryInto,
@@ -369,7 +369,7 @@ async fn explicit_v4_migration_preserves_claims_authorizations_and_tombstones() 
     assert!(ledger.binding_is_closed([1; 16], [2; 16]).unwrap());
     assert_eq!(ledger.native_invoice_cursor().unwrap(), 1);
     ledger
-        .apply_native_invoice_page(&lni::cln::foundation::IncomingUpdatePage {
+        .apply_native_invoice_page(&crate::wallet_adapters::cln::IncomingUpdatePage {
             account: native_account(),
             from_index: 1,
             next_index: 8,

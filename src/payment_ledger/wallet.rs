@@ -6,7 +6,7 @@
 use super::{outgoing::*, *};
 use super::payer::PayerDriver;
 use async_trait::async_trait;
-use lni::cln::foundation::{
+use crate::wallet_adapters::cln::{
     AdapterError, ClnFoundation, DispatchRequest, IncomingSettlement, IncomingStatus, Observation,
     PaymentStatus, ValidatedInvoice,
 };

@@ -2,7 +2,7 @@
 //! native recipient evidence and durable authorization can reach Tor. This
 //! coordinator has no outgoing-payment interface and never provisions storage.
 use crate::{payment_ledger::*, rpc::*};
-use lni::cln::foundation::{ClnFoundation, IncomingStatus, Observation};
+use crate::wallet_adapters::cln::{ClnFoundation, IncomingStatus, Observation};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,

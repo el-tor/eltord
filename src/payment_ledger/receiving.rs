@@ -1,7 +1,7 @@
 //! Durable, account-local candidate discovery and relay binding recovery.
 //! Candidate hashes are lookup hints, never settlement/authorization evidence.
 use super::*;
-use lni::cln::foundation::{
+use crate::wallet_adapters::cln::{
     IncomingInvoiceCandidate, IncomingUpdatePage, INCOMING_UPDATE_PAGE_LIMIT,
 };
 

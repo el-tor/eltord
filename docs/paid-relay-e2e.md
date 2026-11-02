@@ -125,7 +125,9 @@ The native wallet distribution built successfully and its executable reports
 record; the installed wallet binary is unchanged. The local source/dependency
 checkouts retain their push blocks. This build is not a real settlement result.
 
-LNI now shares pure signed-invoice validation across wallet adapters; the 26
+Eltord now owns the specialized adapters in `src/wallet_adapters/`, including
+their regression tests and shared signed-invoice validation. Generic Phoenixd
+lookup and fee-unit fixes remain in LNI. At the original checkpoint, the 26
 existing CLN foundation regressions passed after extraction. The Phoenixd native
 adapter uses only numeric loopback HTTP/verified HTTPS, refuses proxies/redirects
 and certificate bypass, checks the pinned account and explicit capability

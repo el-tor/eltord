@@ -195,7 +195,7 @@ The original dependency order is retained in the implementation plan. The final
 read-only audits checked source paths and actual assertions rather than treating
 test counts or browsing as proof of financial correctness:
 
-- Recipient chain: `lni/crates/lni/cln/foundation.rs`,
+- Recipient chain: `src/wallet_adapters/cln.rs`,
   `src/relay/foundation.rs`, `src/relay/foundation/tests.rs`,
   `src/rpc/payment_consumption.rs`, and `src/payment_ledger.rs` tie native
   recipient evidence to a unique durable decision and matching consumption.

@@ -1,8 +1,6 @@
 use super::*;
-use lni::{
-    cln::foundation::{Chain, NativeAccount},
-    cln::ClnConfig,
-};
+use crate::wallet_adapters::cln::{Chain, NativeAccount};
+use lni::cln::ClnConfig;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{

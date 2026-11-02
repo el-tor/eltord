@@ -3,10 +3,8 @@ use crate::{
     payment_ledger::{payer::FoundationPayer, AccountId, PaymentLedger},
     relay::FoundationConfig,
 };
-use lni::{
-    cln::foundation::{Chain, InvoiceVerifier, NativeAccount},
-    phoenixd::{foundation::PhoenixdFoundation, PhoenixdConfig},
-};
+use crate::wallet_adapters::{cln::{Chain, InvoiceVerifier, NativeAccount}, phoenixd::PhoenixdFoundation};
+use lni::phoenixd::PhoenixdConfig;
 use serde::Deserialize;
 use std::convert::TryInto;
 use std::{

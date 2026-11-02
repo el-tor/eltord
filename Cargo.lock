@@ -1653,6 +1653,7 @@ version = "0.0.2"
 dependencies = [
  "async-trait",
  "base64 0.13.1",
+ "bech32",
  "chrono",
  "clap",
  "ctrlc",
@@ -1663,6 +1664,8 @@ dependencies = [
  "lazy_static",
  "libc",
  "libtor",
+ "lightning 0.2.2",
+ "lightning-invoice 0.34.0",
  "lni",
  "log",
  "rand 0.8.5",
@@ -1670,12 +1673,14 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sha2 0.10.9",
  "shell-words",
  "thiserror 1.0.69",
  "tokio",
  "tokio-test",
  "tokio-tungstenite 0.15.0",
+ "uuid",
 ]
 
 [[package]]

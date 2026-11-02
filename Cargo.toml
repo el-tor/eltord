@@ -45,6 +45,13 @@ ctrlc = "3.4"
 async-trait = "0.1"
 reqwest = { version = "0.12", features = ["socks", "json"] }
 rusqlite = "0.31.0"
+bech32 = "0.11"
+lightning = "0.2.2"
+lightning-invoice = "0.34.0"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+serde_urlencoded = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

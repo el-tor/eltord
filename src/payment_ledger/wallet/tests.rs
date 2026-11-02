@@ -1,5 +1,5 @@
 use super::*;
-use lni::cln::foundation::{Chain, NativeAccount, NativeSettlement};
+use crate::wallet_adapters::cln::{Chain, NativeAccount, NativeSettlement};
 use std::{
     collections::VecDeque,
     path::PathBuf,
@@ -403,7 +403,8 @@ const NATIVE_INVOICE: &str = "lnbcrt20n1pj48ugqdq4d3hkxctvypnxj7r5w4ex2pp5238x9n
 
 #[tokio::test]
 async fn real_native_adapter_and_ledger_recover_dropped_pay_after_reopen_without_redispatch() {
-    use lni::cln::{foundation::InvoiceExpectation, ClnConfig};
+    use crate::wallet_adapters::cln::InvoiceExpectation;
+    use lni::cln::ClnConfig;
     use serde_json::{json, Value};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let dir = Directory::new();
@@ -601,7 +602,8 @@ fn recipient_bridge_cannot_clip_native_amount_or_precision_to_authorize() {
 
 #[tokio::test]
 async fn phoenixd_socket_loss_retains_durable_claim_and_reopen_only_recovers() {
-    use lni::{phoenixd::{foundation::PhoenixdFoundation,PhoenixdConfig},cln::foundation::{InvoiceExpectation,InvoiceVerifier}};
+    use crate::wallet_adapters::{phoenixd::PhoenixdFoundation,cln::{InvoiceExpectation,InvoiceVerifier}};
+    use lni::phoenixd::PhoenixdConfig;
     use sha2::{Digest,Sha256};
     use tokio::io::{AsyncReadExt,AsyncWriteExt};
     let dir=Directory::new();

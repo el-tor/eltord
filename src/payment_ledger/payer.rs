@@ -1,12 +1,12 @@
 //! Explicit native payer selection. Both adapters share the same immutable
 //! signed invoice type and durable ledger; neither selection changes authority.
 use async_trait::async_trait;
-use lni::{
-    cln::foundation::{
+use crate::wallet_adapters::{
+    cln::{
         AdapterError, ClnFoundation, ConstructionPaymentProof, DispatchRequest, InvoiceExpectation,
         NativeAccount, Observation, PaymentStatus, ValidatedInvoice,
     },
-    phoenixd::foundation::PhoenixdFoundation,
+    phoenixd::PhoenixdFoundation,
 };
 type Result<T> = std::result::Result<T, AdapterError>;
 

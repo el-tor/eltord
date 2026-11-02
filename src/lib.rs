@@ -384,6 +384,7 @@ pub use client::{foundation_client_status, FoundationClientStatus};
 pub mod foundation_status_bridge;
 pub mod database;
 pub mod payment_ledger;
+pub mod wallet_adapters;
 pub mod lightning;
 pub mod logging;
 pub mod manager;
