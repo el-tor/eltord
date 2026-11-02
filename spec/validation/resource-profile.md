@@ -90,6 +90,54 @@ would exceed the arena, admit fewer slots. There is no implied promise of 4096
 simultaneous successful exchanges. Peer identities and new circuits cannot reset
 process buckets or give each service its own copy of aggregate memory.
 
+## Local aggregate observation
+
+The foundation implementation exposes `GETINFO eltor/resource-status` only to
+an authenticated local control authority (the same UNIX/loopback authority used
+by payment controls). It must be the sole GETINFO key in its request, including
+no repeated keys. The fixed version-one body is below; every field is unsigned
+canonical decimal. The body is bounded to 1024 bytes with no dynamic rows:
+
+```text
+FORMAT 1
+STATE initialized exhausted
+FREE live_circuits max_circuits queued_bytes max_queue_bytes
+LINK_BYTES received_bytes sent_bytes
+ADMISSION credit_milli rate burst connection_rate connection_burst
+TRAFFIC credit_milli byte_rate byte_burst connection_rate connection_burst
+PROTOCOL slots max_slots arena_bytes max_arena_bytes memory_reservations
+WORK running max_running waiting max_waiting attempts_started credit_milli rate burst
+OPERATIONS operations max_operations
+```
+
+GETINFO supplies its standard multiline framing and terminal `250 OK`. STATE
+booleans are 0/1. Limits are the immutable configured ceilings, or candidates if
+not yet configured. Counters are a coherent main-loop copy; observation must not
+initialize an unused owner, refill credit, advance clocks/work, expire slots,
+activate circuits, reset counters or consult a wallet. Credit is the stored
+milli-token value, not a projected refill. Live owner storage, queue allocation
+and running/waiting jobs retain their existing actual-lifetime accounting.
+Repeated/mixed GETINFO keys receive `512 RESOURCE_STATUS_REQUIRES_SINGLE_KEY`.
+Unauthenticated or nonlocal authority is denied. A nonreading controller already
+holding over 8192 queued output bytes is closed before another diagnostic body
+is rendered; unrelated inherited GETINFO commands keep their existing behavior.
+
+This aggregate diagnostic does not expose identities, circuit/payment handles,
+proofs, exporter/traffic keys or per-peer records. It is neither an admission
+operation nor an ACTIVE/spending authorization. Sampling can miss transient
+peaks; record sample count/interval and actual binary provenance, and do not
+infer host/TLS/kernel memory or network bounds from the protocol arena counter.
+`docs/foundation-resource-acceptance.md` describes the finite local runner; its
+presence is implemented instrumentation, not executed overload evidence.
+
+**Privacy/timing assessment:** only the existing privileged local observer gains
+aggregate utilization/capacity values. No relay-wire field, purpose signal or
+network retry is added. Local polling can reveal load timing to that privileged
+observer; keep results private and finite. Validate maximum-size formatting,
+authority denial, repeated-key rejection and byte-for-byte unchanged owner
+snapshots despite elapsed time, then separately measure real concurrent
+identity/circuit saturation, refusal and honest recovery without payment.
+
 ## HSDir and descriptor bounds
 
 Inherit the current verified Tor descriptor maximum, cryptographic validation,

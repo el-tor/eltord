@@ -24,6 +24,10 @@ pub async fn start_relay_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandle
 async fn relay_flow_impl(rpc_config: &RpcConfig) {
     tokio::time::sleep(tokio::time::Duration::from_secs(6)).await;
 
+    if super::foundation_startup::run_if_enabled(rpc_config).await {
+        return;
+    }
+
     let wallet: Arc<dyn lni::LightningNode + Send + Sync> = match crate::lightning::load_wallet(&rpc_config).await {
         Ok(wallet) => Arc::from(wallet),
         Err(e) => {

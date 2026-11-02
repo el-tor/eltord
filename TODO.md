@@ -1,10 +1,26 @@
 # El Tor implementation TODO
 
-This is the local implementation backlog for the protocol planning session of 2026-10-22. **Every item below is deferred** unless explicitly marked otherwise. A documented proposal, local commit, codec vector, or passing free-mode Chutney test is not proof that a paid feature exists or is production-ready. Reuse and verify existing Tor/LNI functionality before adding replacements; this is a requirements inventory, not a claim that every listed component is absent.
+This is the local implementation backlog for the protocol planning session of 2026-10-22. **Items below retain their original deferred status unless a later scoped status explicitly records implementation evidence.** A documented proposal, local commit, codec vector, or passing free-mode Chutney test is not proof that a paid feature exists or is production-ready. Reuse and verify existing Tor/LNI functionality before adding replacements; this is a requirements inventory, not a claim that every listed component is absent.
 
 Existing general implementation notes remain in the [README TODO](readme.md#todo).
 
 Specifications: [paid circuits](spec/01_paid_circuits.md), [renewal wire draft](spec/01a_circuit_renewal_wire.md), [paid hidden services](spec/02_paid_hidden_service.md), and [technical chapter index](spec/02_paid_hidden_service_implementation_details.md). Repository names below are workspace-relative. Keep all work local with the agreed development identity and push protections. Preserve the reliability fixes on `intermitted-fix`; this spec branch is based on master and does not itself contain those fixes.
+
+## Paid circuit foundation implementation status
+
+The local `paid-circuit-foundation` work implements the shared circuit slice of
+ET-01–10 and ET-33, including durable recipient-backed claims, bounded activation
+and recovery, same-stream renewal, and aggregate free-resource enforcement.
+See [current acceptance and evidence](docs/foundation-acceptance-status.md) and
+[the implementation plan](docs/paid-circuit-foundation-plan.md) for executed tests,
+source provenance, retained failures and the precise remaining gates. Historical
+“pending” and “not implemented” notes below describe their drafting checkpoints;
+they are superseded only where the acceptance record identifies implementation.
+Do not treat all ET items as complete: several also cover onion-service behavior,
+independent crypto/privacy review, fuzzing, additional wallet integrations and
+production measurements outside this foundation delivery. Live transport uses
+zero-priced fixtures; positive payment checks use deterministic native wallet
+fixtures, not real settlement. No publication or spending authority is added.
 
 ## Next design discussions
 
@@ -16,13 +32,103 @@ For every new or changed specification requirement, add or update a stable TODO 
 
 ## Shared paid-circuit requirements
 
-- [ ] **ET-01 — Recipient-backed payment validation and single redemption.** Projects: `eltord`, `tor`, `lni`. Spec: [payment authorization](spec/onion-services/authorization.md#1-bind-payment-authorization-to-the-client), [renewal admission](spec/01a_circuit_renewal_wire.md#6-timing-retransmission-and-state-transitions). Preserve the already saved Codex task **“Deferred: paid circuit replay protection”** as the detailed investigation; do not create a duplicate or start it. Earlier source review found incomplete handshake validation, observation-time windows, and no demonstrated atomic used-by-circuit enforcement. These are source findings, not a proven replay exploit. Acceptance: recipient-node settlement/amount/time verification, durable atomic circuit/round consumption, duplicate callbacks, old settled-payment reuse on a fresh circuit, concurrent attempts, and restart tests. New payment/renewal features depend on this work.
+ET-02/03/04/33 must implement [native relay reachability](spec/circuits/free-allowance.md#native-relay-reachability)
+in `tor` and the embedded mirror using uniform authenticated base admission,
+fresh per-hop proofs/IDs, pinned signed capabilities and shared pre-crypto leases.
+No maintenance purpose bit, automatic paid funding, enlarged allowance or legacy
+fallback is permitted. Test immutable retries, missing metadata/ACK, aggregate
+refusal, burst exhaustion, application attachment/cannibalization exclusion and
+live self-test timing/recovery. The self-selected last hop may use its current
+locally signed descriptor; all other hops require verified peer metadata.
+Local source/unit coverage does not complete live acceptance or production review.
 
-- [ ] **ET-02 — Uniform per-hop construction and identifier privacy.** Projects: `tor`, `eltord`, bindings as needed. Spec: [uniform payload](spec/01_paid_circuits.md#uniform-per-hop-payment-payload). Verify all ordinary/free/onion circuits retain the same initial hash/preimage fields, ten independent identifiers per hop, encryption, and equal-size padding, using fresh correctly sized dummy values only where no fee applies. No shared dummy constants, omitted fields, or onion-service-purpose payment header. Preserve operator-selected handshake fees and zero-sat handshakes for new relays; do not introduce the rejected paid-activation/trial-fee idea. Acceptance: wire-size comparisons, hop-isolation checks, dummy-versus-required-payment rejection, and unchanged paid bandwidth testing.
+ET-04/05/07/33 must implement the [paid byte quota contract](spec/01a_circuit_renewal_wire.md#paid-byte-quota-accounting)
+in `tor` and the embedded `libeltor-sys` source mirror. Count both physical
+directions at actual ingress/egress, including headers/control/padding, with
+transit receiving two link charges. Reset only on actual new paid-round
+activation; close on insufficient quota without dropping/resuming, free fallback
+or an exempt control lane. Test exact boundary and zero/unlimited paid semantics,
+full fork cell sizes, duplicate activation/reconnect/renewal reset attempts,
+grace and timer ordering. Assess exhaustion-close timing/linkability in live
+acceptance; local tests and explicit policy configuration do not satisfy the
+independent review or production advertisement prerequisites.
 
-- [ ] **ET-03 — Advertised bounded free allowance and admission.** Projects: `tor`, `eltord`, directory metadata and `eltor-app`. Spec: [small free capacity](spec/01_paid_circuits.md#small-free-capacity-on-ordinary-circuits), [use cases](spec/01_paid_circuits.md#use-cases-and-rationale). Define interoperable capability/limits and explicit eligible setup without paid handshake charges. Every hop must admit the allowance. Do not infer free recurring service from zero handshake fees. Acceptance: descriptor publication/fetch, introduction availability, bounded rendezvous setup and quote/invoice bootstrap, ordinary low-volume communication, maintenance, and padding all work within their stated boundaries. Free capacity is not a paid-throughput test.
+Foundation implementation is now authorized on local `paid-circuit-foundation`
+branches. See [the implementation plan](docs/paid-circuit-foundation-plan.md).
+ET-01/07/08/33 also require the [durable admission bridge](spec/control/lifecycle.md#durable-admission-before-registration):
+atomic all-ten-ID reservation before COMMITTED/ADMITTED, bounded pending Tor
+candidates, authenticated verifier decisions and lost-event/reply recovery.
+Test duplicate/conflicting batches, partial transaction rollback, deadline
+expiry, unavailable ledger and Tor/daemon restart without admission or payment
+on uncertainty. These tasks remain unchecked until integrated and validated.
+Snapshots must include the per-hop C binding required by the recovery ledger;
+test missing/duplicate/changed `BINDING` rows and reject substitutes based on
+numeric circuit IDs. Keep C confined to the privileged local verifier and ledger.
+ET-02/08/33 also require the [origin constructor registration](spec/control/lifecycle.md#origin-constructor-registration)
+in `tor`, `eltord`, and the embedded source mirror: bounded read-only origin
+C/Q/A0, exact pinned policy and ten ordered IDs before COMMIT/outgoing accounting.
+Test recomputed digests, retained constructor-ID comparison, changed descriptor
+terms, malformed/duplicate rows, wrong instance/role/hop, incomplete/free-only
+profiles, output budgets and no wallet/state mutation. Keep keys/preimages and
+per-hop metadata out of logs; implementation and live acceptance remain pending.
+ET-08/33 must also validate ACTIVE status when the accepted hard lifetime ends
+inside a round: enforcement may be shorter than its nominal remaining time, but
+never exceed the pinned lifetime or extend deadlines through a query/retry.
+ET-08/33 must test the [transition-pending read contract](spec/control/renewal.md#query-a-hop-and-operation)
+in `tor`, `eltord`, and bindings: pause the independent lifecycle timer across a
+round boundary, require `551 STATE_TRANSITION_PENDING` without revision changes,
+activation, payment consumption, or timer scheduling by GET, then verify a coherent
+snapshot after normal timer progress. Retry only within existing local query
+budgets; this error grants no spending authority. Also cover the origin-specific
+[ACTIVE-before-status ordering](spec/control/renewal.md#query-a-hop-and-operation)
+in Tor, the embedded mirror and daemon RPCs: retain the exact renewal result,
+return pending instead of mixing a new period with old clocks, and require an
+explicit bounded REFRESH for missing remote status. GET must not transmit or
+change revisions; status catch-up and historical replies cannot reset T0,
+reopen admission or extend retained deadlines. Native/RPC regression coverage is
+partial implementation evidence; live daemon interoperability remains required.
+ET-07/08/09/21/33 also require [authenticated activation notifications](spec/circuits/initial-profile.md#authenticated-activation-notifications)
+in Tor, its embedded source and daemon snapshots: one existing-size START-bound
+proof only on an actual recipient-authorized ACTIVE transition, monotonic
+revision/round and admitted-period checks, fixed conservative original-T0 clock
+bounds, and no arrival-time reset. Preserve directional FIFO, quota accounting,
+all-hop activation and original queue ages; stale local status must not require
+a QUERY trapped behind held DATA to recover. Test slow/lost/duplicate/late/replayed
+proofs, no-funding and no-quota cases, read-only transition-pending snapshots,
+independent hop clocks and the same real stream through 10→11 and 20→21.
+Assess the added transition-timing signal under aggregate load; retain production
+and independent review gates. Native Tor `ce7a0d50b5` and exact embedded mirror
+`0c2eb69` implement the transition proof and fixed schedule bounds. Nine focused
+native tests pass, including real packed FIFO recovery, delayed/duplicate/late
+proofs, invalid renewal clock atomicity, funded-only transitions and control quota.
+Embedded rebuild and actual same-stream rollover validation remain pending;
+these tests do not constitute independent security/privacy review.
 
-- [ ] **ET-04 — Free-resource accounting and overload bounds.** Projects: `tor`, `eltord`, `chutney`. Spec: [shared allowance](spec/01_paid_circuits.md#small-free-capacity-on-ordinary-circuits). Select measured configurable rates/bursts, count both directions and overhead/padding, and enforce per-circuit plus relay-wide traffic/state/CPU/setup/concurrency/queue limits. Acceptance: many circuits, many identities, rebuild storms, bidirectional traffic, bounded buffering, fair/bounded retries, and legitimate recovery under overload. No silent wallet charge on exhaustion; small per-circuit limits alone do not solve aggregate abuse.
+ET-08/09/33 must also test the [bounded REFRESH response wait](spec/control/lifecycle.md#origin-initial-operations)
+in Tor and daemon integration: the configurable 7000 ms candidate is clipped by
+original deadlines, expiry preserves UNCERTAIN operation/nonce state, fresh
+caller-requested REFRESH respects shared limits, and late replies cannot reopen
+or extend a circuit. Measure the candidate under delayed/lost responses; do not
+confuse the one-second query rate floor with an adequate response window.
+
+ET-02/03/04 must implement [authenticated base-resource admission](spec/circuits/free-allowance.md#authenticated-base-resource-admission)
+in Tor, its vendored copy and origin bindings: exact encrypted ntor field224,
+version/profile1 ACK for every foundation circuit, signed capability pinning,
+canonical unchanged payment suffix, provisional main-loop reservation before
+worker dispatch, immutable worker eligibility and safe completion transfer.
+Test missing/duplicate/changed ACK, malformed suffix/fields, actual-link aggregate
+limits, cancellation/stale-worker lifetime, no paid proof from dummies, no paid
+failure fallback, and paid/free size and timing parity. Recheck extension-number
+conflicts whenever upstream changes; independent review and measured limits
+remain deployment gates.
+
+- [ ] **ET-01 — Recipient-backed payment validation and single redemption.** Projects: `eltord`, `tor`, `lni`. Spec: [payment authorization](spec/onion-services/authorization.md#1-bind-payment-authorization-to-the-client), [renewal admission](spec/01a_circuit_renewal_wire.md#6-timing-retransmission-and-state-transitions). Preserve the already saved Codex task **“Deferred: paid circuit replay protection”** as the detailed investigation; do not create a duplicate or start it. Earlier source review found incomplete handshake validation, observation-time windows, and no demonstrated atomic used-by-circuit enforcement. These are source findings, not a proven replay exploit. Acceptance: recipient-node settlement/amount/time verification, durable atomic circuit/round consumption, duplicate callbacks, old settled-payment reuse on a fresh circuit, concurrent attempts, and restart tests. New payment/renewal features depend on this work. Recover original construction/COMMIT ages from the privileged CLOCK snapshot and persist uncertainty-bounded anchors; test clamped counters, delayed queries, reconnects and zero-age activation without widening settlement windows. Projects: `tor`, `eltord`; contract: [registration clocks](spec/control/lifecycle.md#durable-admission-before-registration).
+
+- [ ] **ET-02 — Uniform per-hop construction and identifier privacy.** Projects: `tor`, `eltord`, bindings as needed. Spec: [uniform payload](spec/01_paid_circuits.md#uniform-per-hop-payment-payload). Verify all ordinary/free/onion circuits retain the same initial hash/preimage fields, ten independent identifiers per hop, encryption, and equal-size padding, using fresh correctly sized dummy values only where no fee applies. No shared dummy constants, omitted fields, or onion-service-purpose payment header. Preserve operator-selected handshake fees and zero-sat handshakes for new relays; do not introduce the rejected paid-activation/trial-fee idea. Acceptance: wire-size comparisons, hop-isolation checks, dummy-versus-required-payment rejection, and unchanged paid bandwidth testing. Also reject plaintext next-hop payment-proof duplicates in EXTEND2 and verify the enabled relay uses only its own admitted context; see [bootstrap and isolation boundary](spec/circuits/free-allowance.md#bounded-one-hop-directory-bootstrap).
+
+- [ ] **ET-03 — Advertised bounded free allowance and admission.** Projects: `tor`, `eltord`, directory metadata and `eltor-app`. Spec: [small free capacity](spec/01_paid_circuits.md#small-free-capacity-on-ordinary-circuits), [use cases](spec/01_paid_circuits.md#use-cases-and-rationale). Define interoperable capability/limits and explicit eligible setup without paid handshake charges. Every hop must admit the allowance. Do not infer free recurring service from zero handshake fees. Acceptance: descriptor publication/fetch, introduction availability, bounded rendezvous setup and quote/invoice bootstrap, ordinary low-volume communication, maintenance, and padding all work within their stated boundaries. Free capacity is not a paid-throughput test. Preserve only the [bounded one-hop directory bootstrap](spec/circuits/free-allowance.md#bounded-one-hop-directory-bootstrap) before ordinary authenticated admission; it is not an application or paid-authority fallback.
+
+- [ ] **ET-04 — Free-resource accounting and overload bounds.** Projects: `tor`, `eltord`, `chutney`. Spec: [shared allowance](spec/01_paid_circuits.md#small-free-capacity-on-ordinary-circuits). Select measured configurable rates/bursts, count both directions and overhead/padding, and enforce per-circuit plus relay-wide traffic/state/CPU/setup/concurrency/queue limits. Acceptance: many circuits, many identities, rebuild storms, bidirectional traffic, bounded buffering, fair/bounded retries, and legitimate recovery under overload. No silent wallet charge on exhaustion; small per-circuit limits alone do not solve aggregate abuse. Include every accepted handshake type and restricted directory bootstrap in shared work/state/both-direction traffic accounting; test non-negotiated legacy attempts cannot escape the owner or extend into application paths.
 
 - [ ] **ET-05 — Explicit paid/free enforcement and budgets.** Projects: `tor`, `eltord`. Spec: [shared allowance](spec/01_paid_circuits.md#small-free-capacity-on-ordinary-circuits), [spending caps](spec/onion-services/authorization.md#4-cap-spending-and-keep-wallet-work-off-the-handshake-path). Keep eligible free admission separate from paid-round obligations. Acceptance: required unpaid paid circuit closes after its deadline/grace, never silently downgrades to free capacity; dummy/unused identifiers do not count as funds. Per-circuit, cumulative, wallet-wide, current/next-round, and uncertain in-flight commitments remain bounded across retries/restarts and concurrent clients.
 
@@ -88,7 +194,7 @@ For every new or changed specification requirement, add or update a stable TODO 
 
 - [ ] **ET-22 — Reconcile older overview, diagrams, and implementation documentation.** Project: `eltord` docs/specs. Spec sources: [overview](spec/00_spec.md), [spec one](spec/01_paid_circuits.md), [spec two](spec/02_paid_hidden_service.md). The older overview, watcher sketches and conceptual paid-HS diagram are now isolated as historical material in the Markdown book. Update those artifacts when their details are finalized, clearly label proposal versus implementation, and keep backup-circuit docs explicit about established-stream limits. Acceptance: no conflicting timing, mandatory-privacy, shared-session, forced-ten-minute-cutoff or guaranteed-delivery claims; links point to the authoritative current requirements. Keep high-level architecture and technical protocol design in separate linked documents under spec/AGENTS.md. Spec two now holds the architecture overview; its technical companion preserves all prior detailed requirements, wire layouts, state/key lifecycle and validation. Maintain anchors and task references when moving content. Keep the named implementation-details document as the stable technical index and split detailed topics into descriptive chapter files. Maintain the Tor-style hierarchy in spec/SUMMARY.md, independent El Tor numbering, the inheritance map and control/RPC inventory. These are documentation tasks, not evidence the runtime implements the revised design.
 
-- [ ] **ET-33 — Validate control/RPC contracts against the shipped runtime.** Projects: `tor`, `eltord`, client bindings. Spec: [control and RPC](spec/control/index.md), [commands](spec/control/commands.md), [events](spec/control/events.md). The source-backed documentation inventory is written; implementation/conformance work remains deferred. Pin actual embedded Tor revision, verify command grammar and flag parsing, require strict complete payment/path validation, document reply/error/event ordering, query uncertain effects before retry, and redact payment/preimage/circuit metadata in routine logs. Keep renewal controller operations distinct from relay commands; finalize their contracts with ET-08/29–32. Acceptance: parser/error vectors, partial-row rejection policy, no unintended path mutation, correct subscription/event names, no duplicate paid build after lost replies, teardown versus settlement separation, authenticated control access and privacy-safe bounded diagnostics. No live RPC commands or runtime fixes were executed by the documentation rewrite.
+- [ ] **ET-33 — Validate control/RPC contracts against the shipped runtime.** Projects: `tor`, `eltord`, client bindings. Spec: [control and RPC](spec/control/index.md), [commands](spec/control/commands.md), [events](spec/control/events.md). The source-backed documentation inventory is written; implementation/conformance work remains deferred. Pin actual embedded Tor revision, verify command grammar and flag parsing, require strict complete payment/path validation, document reply/error/event ordering, query uncertain effects before retry, and redact payment/preimage/circuit metadata in routine logs. Keep renewal controller operations distinct from relay commands; finalize their contracts with ET-08/29–32. Acceptance: parser/error vectors, partial-row rejection policy, no unintended path mutation, correct subscription/event names, no duplicate paid build after lost replies, teardown versus settlement separation, authenticated control access and privacy-safe bounded diagnostics. No live RPC commands or runtime fixes were executed by the documentation rewrite. Verify enabled-profile extension checks its own admitted context without demanding or logging a child hop's plaintext payment identifiers; bootstrap-only contexts reject ordinary extension and payment commands.
 
 ## Audit notes and resumption
 
@@ -129,3 +235,110 @@ Validation artifacts: public service codec fixtures and `spec/tools/check_codec_
 Implementation handoff: [version-one handoff](spec/validation/handoff.md) maps all twelve design items to chapters and required V1-CODEC/CRYPTO/LEDGER/SETUP/RENEW/WALLET/LOAD-PRIVACY suites, pins inspected source revisions and defines app/operator consent/status expectations. All implementation boxes remain unchecked. Editorial consistency review removes superseded open-schema/lifetime wording without treating runtime validation as complete. ET-20/21/22/33 track these handoff requirements.
 
 Design completion audit: all twelve design checklist items now link to concrete proposed contracts and handoff evidence. The cross-chapter audit traces success, refusal, reply loss, timeout, cancellation, restart, partial renewal and refund, records privacy observers and corrected gaps, and preserves independent-review/runtime gates. ET-01 through ET-33 remain unchecked implementation work; design signoff is not implementation, payment execution or deployment validation.
+
+
+ET-03/04/05/21/33 also require the [local aggregate observation](spec/validation/resource-profile.md#local-aggregate-observation)
+contract in `tor`, its exact embedded mirror and the finite native runner in
+`docs/foundation-resource-acceptance.md`. Keep GETINFO local/authenticated,
+single-key and bounded; snapshot without initialization, refill, expiry,
+activation or wallet work. Acceptance includes largest-integer framing under
+1KiB, denied unauthenticated/nonlocal authority, repeated-key rejection,
+nonreading-controller bounds and unchanged owner counters across reads. Deploy
+explicit smaller aggregate test caps separately from production defaults, then
+record actual native binary hashes, independently running origins, observed cap
+saturation, cross-origin refusal, existing honest traffic and post-teardown
+honest recovery. Sampled peaks are not proof of unsampled maxima or privacy;
+no live overload result is claimed by adding instrumentation or the runner.
+
+ET-08/33 control backpressure acceptance: validate complete no-effect QUERY CAPACITY followed by bounded exact same-connection resubmission (four total attempts, original lifetime, unchanged durable claim), read-only GET deferral, response-based per-hop pacing, and no resubmission permit after ambiguous replies, disconnect or restart. No wallet/COMMIT/START retry authority or deadline reset is added; live acceptance remains required. See [origin control rules](spec/control/lifecycle.md#origin-initial-operations).
+
+ET-33 native status acceptance: distinguish the Tauri OS sidecar from the managed
+in-process backend. Bind the bounded private phase observation to the parent's
+exact owned child and fresh local generation; reject stale/wrong-owner/malformed
+records and expire ACTIVE at its original authenticated monotonic deadline.
+Bound export to one writer and one replaceable pending observation, keep filesystem
+work outside financial publication locks, and verify delayed writes retain the
+original deadline while superseded generations cannot overwrite newer phases.
+Process/bootstrap readiness must never substitute for that observation. Keep
+unknown, exited and externally adopted PID-only processes fail-closed, retain
+financial history, and verify the rebuilt native UI without additional Tor or
+wallet queries. See `../eltor-app/docs/foundation-runtime.md` for the local
+privacy/timing assessment; this adds no wire, payment or retry authority.
+
+
+ET-01/33 private-network receiving integration: an operator-approved optional
+`cln_accept_invalid_certs` configuration now selects an instance-local TLS bypass
+only for receiving over HTTPS to numeric IPv4 loopback or 100.64.0.0/10 addresses.
+Default verification and outgoing verification remain enforced; proxy use and
+redirects remain refused. Policy boundary and config default/opt-in tests cover
+this exception. It does not prove Tailscale routing or real receiving settlement.
+See [the startup configuration](docs/paid-circuit-foundation-plan.md#explicit-foundation-relay-startup-configuration).
+Future scoped CA trust must preserve hostname/chain checks and avoid global
+trust-store changes. Privacy/timing: no new wire identifier or timing policy;
+when enabled, server authentication relies on the operator's private network.
+
+
+ET-01/02/05/09/33 real-payment acceptance is tracked separately in
+[the one-paid-relay end-to-end plan](docs/paid-relay-e2e.md). Receiving native
+preflight, exclusive ledger provisioning and active-offer ownership passed.
+Payer access and explicit relay/routing/total-spend approval remain pending;
+no real settlement or positive-price live activation is claimed yet. Preserve
+all accounting and distinguish receiver credentials from payer authorization.
+
+
+ET-01/05/09/33 Phoenixd payer integration: see the real paid-relay plan for the
+native fetch-only/capped-fee wallet build, shared invoice validator and explicit
+payer configuration. Native identity/capabilities, exact invoice/operation/hash,
+original clocks and durable dispatch must remain mandatory. Socket/config checks
+are recorded separately from the still-open composed crash checks and real paid
+Chutney run. Do not mark real settlement or runtime acceptance complete from a
+compilation, prototype endpoint or fixture-only result. This adds local wallet
+capabilities, not a new Tor wire identifier, timing policy or payment fallback.
+
+
+### Paid relay native wallet follow-up
+
+- [ ] Review and package the explicit Phoenixd/KMP foundation capabilities before
+  production enablement: fetch-before-pay, recoverable per-request payer keys,
+  exact native operation lookup, and bounded routing fees. The real-settlement
+  run used retained local experimental source checkouts and a custom native build.
+- [ ] Add focused permanent regressions for paid-only Conflux stream eligibility
+  and the live wallet interoperability failures when broad code-test work resumes.
+  The current acceptance intentionally prioritized builds and actual app/Firefox
+  E2E. See [the bounded results](docs/paid-relay-e2e.md#final-bounded-acceptance-and-restoration).
+
+
+### ET-09/33 manual browser reliability follow-up
+
+See [the 2026-11-01 log review](docs/browser-log-review-2026-11-01.md).
+
+- [x] Validate DNS failure containment on an accepted paid path in actual Firefox:
+  three NXDOMAIN failures were followed by successful public pages on the same
+  original circuit; 20 uploads and downloads completed through rounds 1–3.
+  No replacement build was triggered. The 32-cell holding bound and deadlines
+  remain unchanged. See the review for retained failures and runtime provenance.
+- [ ] Add live fault cases for other destination connection errors and explicit
+  privacy retirement. Those source guards compile, but DNS acceptance alone
+  does not establish every failure class or retained-stream billing policy.
+- [ ] Distinguish payment ACTIVE from new-stream usability in native/controller
+  status and the app. Define retained-stream billing and explicit replacement
+  authorization when a circuit really is retired; never silently buy another.
+- [ ] Investigate repeated background first-hop construction failures and
+  circID-zero DESTROY warnings with bounded resource/work accounting.
+- [ ] Surface exhausted test budgets explicitly instead of generic path closure,
+  preserving uncertain reservations and the operator-approved cumulative cap.
+
+### Wallet adapter ownership and review follow-up
+
+- [x] Move El Tor-specific CLN and Phoenixd verification/dispatch adapters and
+  their tests into `src/wallet_adapters/`. Keep generic Phoenixd incoming lookup,
+  fee units, and their focused regressions in LNI. This relocation does not change
+  dispatch policy or repair outstanding adapter behavior.
+- [x] Address the CLN dispatch timing findings originally reported
+  on LNI PR #72: recheck the dispatch deadline after awaited preflight RPCs, and
+  advance the trusted observation before interpreting a completed payment. These
+  review items now belong to `src/wallet_adapters/cln.rs` and its tests.
+
+- [x] Correct initial-profile clock accounting in Tor and embedded Tor: retain
+  the original authenticated schedule across delayed queries. Source:
+  `spec/circuits/initial-profile.md`; validate delayed queries and original expiry.

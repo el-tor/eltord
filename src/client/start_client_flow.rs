@@ -37,6 +37,11 @@ use std::env;
 /// - The function is designed to loop for building and managing multiple circuits, but the loop is currently commented out.
 pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandle<()> {
     let rpc_config = rpc_config.clone();
+    // Cover mode verification and startup retries before the runtime itself
+    // owns a generation. A later runtime generation supersedes this publisher.
+    let status = (env::var_os("ELTOR_FOUNDATION_CONFIG").is_some()
+        || env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some())
+        .then(super::foundation_status::StatusOwner::start);
     
     tokio::spawn(async move {
         loop {
@@ -44,6 +49,12 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandl
             if next {
                 client_info!("Next Circuit...");
             } else {
+                if let Some(status) = &status {
+                    status.publisher().publish(
+                        super::foundation_status::FoundationClientStatus::Recovering,
+                        None,
+                    );
+                }
                 // Retry after a short delay
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await; // 10 seconds
                 client_info!("Retrying due to payment loop error...");
@@ -53,6 +64,24 @@ pub async fn start_client_flow(rpc_config: &RpcConfig) -> tokio::task::JoinHandl
 }
 
 async fn client_flow_impl(rpc_config: &RpcConfig) -> bool {
+    // No wallet access is permitted until Tor's authenticated mode is known.
+    // The foundation coordinator is wired here independently of the legacy loop.
+    let foundation_requested = env::var_os("ELTOR_FOUNDATION_CONFIG").is_some()
+        || env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some();
+    match super::mode::payment_mode(rpc_config, foundation_requested).await {
+        Ok(super::mode::ClientPaymentMode::Legacy) => (),
+        Ok(super::mode::ClientPaymentMode::Foundation) => {
+            if super::runtime::run(rpc_config).await.is_err() {
+                client_warn!("Foundation client stopped; verify its existing ledger, account, and accepted private plan");
+            }
+            return false;
+        }
+        Err(_) => {
+            client_warn!("Client payment mode could not be verified; wallet activity stopped");
+            return false;
+        }
+    }
+
     // loop {
     
     // 1. Wait for Tor Bootstrap

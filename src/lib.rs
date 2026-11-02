@@ -214,6 +214,17 @@ fn setup_signal_handlers() {
 /// This protects the main application from SIGSEGV and other C-level crashes
 /// NOTE: Currently disabled in favor of single-process mode for simpler logging
 #[allow(dead_code)]
+fn configured_native_tor(torrc_path: &str) -> Tor {
+    let mut tor = Tor::new();
+    tor.flag(TorFlag::ConfigFile(torrc_path.to_owned()));
+    if std::env::var_os("ELTOR_FOUNDATION_CLIENT_PLAN").is_some() {
+        // Immutable at native startup: ordinary SOCKS streams cannot select
+        // bounded base circuits before activation or after the paid path dies.
+        tor.flag(TorFlag::Custom("__ElTorRequirePaidStreams 1".to_owned()));
+    }
+    tor
+}
+
 fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
     use std::sync::atomic::{AtomicBool, Ordering};
     
@@ -241,7 +252,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
             } else if pid == 0 {
                 // Child process - attempt to start Tor
                 // If this crashes, only the child process dies
-                match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+                match configured_native_tor(&torrc_path).start() {
                     Ok(_tor) => {
                         info!("Tor started successfully in child process ({})", process_name);
                         // Keep the child process alive to maintain Tor
@@ -339,7 +350,7 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
         info!("Starting {} with panic protection (fallback mode)", process_name);
         
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            match Tor::new().flag(TorFlag::ConfigFile(torrc_path.clone())).start() {
+            match configured_native_tor(&torrc_path).start() {
                 Ok(_tor) => {
                     info!("Tor started successfully ({})", process_name);
                     // Keep Tor running
@@ -368,7 +379,12 @@ fn start_tor_in_child_process(torrc_path: String, process_name: &str) {
 }
 
 pub mod client;
+mod controller_tasks;
+pub use client::{foundation_client_status, FoundationClientStatus};
+pub mod foundation_status_bridge;
 pub mod database;
+pub mod payment_ledger;
+pub mod wallet_adapters;
 pub mod lightning;
 pub mod logging;
 pub mod manager;
@@ -469,14 +485,13 @@ where
     // std::io::stdin().read_line(&mut input).unwrap();
 
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
-    info!("Mode: {:?}", mode);
     let rpc_config = self::get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
-    info!("RPC Config: {:?}", rpc_config);
     if rpc_config.is_none() {
         error!("Error: Could not load rpc_config from torrc file. Be sure to configure the following settings in the torrc file here '{}': ControlPort, Address, and (HashedControlPassword or CookieAuthentication) ", torrc_path);
         std::process::exit(1);
     }
     let rpc_config = rpc_config.unwrap();
+    info!("Tor control endpoint: {}", rpc_config.addr);
     // let rpc_config_2 = rpc_config.clone();
     let rpc_config_relay = rpc_config.clone();
 
@@ -485,7 +500,7 @@ where
     
     // Start Tor in the same process (simpler, single-process mode)
     let mut tor = tokio::task::spawn_blocking(move || {
-        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+        match configured_native_tor(&torrc_path_clone).start() {
             Ok(0) => {
                 // start() runs Tor's event loop and returns after shutdown.
                 // Keeping this task alive would leave the controller retrying
@@ -511,31 +526,35 @@ where
     }
 
     let mut tasks = Vec::new();
+    let mut controllers = controller_tasks::OwnedControllers::default();
 
     if mode == "client" {
         info!("[CLIENT] Starting Client-only Flow...");
         let client_handle = client::start_client_flow(&rpc_config.clone()).await;
+        controllers.track(&client_handle);
         tasks.push(client_handle);
     } else if mode == "both" {
         info!("[RELAY] Starting both Client + Relay Flows...");
         // Relay mode runs both client and relay flows
         info!("[CLIENT] Starting Client Flow (relay acts as client too)...");
         let client_handle = client::start_client_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&client_handle);
         tasks.push(client_handle);
         info!("[RELAY] Starting Relay Flow...");
         let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&relay_handle);
         tasks.push(relay_handle);
     } else if mode == "relay" {
         // Default case - should not happen with current parsing
         info!("[DEFAULT] Starting Relay Flow...");
         let relay_handle = relay::start_relay_flow(&rpc_config_relay.clone()).await;
+        controllers.track(&relay_handle);
         tasks.push(relay_handle);
     } else {
         error!("Unknown mode: {}. Use 'client', 'relay', or 'both'", mode);
         std::process::exit(1);
     }
 
-    let abort_handles: Vec<_> = tasks.iter().map(|task| task.abort_handle()).collect();
     // The controller flows must never outlive their embedded Tor instance.
     // Dropping a JoinHandle detaches its task, so retain explicit cancellation.
     tokio::select! {
@@ -548,9 +567,7 @@ where
             }
         } => {}
     }
-    for handle in abort_handles {
-        handle.abort();
-    }
+    drop(controllers);
     
     // Clean up any spawned processes before exit
     cleanup_tor_processes();
@@ -585,19 +602,15 @@ pub async fn init_and_run() {
     // ARGS="eltord relay -f torrc.relay.dev -p password1234_"
     // ARGS="eltord both -f torrc.relay.dev -p password1234_"
     let env_args = env::var("ARGS").ok();
-    dbg!(env_args.clone());
-    info!("Environment args: {:?}", env_args);
     let args: Vec<String> = if let Some(env_args) = env_args {
         // Use shell_words to properly parse arguments with spaces and quotes
-        shell_words::split(&env_args).unwrap_or_else(|e| {
-            error!("Failed to parse ARGS: {:?}", e);
+        shell_words::split(&env_args).unwrap_or_else(|_| {
+            error!("Failed to parse ARGS; using process arguments");
             std::env::args().collect()
         })
     } else {
         std::env::args().collect()
     };
-    dbg!(args.clone());
-    info!("Parsed args: {:?}", args.clone());
     run_with_args(args).await;
 }
 
@@ -632,7 +645,6 @@ where
 
     // Check if first argument is "client" or "relay" or "both"
     if let Some(arg1) = args.next() {
-        info!("First argument: {:?}", arg1);
         if arg1 == "client" || arg1 == "relay" || arg1 == "both" {
             mode = arg1;
         } else if arg1 == "-f" {
@@ -660,7 +672,7 @@ where
         }
     }
 
-    info!("Using torrc file: {} in mode {}", torrc_path, mode);
+    info!("Selected daemon mode: {}", mode);
     (mode, torrc_path, control_port_password)
 }
 
@@ -803,11 +815,11 @@ impl EltordTasks {
 pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) -> Result<(RpcConfig, String), Box<dyn std::error::Error>> {
     let (mode, torrc_path, control_port_password) = parse_args(args.into_iter().map(Into::into));
     let rpc_config = self::get_rpc_config_from_torrc(&torrc_path, control_port_password).await;
-    info!("RPC Config: {:?}", rpc_config);
     if rpc_config.is_none() {
         return Err("Could not load rpc_config from torrc file".into());
     }
     let rpc_config = rpc_config.unwrap();
+    info!("Tor control endpoint: {}", rpc_config.addr);
 
     // Check if Tor is already running on this port
     let addr = rpc_config.addr.clone();
@@ -822,7 +834,7 @@ pub async fn initialize_eltord(args: impl Iterator<Item = impl Into<String>>) ->
     info!("Starting new Tor instance...");
     let torrc_path_clone = torrc_path.clone();
     let tor_handle = tokio::task::spawn_blocking(move || {
-        match Tor::new().flag(TorFlag::ConfigFile(torrc_path_clone.clone())).start() {
+        match configured_native_tor(&torrc_path_clone).start() {
             Ok(_tor_instance) => {
                 info!("Tor started successfully in process");
                 // Keep the task alive indefinitely to maintain Tor

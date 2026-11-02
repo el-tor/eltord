@@ -58,6 +58,40 @@ The signed policy and retained accepted snapshot use this exact encoding:
 
 There is no new default for maximum age/periods: operators must choose explicit finite limits before enabling this profile. Reject a next allocation whose full end would exceed either accepted limit. Grace or retry cannot extend the hard age limit. Ordinary Tor age, isolation, resource, and failure policies can impose tighter limits. Defining these fields is not approval of a 24-hour path. A zero-rate policy still needs explicit valid authorization; dummy values never satisfy a required positive payment.
 
+### Paid byte quota accounting
+
+Each hop enforces `paid_quota_bytes` against the aggregate actual serialized
+bytes attributed to its circuit on both physical directions while that hop is
+paid `ACTIVE`. Count actual ingress and actual egress once each at the existing
+link serialization boundary, including cell headers, encrypted payload, padding
+and payment/control cells. A transit cell can therefore consume two physical-link
+charges at a middle hop: one received and one sent. Link-only maintenance without
+a circuit attribution remains under its existing aggregate link/resource limit;
+it must not be assigned arbitrarily to a paid circuit. Zero is unlimited paid
+quota only; it cannot confer free eligibility or reset a shared resource bucket.
+
+Reset the per-round paid byte counter once when a newly authorized paid round
+actually becomes active. Admission of a new identifier allocation, duplicate
+START/renewal/authorization, an observation query, reconnection, or entry into
+grace must never reset it. A cell that would exceed the remaining quota closes
+the circuit before egress/dispatch; exact exhaustion permits that physical event,
+but the next positive-byte event closes it. Do not silently discard and later
+resume a stream, grant a free fallback, or create an exempt control lane. Received
+bytes cannot be undone. Local authenticated controller queries may recover the
+closed outcome, but they cannot restore traffic eligibility. Inactive/grace
+traffic retains the existing bounded-queue and deadline rules.
+
+**Privacy/timing assessment:** the relay already observes its two adjacent links
+and circuit attribution; this adds no wire field, global identifier or exported
+counter. Counting headers/control/padding avoids a resource exemption, but quota
+exhaustion can reveal aggregate activity and cause a distinguishable close.
+Colluding relays or observers can correlate that timing; uniform construction
+and authenticated hop-local identifiers do not remove this exposure. Validate
+bidirectional/transit charging, full fork cell sizes, padding/control exhaustion,
+duplicate/reset attempts, delayed boundaries and closure timing. Local unit tests
+do not establish live throughput, anonymity or independent security review, and
+the production advertisement gate remains pending those prerequisites.
+
 The hop's initial round start is `T0`, a monotonic local event retained from the initial accepted schedule. Renewal never resets it. The origin need not share its absolute clock: round positions are relative to that hop's `T0`, and replies provide conservative timing information below. Free test/build time, paid start signaling, and their deadlines must be resolved in initial circuit establishment before this profile can be deployed. This wire extension does not reinterpret an old watcher's callback time as an agreed start or settlement time.
 
 Use a separate proposed exporter from the successfully authenticated ntor-v3 `ntor_key_seed`; do not repurpose traffic keys or alter existing Tor key output:

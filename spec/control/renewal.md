@@ -129,6 +129,34 @@ an unavailable/not-applicable value, never numeric zero. For GET with `operation
 the entire OP line after its prefix is `- - - - - - -`. An unconfirmed initial
 profile returns `551 INITIAL_STATE_UNCONFIRMED` instead of invented timing.
 
+If elapsed time requires an independently scheduled lifecycle transition that
+has not yet been applied, GET returns `551 STATE_TRANSITION_PENDING` instead of
+combining a new round number with the previous round's activation or payment
+state. GET MUST NOT run or schedule that transition, consume a payment, or
+report projected activation as completed. A subsequent bounded query may observe
+the result after the normal lifecycle timer runs; retries retain the same
+operation and never extend its deadlines.
+
+An authenticated RENEWED `ACTIVE` result can arrive before a complete authenticated
+START_STATUS observation for that allocation. Retain the exact operation result,
+but do not combine its new active period/allocation with the previous period's
+round or clock fields. Both INITIAL_GET and PAYMENT_GET return
+`551 STATE_TRANSITION_PENDING` until a matching authenticated status provides the
+current period and conservative clocks, or a terminal status closes the profile.
+A local timer cannot manufacture the missing remote observation. The daemon may
+request an explicit bounded INITIAL_REFRESH QUERY under the existing identity,
+nonce, query-rate and original lifetime rules; GET itself never sends that query.
+Old exact ACTIVE replies cannot move the current profile backward. Recovered
+status cannot reset T0, reopen an admission window or extend a learned deadline.
+
+**Privacy/timing assessment:** this coherence rule adds no wire field, identifier,
+response size or payment authority. Its pending error is confined to privileged
+local control. Recovery uses the existing fixed-size authenticated QUERY profile
+and query budgets; its observer-visible timing still requires measurement. Test
+ACTIVE-before-status ordering, read-only errors without transmissions/revisions,
+explicit refresh, old replies, and preserved remaining budgets. These tests do
+not establish live deployment readiness or independent privacy review.
+
 `state` is exactly QUEUED, SENT, ADMITTED, ACTIVE, REFUSED, UNCERTAIN or CLOSED.
 `request_digest` becomes available when the immutable authenticated request is
 formed; `allocation_digest` is present only after validated success. `relay_status`
@@ -155,6 +183,7 @@ all hops share one schedule.
 | --- | --- |
 | `512 BAD_ARGUMENT` | Framing/width/enum/arithmetic failure; no mutation |
 | `551 INITIAL_STATE_UNCONFIRMED` | Initial paid contract/start is unavailable; no renewal |
+| `551 STATE_TRANSITION_PENDING` | Lifecycle transition due but not yet applied; bounded read-only retry, no payment authority |
 | `551 UNSUPPORTED_PROFILE` | Required hop capability absent; no fallback |
 | `552 UNKNOWN_CIRCUIT` | Handle not live; never bind by a replacement numeric ID |
 | `552 STALE_INSTANCE` | Different Tor process; old circuits cannot be restored |
@@ -205,3 +234,10 @@ Implementation remains deferred under ET-08/09/33. Initial terms and activation 
 [initial operations and lifecycle events](lifecycle.md) and
 [durable recovery](recovery.md) define the related controller contracts.
 Whole-profile clock, parser and restart conformance remains part of final review.
+
+Privacy/timing assessment for transition-pending reads: this error is confined
+to the authenticated local controller. It exposes local scheduler lag without
+new relay-wire fields, identifiers, or padding changes. Queries cannot accelerate
+activation or authorize spending. Tests must delay the lifecycle timer across a
+round boundary and verify unchanged state/revision until that timer runs, with
+bounded retries under the existing query budget.
