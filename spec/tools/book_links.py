@@ -5,9 +5,13 @@ import os
 from pathlib import Path
 import re
 import sys
+from urllib.parse import quote
 if len(sys.argv)>1 and sys.argv[1]=='supports':
     sys.exit(0 if sys.argv[2]=='html' else 1)
 context, book=json.load(sys.stdin)
+repository=context['config'].get('output',{}).get('html',{}).get('git-repository-url','').rstrip('/')
+revision=os.environ.get('GITHUB_SHA','master')
+if not re.fullmatch(r'[0-9a-f]{40}',revision):revision='master'
 root=Path(context['root']); src=root/'spec'; todo=root/'TODO.md'; chapter=src/'validation/backlog.md'
 def rewrite(text,origin,destination):
     def replace(match):
@@ -16,6 +20,8 @@ def rewrite(text,origin,destination):
         name,sep,anchor=url.partition('#')
         target=(origin.parent/name).resolve() if name else origin
         if target==todo:target=chapter
+        if repository and target.is_relative_to(root) and not target.is_relative_to(src):
+            return ']('+repository+'/blob/'+revision+'/'+quote(target.relative_to(root).as_posix())+sep+anchor+')'
         if target==src/'SUMMARY.md':return ']('+os.path.relpath(src/'toc.html',destination.parent)+')'
         relative=os.path.relpath(target,destination.parent)
         return ']('+relative+sep+anchor+')'

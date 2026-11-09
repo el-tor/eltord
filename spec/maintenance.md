@@ -35,3 +35,19 @@ Run `python3 spec/tools/check_codec_vectors.py` with Python cryptography install
 fixtures. `--write` regenerates them only after an intentional reviewed schema
 change. These checks do not exercise runtime parsers, HPKE or native Lightning
 messages. The vectors explicitly identify those limitations.
+
+## GitHub Pages publication
+
+The `Publish specification book` workflow checks Markdown, builds with pinned
+mdBook 0.4.52 and validates rendered links. Pull requests only build/check; pushes
+to `master` and manual runs on `master` can deploy `target/spec-book` to
+<https://el-tor.github.io/eltord/>. Choose GitHub Actions as the repository's Pages
+source. The workflow uses GitHub's temporary token; no SSH or wallet credentials
+are needed. It does not compile or start the runtime.
+
+Repository-only documents outside `spec/` link to their GitHub source, pinned to
+the workflow commit when available. Generated HTML stays untracked.
+
+Privacy/timing assessment: this publishing workflow changes no protocol bytes,
+payment authority, retry policy or network timing. Only the generated public
+specification is uploaded; runtime files and local credentials are not inputs.

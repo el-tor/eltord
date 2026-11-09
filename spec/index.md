@@ -18,8 +18,8 @@ are stable references. Tor's specifications remain authoritative for inherited
 Tor mechanisms; this book documents El Tor additions and explicit differences.
 
 The [table of contents](SUMMARY.md) works directly in Markdown. A local mdBook
-build provides the sidebar, search and chapter navigation. Nothing in the build
-publishes this book or connects it to a remote repository.
+build provides the sidebar, search and chapter navigation. The build itself does not publish. The separate GitHub Pages workflow publishes
+reviewed changes from `master`; pull requests only validate the book.
 
 ## Reading status labels
 

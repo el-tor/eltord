@@ -8,6 +8,7 @@ src = "spec"
 build-dir = "target/spec-book"
 
 [output.html]
+git-repository-url = "https://github.com/el-tor/eltord"
 default-theme = "light"
 preferred-dark-theme = "navy"
 
