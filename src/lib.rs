@@ -14,7 +14,7 @@
 //! 
 //! ### Simple Usage
 //! 
-//! ```rust
+//! ```rust,no_run
 //! use eltor::init_and_run;
 //! 
 //! #[tokio::main]
@@ -26,7 +26,7 @@
 //! 
 //! ### Manual Control
 //! 
-//! ```rust
+//! ```rust,no_run
 //! use eltor::{initialize_eltord, start_client, start_relay};
 //! 
 //! #[tokio::main]
@@ -47,7 +47,7 @@
 //! 
 //! For external applications that need to control the eltord process:
 //! 
-//! ```rust
+//! ```rust,no_run
 //! use eltor::{EltordProcessManager, ProcessCommand};
 //! use std::time::Duration;
 //! 
@@ -57,8 +57,11 @@
 //!     let (mut manager, command_sender, mut status_receiver) = EltordProcessManager::new();
 //!     
 //!     // Start manager in background
+//!     // run() returns a non-Send error, so handle it inside the task.
 //!     let manager_handle = tokio::spawn(async move {
-//!         manager.run().await
+//!         if let Err(e) = manager.run().await {
+//!             eprintln!("process manager stopped: {}", e);
+//!         }
 //!     });
 //!     
 //!     // Start eltord process
@@ -465,7 +468,7 @@ macro_rules! relay_error {
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::run_with_args;
 /// 
 /// #[tokio::main]
@@ -583,7 +586,7 @@ where
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::init_and_run;
 /// 
 /// #[tokio::main]
@@ -684,14 +687,16 @@ where
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::{start_client, types::RpcConfig};
 /// 
 /// #[tokio::main]
 /// async fn main() {
+///     // The embedded Tor's control port and its (unhashed) control password.
 ///     let rpc_config = RpcConfig {
-///         // ... configure your RPC settings
-///         ..Default::default()
+///         addr: "127.0.0.1:9992".to_string(),
+///         rpc_password: Some("password1234_".to_string()),
+///         command: String::new(),
 ///     };
 ///     start_client(&rpc_config).await;
 /// }
@@ -708,14 +713,16 @@ pub async fn start_client(rpc_config: &RpcConfig) -> tokio::task::JoinHandle<()>
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::{start_relay, types::RpcConfig};
 /// 
 /// #[tokio::main]
 /// async fn main() {
+///     // The embedded Tor's control port and its (unhashed) control password.
 ///     let rpc_config = RpcConfig {
-///         // ... configure your RPC settings
-///         ..Default::default()
+///         addr: "127.0.0.1:9992".to_string(),
+///         rpc_password: Some("password1234_".to_string()),
+///         command: String::new(),
 ///     };
 ///     start_relay(&rpc_config).await;
 /// }
@@ -795,13 +802,13 @@ impl EltordTasks {
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::{initialize_eltord, start_client, start_relay};
 /// 
 /// #[tokio::main]
 /// async fn main() {
 ///     let args = vec!["eltor".to_string(), "client".to_string(), "-f".to_string(), "torrc.client.dev".to_string()];
-///     let (rpc_config, mode) = initialize_eltord(args).await.unwrap();
+///     let (rpc_config, mode) = initialize_eltord(args.into_iter()).await.unwrap();
 ///     
 ///     // Always start client 
 ///     let client_task = start_client(&rpc_config).await;

@@ -59,7 +59,7 @@ impl ProcessStatus {
 /// 
 /// # Example
 /// 
-/// ```rust
+/// ```rust,no_run
 /// use eltor::manager::{EltordProcessManager, ProcessCommand, ProcessStatus};
 /// use std::time::Duration;
 /// 
@@ -69,8 +69,11 @@ impl ProcessStatus {
 ///     let (mut manager, command_sender, mut status_receiver) = EltordProcessManager::new();
 /// 
 ///     // Start the manager in a background task
+///     // run() returns a non-Send error, so handle it inside the task.
 ///     let manager_handle = tokio::spawn(async move {
-///         manager.run().await
+///         if let Err(e) = manager.run().await {
+///             eprintln!("process manager stopped: {}", e);
+///         }
 ///     });
 /// 
 ///     // Start eltord in client mode
